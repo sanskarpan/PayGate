@@ -21,7 +21,7 @@ The goal is not a checkout demo. The goal is to demonstrate **production-grade t
 | Webhook delivery (first attempt) | 99.5% within 30s |
 | Webhook delivery (with retries) | 99.9% within 5 min |
 | Ledger balance accuracy | Zero drift (reconciliation passes) |
-| Settlement cycle | T+1 simulated |
+| Settlement cycle | T+2 default, merchant-configurable |
 | Uptime target | 99.95% (design goal) |
 | RPO | < 1 minute |
 | RTO | < 15 minutes |
@@ -111,6 +111,15 @@ Manages merchant onboarding, views system-wide metrics, configures global rate l
 - Chaos testing harness
 - Payment simulator (delayed success, late auth, timeouts)
 
+### Phase 5 — Distributed systems maturity (advanced track)
+- Ledger extraction via idempotent command API and saga orchestration
+- Event schema registry with compatibility policy (`backward` default)
+- Consumer contract certification before event-version rollout
+- Ledger holds/reservations for disputes, risk, and payout buffers
+- Payout rail simulator (bank ACH/IMPS/UPI style async lifecycle)
+- DR drills with explicit RTO/RPO verification and reconciliation catch-up SLO
+- Risk scoring v2: deterministic rules + model score + reason codes
+
 ---
 
 ## 6. Domain entities
@@ -153,13 +162,13 @@ Buyer opens checkout → system creates `PaymentAttempt` → attaches order, mer
 Gateway (simulated) returns auth success → payment moves to `authorized` → emits `payment.authorized` event. Capture is a **separate** operation: merchant calls `POST /v1/payments/{id}/capture` or auto-capture fires after configured timeout. Capture moves payment to `captured`, creates ledger entries (`Dr. Customer Receivable / Cr. Merchant Payable`), and emits `payment.captured`. If capture window expires without capture, payment moves to `auto_refunded`.
 
 ### 7.4 Refunds
-Merchant calls `POST /v1/payments/{id}/refunds` with amount and reason. System validates: payment must be `captured`, refund amount ≤ remaining capturable amount. Creates `Refund` record, creates compensating ledger entries (`Dr. Merchant Payable / Cr. Customer Receivable`), emits `refund.created`. Refund processing is async — moves through `processing → processed | failed`. Speed refunds supported for eligible merchants.
+Merchant calls `POST /v1/payments/{id}/refunds` with amount and reason. System validates: payment must be `captured`, refund amount ≤ remaining refundable amount. Creates a `Refund` record and emits `refund.created`. Refund processing is async: `created → processing → processed | failed`. Ledger reversal entries are created only when the gateway confirms the refund as `processed`, so failed refunds do not require compensating ledger corrections.
 
 ### 7.5 Webhook delivery
 State change → outbox entry written in same transaction → relay worker reads outbox → publishes to Kafka topic → webhook delivery worker consumes event → looks up matching subscriptions → for each subscription: generate signature, POST to endpoint, record `WebhookDeliveryAttempt`. On failure: exponential backoff, max 18 retries over 24 hours. Dead-letter after exhaustion. Replay: merchant or ops can trigger re-delivery of any past event.
 
 ### 7.6 Settlements
-Nightly batch: collect all `captured` payments not yet settled → calculate platform fee per payment → compute net amount → create `Settlement` with line items → write ledger entries (`Dr. Merchant Payable / Cr. Merchant Bank Payout`) → emit `settlement.created`. Settlement moves through `processing → processed` after simulated bank confirmation.
+Nightly batch: collect all `captured` payments not yet settled and older than the merchant's settlement delay → calculate platform fee per payment → compute net amount → create `Settlement` with line items → write ledger entries (`Dr. Merchant Payable / Cr. Settlement Clearing`) → emit `settlement.created`. Settlement moves through `processing → processed` after simulated bank confirmation, at which point clearing is moved to bank payout.
 
 ### 7.7 Reconciliation
 Scheduled job compares: payment records ↔ ledger entries ↔ settlement items. For every captured payment, there must be a matching ledger debit/credit pair. For every settled payment, there must be a settlement line item. Mismatches are flagged with reason codes: `MISSING_LEDGER_ENTRY`, `AMOUNT_MISMATCH`, `ORPHAN_SETTLEMENT_ITEM`, `UNSETTLED_CAPTURED_PAYMENT`. Results stored in `ReconciliationBatch`.
@@ -203,6 +212,7 @@ Scheduled job compares: payment records ↔ ledger entries ↔ settlement items.
 - Webhook delivery logs: 90 days
 - Metrics: 13 months
 - Reconciliation batches: 3 years
+- Event schemas and compatibility audit logs: 3 years
 
 ---
 
