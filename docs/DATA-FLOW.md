@@ -50,7 +50,7 @@ BUYER (CHECKOUT)            API GATEWAY                PAYMENT SERVICE          
 ```
 
 ```
-MERCHANT                    API GATEWAY                PAYMENT SERVICE          LEDGER SERVICE
+MERCHANT                    API GATEWAY                PAYMENT SERVICE          LEDGER MODULE
    │                            │                           │                       │
    │  POST /payments/x/capture  │                           │                       │
    ├───────────────────────────►│                           │                       │
@@ -58,18 +58,17 @@ MERCHANT                    API GATEWAY                PAYMENT SERVICE          
    │                            │                           │  validate state=authorized
    │                            │                           │  check idempotency    │
    │                            │                           │                       │
-   │                            │                           │  call Ledger Service  │
-   │                            │                           ├──────────────────────►│
-   │                            │                           │                       │  validate double-entry
-   │                            │                           │                       │  INSERT ledger_entries
-   │                            │                           │                       │    Dr. CUST_RECEIVABLE
-   │                            │                           │                       │    Cr. MERCH_PAYABLE
-   │                            │                           │                       │    Cr. PLATFORM_FEE
-   │                            │                           │◄──────────────────────┤
-   │                            │                           │  ledger entries OK    │
-   │                            │                           │                       │
    │                            │                           │  BEGIN TRANSACTION:
+   │                            │                           │    lock payment row
+   │                            │                           │    validate transition
+   │                            │                           │    validate ledger balances
+   │                            │                           │    INSERT ledger_transaction
+   │                            │                           │    INSERT ledger_entries
+   │                            │                           │      Dr. CUST_RECEIVABLE
+   │                            │                           │      Cr. MERCH_PAYABLE
+   │                            │                           │      Cr. PLATFORM_FEE
    │                            │                           │    UPDATE payment → captured
+   │                            │                           │    INSERT audit_event
    │                            │                           │    INSERT outbox (payment.captured)
    │                            │                           │  COMMIT
    │                            │                           │
@@ -132,7 +131,7 @@ KAFKA              →    WEBHOOK SERVICE    →    MERCHANT ENDPOINT
 ## 3. Refund data flow
 
 ```
-MERCHANT                    REFUND SERVICE             LEDGER SERVICE
+MERCHANT                    REFUND SERVICE             LEDGER MODULE
    │                            │                           │
    │  POST /payments/x/refunds  │                           │
    ├───────────────────────────►│                           │
@@ -141,16 +140,10 @@ MERCHANT                    REFUND SERVICE             LEDGER SERVICE
    │                            │    amount ≤ remaining     │
    │                            │    check idempotency      │
    │                            │                           │
-   │                            │  call Ledger Service      │
-   │                            ├──────────────────────────►│
-   │                            │                           │  INSERT ledger_entries
-   │                            │                           │    Dr. MERCH_PAYABLE
-   │                            │                           │    Dr. PLATFORM_FEE (proportional)
-   │                            │                           │    Cr. REFUND_CLEARING
-   │                            │◄──────────────────────────┤
-   │                            │                           │
    │                            │  BEGIN TRANSACTION:
+   │                            │    lock payment row
    │                            │    INSERT refund (status=created)
+   │                            │    UPDATE payment.amount_refunded_pending
    │                            │    INSERT outbox (refund.created)
    │                            │  COMMIT
    │                            │
@@ -159,9 +152,15 @@ MERCHANT                    REFUND SERVICE             LEDGER SERVICE
    │                            │  ─── async processing ──► │
    │                            │  queue picks up refund    │
    │                            │  call gateway for refund  │
-   │                            │  UPDATE refund → processed│
-   │                            │  INSERT outbox             │
-   │                            │    (refund.processed)     │
+   │                            │  BEGIN TRANSACTION:       │
+   │                            │    INSERT ledger reversal │
+   │                            │      Dr. MERCH_PAYABLE    │
+   │                            │      Dr. PLATFORM_FEE     │
+   │                            │      Cr. REFUND_CLEARING  │
+   │                            │    UPDATE refund → processed
+   │                            │    INSERT outbox          │
+   │                            │      (refund.processed)   │
+   │                            │  COMMIT                   │
 ```
 
 ---
@@ -169,7 +168,7 @@ MERCHANT                    REFUND SERVICE             LEDGER SERVICE
 ## 4. Settlement data flow
 
 ```
-CRON TRIGGER            SETTLEMENT SERVICE          LEDGER SERVICE          PAYMENT SERVICE (DB)
+CRON TRIGGER            SETTLEMENT SERVICE          LEDGER MODULE           PAYMENTS TABLE
    │                         │                           │                       │
    │  trigger batch          │                           │                       │
    ├────────────────────────►│                           │                       │
@@ -185,17 +184,13 @@ CRON TRIGGER            SETTLEMENT SERVICE          LEDGER SERVICE          PAYM
    │                         │    calculate fees         │                       │
    │                         │    compute net amount     │                       │
    │                         │                           │                       │
-   │                         │  call Ledger Service      │                       │
-   │                         ├──────────────────────────►│                       │
-   │                         │                           │  INSERT settlement    │
-   │                         │                           │  journal entries      │
-   │                         │                           │    Dr. MERCH_PAYABLE  │
-   │                         │                           │    Cr. SETTLEMENT_CLR │
-   │                         │◄──────────────────────────┤                       │
-   │                         │                           │                       │
    │                         │  BEGIN TRANSACTION:
+   │                         │    lock eligible payments │                       │
    │                         │    INSERT settlement (status=created)
    │                         │    INSERT settlement_items
+   │                         │    INSERT settlement ledger entries
+   │                         │      Dr. MERCH_PAYABLE
+   │                         │      Cr. SETTLEMENT_CLR
    │                         │    UPDATE payments SET settled=true
    │                         │    INSERT outbox (settlement.created)
    │                         │  COMMIT
@@ -363,9 +358,9 @@ Span 2: Payment Service → validate
   ├── payment_id: pay_xxx
   └── current_state: authorized
 
-Span 3: Payment Service → Ledger Service (gRPC)
+Span 3: Payment Service → Ledger Module
   ├── duration: 12ms
-  ├── operation: create_journal_entries
+  ├── operation: create_journal_entries_in_transaction
   ├── entries: 3 (debit + 2 credits)
   └── total_amount: 50000
 
@@ -408,3 +403,38 @@ Webhook delivery: ~500ms end-to-end (async)
 | Events in transit | Kafka | Broker-level TDE | 7-30 days (topic config) |
 | Reports, exports | S3 / MinIO | SSE-S3 | 3 years |
 | Request/response logs | S3 / Loki | SSE-S3 | 13 months |
+
+---
+
+## 11. Advanced distributed flows (optional track)
+
+### 11.1 Saga-based capture (extracted services)
+
+```
+PAYMENT API  ->  SAGA ORCHESTRATOR  ->  LEDGER SERVICE  ->  PAYMENT SERVICE
+    │                 │                      │                    │
+    │ capture req     │ create saga          │                    │
+    ├────────────────►│                      │                    │
+    │                 │ emit command         │                    │
+    │                 ├─────────────────────►│ post capture       │
+    │                 │                      │ entries idempotent │
+    │                 │◄─────────────────────┤ posted/rejected    │
+    │                 │ emit result event    │                    │
+    │                 ├───────────────────────────────────────────►│
+    │                 │                      │ finalize payment    │
+    │◄────────────────┤                      │ state + outbox      │
+```
+
+### 11.2 Schema rollout flow
+
+```
+PRODUCER CHANGE -> CI SCHEMA CHECK -> CONSUMER CONTRACT TESTS -> DUAL PUBLISH -> CUTOVER
+```
+
+### 11.3 Hold/release/commit flow
+
+```
+RISK ENGINE -> create hold -> payment delayed
+OPS DECISION -> release hold OR commit hold
+COMMIT -> ledger posting + settlement eligibility update
+```
