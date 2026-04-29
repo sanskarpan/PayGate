@@ -395,7 +395,7 @@ func TestE2E_DuplicateCallback_NoDoubleCounting(t *testing.T) {
 |----------|-------|------------------|
 | DB down during capture | Toxiproxy: close Postgres port | Capture returns 503, payment stays `authorized`, retryable |
 | Kafka down during outbox relay | Stop Kafka broker | Outbox entries accumulate, relay resumes when Kafka returns |
-| Redis down during idempotency check | Toxiproxy: close Redis port | Request proceeds (fail-open), logs warning |
+| Redis down during idempotency check | Toxiproxy: close Redis port | Money-changing writes use DB-backed idempotency or return 503; low-risk cache paths may fail open with warning |
 | Webhook endpoint slow (30s) | Mock endpoint with 30s delay | Timeout after 10s, recorded as failed, retry scheduled |
 | Network partition between services | Toxiproxy: add 5s latency | gRPC deadline exceeded, circuit breaker opens |
 | Process crash mid-capture | Kill payment service after DB write but before response | Outbox entry exists, event will be published on recovery |
@@ -505,3 +505,27 @@ stages:
 ```
 
 Chaos tests run weekly in a dedicated staging environment, not in CI.
+
+---
+
+## 9. Advanced test suite (optional track)
+
+### 9.1 Saga correctness tests
+- Command deduplication per consumer (`processed_commands`)
+- Step replay idempotency
+- Compensation path correctness on mid-saga failure
+- Crash-recovery: orchestrator restarts and resumes without duplicate postings
+
+### 9.2 Event schema governance tests
+- Producer schema compatibility checks
+- Consumer contract certification against new schema versions
+- Dual-publish drift test (`v1` and `v2` payload parity for shared fields)
+
+### 9.3 Ledger hold tests
+- Hold creation blocks payout eligibility
+- Hold release restores eligibility
+- Hold commit posts exactly one final ledger transaction
+
+### 9.4 DR simulation tests
+- Restore from backup + replay outbox + replay Kafka offsets
+- Reconciliation catch-up within target SLO

@@ -26,23 +26,26 @@ Authorization: Basic base64({key_id}:{key_secret})
 
 ### Pagination
 
-List endpoints use cursor-based pagination:
+List endpoints use cursor-based pagination. Timestamp filters narrow the result set; `cursor` advances through that set.
 
 ```
-GET /v1/orders?count=10&from={unix_timestamp}&to={unix_timestamp}
+GET /v1/orders?count=10&from={unix_timestamp}&to={unix_timestamp}&cursor={opaque_cursor}
 
 Response:
 {
   "entity": "collection",
   "count": 10,
   "items": [...],
-  "has_more": true
+  "has_more": true,
+  "next_cursor": "eyJjcmVhdGVkX2F0IjoxNzE0MDAwMDAwLCJpZCI6Im9yZGVyXy4uLiJ9"
 }
 ```
 
 - `count`: items per page (default 10, max 100)
 - `from`: created_at >= this timestamp (inclusive)
 - `to`: created_at <= this timestamp (inclusive)
+- `cursor`: opaque value returned by the previous response
+- sort order: `created_at DESC, id DESC`
 
 ### Error responses
 
@@ -137,7 +140,8 @@ GET /v1/orders?count=10&from=1714000000&to=1714100000
   "entity": "collection",
   "count": 10,
   "items": [ /* order objects */ ],
-  "has_more": true
+  "has_more": true,
+  "next_cursor": "eyJjcmVhdGVkX2F0IjoxNzE0MDAwMDAwLCJpZCI6Im9yZGVyXy4uLiJ9"
 }
 ```
 
@@ -442,3 +446,33 @@ Returns `200 OK`. Key immediately becomes invalid.
 | `dispute.created` | Chargeback received | dispute, payment |
 | `dispute.won` | Dispute resolved in merchant's favor | dispute |
 | `dispute.lost` | Dispute resolved against merchant | dispute |
+
+---
+
+## 9. Advanced control APIs (optional track)
+
+### Replay a saga
+```
+POST /v1/sagas/{saga_id}/replay
+```
+Re-runs failed compensable steps using stored saga context. Returns `202 Accepted`.
+
+### Fetch schema versions
+```
+GET /v1/event-schemas/{event_type}
+```
+Returns active and deprecated versions with compatibility metadata.
+
+### Register schema version
+```
+POST /v1/event-schemas/{event_type}
+```
+Request includes `version`, `compatibility`, and `schema_json`. Breaking changes require elevated scope.
+
+### Ledger hold APIs
+```
+POST /v1/ledger/holds
+POST /v1/ledger/holds/{hold_id}/release
+POST /v1/ledger/holds/{hold_id}/commit
+```
+These endpoints reserve, release, or commit held amounts for risk/dispute/payout workflows.

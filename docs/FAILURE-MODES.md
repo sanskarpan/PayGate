@@ -133,8 +133,9 @@ COMMIT;
 
 **What happens**:
 1. Refund moves to `status=failed`
-2. Compensating ledger entry is NOT needed (the original refund ledger entry was created optimistically)
-3. Actually, **design decision**: create refund ledger entries only after gateway confirms, not at creation time
+2. No refund ledger entry exists yet, because ledger reversal is written only when the gateway confirms `processed`
+3. The reserved pending refund amount is released from `payment.amount_refunded_pending`
+4. `refund.failed` is emitted through the outbox
 
 **Better approach**: Refund ledger entries are created when refund moves to `processed`, not at `created`. This avoids needing compensating entries on failure.
 
@@ -152,7 +153,7 @@ COMMIT;
 3. After 18 attempts (24 hours), moved to dead-letter queue
 4. `webhook.delivery.exhausted` alert fires
 
-**Recovery**: Merchant fixes their endpoint. Ops or merchant triggers replay via `POST /v1/webhooks/{event_id}/replay`.
+**Recovery**: Merchant fixes their endpoint. Ops or merchant triggers replay via `POST /v1/webhooks/events/{event_id}/replay`.
 
 ---
 
@@ -230,7 +231,8 @@ COMMIT;
 **Impact**: Idempotency checks, rate limiting, and webhook deduplication unavailable.
 
 **Behavior with Redis down**:
-- **Idempotency**: fail-open. Skip idempotency check, log warning. Risk of duplicate processing, but state machine prevents double-capture.
+- **Idempotency for money-changing writes**: fail closed or fall back to the durable Postgres idempotency table. Do not skip idempotency for capture, refund, settlement, or key creation.
+- **Idempotency for low-risk writes**: may fail open if the endpoint is naturally idempotent or state-machine protected.
 - **Rate limiting**: fail-open. Skip rate limit check. Risk of overload, but downstream services have their own connection limits.
 - **Webhook dedup**: fail-open. May re-deliver a webhook. Merchants should handle duplicates.
 
@@ -244,7 +246,7 @@ COMMIT;
 
 **Mismatch type**: `MISSING_LEDGER_ENTRY` (Critical)
 
-**Root cause**: Payment was captured but ledger service call failed, and no compensating mechanism fired.
+**Root cause**: Payment was captured but the same-transaction ledger insert was skipped or failed due to a bug, and the transaction still committed.
 
 **This should be impossible** if the outbox pattern is implemented correctly (ledger write happens in the capture flow before the DB commit). If it happens, it indicates a bug in the capture flow.
 
@@ -309,3 +311,23 @@ COMMIT;
 | Settlement batch failure | Batch job exits with error | P2 | Re-run batch |
 | API latency spike | p99 > 2x target for 5 min | P2 | Check DB, Redis, service health |
 | Connection pool exhaustion | Available connections < 10% | P2 | Scale service or increase pool |
+
+---
+
+## 8. Advanced distributed failures (optional track)
+
+### F-SAGA-001: Saga step executed twice after broker redelivery
+**Risk**: duplicate ledger postings.
+**Mitigation**: `processed_commands` table with unique `command_id`; consumer returns prior result on duplicate.
+
+### F-SCHEMA-001: Producer ships breaking event schema without consumer readiness
+**Risk**: downstream parse failures and silent event loss.
+**Mitigation**: schema registry compatibility gate + consumer certification + dual-publish rollout.
+
+### F-HOLD-001: Hold committed but settlement eligibility not updated
+**Risk**: merchant under/over-paid.
+**Mitigation**: same transaction for hold commit + eligibility mutation + outbox event.
+
+### F-DR-001: Region failover restores DB but misses in-flight events
+**Risk**: state/event divergence.
+**Mitigation**: replay from outbox plus consumer offset validation before reopening settlements.

@@ -10,7 +10,7 @@
 You are building PayGate, a production-grade multi-tenant payment platform inspired by Razorpay. This is a portfolio project targeting SDE2/SDE3 level. It is NOT a checkout demo — it is a payments backbone with state machines, double-entry ledger, webhook delivery, settlements, and reconciliation.
 
 ## Tech stack
-- **Backend**: Go 1.22+ (all services)
+- **Backend**: Go 1.22+ (API backend, domain packages, workers)
 - **Frontend**: Next.js 14+ with App Router, TypeScript, Tailwind CSS, shadcn/ui
 - **Database**: PostgreSQL 16 (single cluster, per-service schemas)
 - **Event bus**: Apache Kafka (KRaft mode, no ZooKeeper)
@@ -21,7 +21,7 @@ You are building PayGate, a production-grade multi-tenant payment platform inspi
 - **Testing**: Go testing + testcontainers-go, k6 for load tests
 
 ## Architecture
-Event-driven microservices with shared Postgres. Services communicate via gRPC (sync) and Kafka (async). Every state change writes to a transactional outbox table; a relay worker publishes to Kafka. The frontend talks to services through an API gateway.
+Service-oriented modular monolith first, extractable microservices later. Keep strict package boundaries for order, payment, ledger, refund, settlement, webhook, reconciliation, auth, and outbox. Every money-critical state change writes business state, ledger entries, audit events, and outbox events inside one PostgreSQL transaction. Async workers consume from Postgres/Kafka. The frontend talks to the backend through an API gateway.
 
 Services: api-gateway, order-service, payment-service, refund-service, settlement-service, ledger-service, webhook-service, recon-worker, outbox-relay, gateway-proxy (simulator)
 
@@ -46,7 +46,7 @@ func (s PaymentState) Transition(event PaymentEvent) (PaymentState, error) {
 ```
 
 ### 2. Double-entry ledger
-Every monetary operation (capture, refund, settlement) creates ledger entries where total debits = total credits. Ledger entries are append-only — no UPDATE, no DELETE. Corrections are compensating entries. The Ledger Service enforces this via a CHECK constraint and application-level validation.
+Every monetary operation (capture, refund confirmation, settlement) creates ledger entries where total debits = total credits. Ledger entries are append-only — no UPDATE, no DELETE. Corrections are compensating entries. The ledger module validates entries before insert and stores a balanced ledger transaction header.
 
 Journal entries for a capture of ₹500 at 2% fee:
 ```
@@ -63,12 +63,14 @@ NEVER publish to Kafka directly from a service handler. Always:
 4. Consumers must be idempotent (deduplicate by event_id)
 
 ### 4. Idempotency
-All POST endpoints accept `Idempotency-Key` header. Implementation:
+All POST endpoints accept `Idempotency-Key` header. Redis is a cache, not the source of truth for money-changing writes. Implementation:
 - Redis key: `idempotency:{merchant_id}:{endpoint}:{client_key}`
+- Durable DB row: `idempotency_records(merchant_id, endpoint_hash, client_key, request_hash, status, resource_id, response_body)`
 - SET NX EX 86400 (24h TTL)
 - New key → execute, cache response
 - Existing + completed → return cached response + Idempotent-Replayed header
 - Existing + in_progress → 409 Conflict + Retry-After: 1
+- Same key + different request hash → 409 IDEMPOTENCY_CONFLICT
 
 ### 5. ID format
 All public IDs use KSUID with entity prefix: order_xxx, pay_xxx, rfnd_xxx, sttl_xxx, evt_xxx, merch_xxx
@@ -123,6 +125,8 @@ Build in this order. Do not skip phases.
 **Phase 3**: RBAC → Audit logging → Risk engine (velocity + rules) → Request scrubbing → Rate limiting → Dashboard (risk, audit, team)
 
 **Phase 4**: Disputes → Advanced settlements → Chaos tests → Load tests → Observability dashboards → Documentation
+
+**Phase 5 (advanced distributed track)**: Saga orchestrator → schema registry + compatibility gates → ledger holds/reservations → payout rail simulator → DR drills with measured recovery artifacts
 
 ## Database conventions
 - All timestamps: TIMESTAMPTZ (not TIMESTAMP)
@@ -182,7 +186,7 @@ Task 4: "Build the simulated gateway proxy — configurable success/failure/time
 
 Task 5: "Build the payment service — domain model, state machine, authorization flow, capture flow, ledger integration, tests"
 
-Task 6: "Build the basic ledger service — account setup, entry creation with double-entry validation, balance queries, gRPC API"
+Task 6: "Build the basic ledger module — account setup, transaction header, entry creation with double-entry validation, balance queries"
 
 Task 7: "Create the checkout page — simple HTML/JS that creates a payment against an order"
 
@@ -215,6 +219,14 @@ Task 18: "Add webhook replay endpoint and dashboard webhook delivery log"
 Task 19: "Build dashboard pages for refunds, webhooks, settlements, and reconciliation"
 
 Task 20: "Write Phase 2 integration tests — refund flow, webhook delivery, settlement batch, reconciliation"
+
+Task 21: "Build the saga orchestrator and idempotent command processing for extracted services"
+
+Task 22: "Implement event schema registry with CI compatibility checks and consumer contract gates"
+
+Task 23: "Add ledger hold/release/commit flows and payout rail simulator"
+
+Task 24: "Run a DR simulation and document RTO/RPO plus reconciliation catch-up results"
 ```
 
 ---
@@ -230,7 +242,7 @@ If Claude Code produces code that violates the design rules, use these correctio
 > "Never publish to Kafka directly from a handler. Use the transactional outbox pattern: write to the outbox table in the same Postgres transaction, then the relay worker publishes."
 
 **If ledger entries don't balance:**
-> "Every ledger transaction must have total debits equal to total credits. Add a validation check in the ledger service and a unit test that asserts balance."
+> "Every ledger transaction must have total debits equal to total credits. Add a validation check in the ledger module and a unit test that asserts balance."
 
 **If it skips tests:**
 > "Write the domain_test.go with table-driven state machine tests before writing the handler. Tests are not optional for payment systems."

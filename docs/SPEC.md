@@ -127,7 +127,7 @@ Rate limits are enforced per `key_id`:
 
 All `POST` endpoints accept an `Idempotency-Key` header. Behavior:
 
-1. On first request: execute normally, cache response keyed by `merchant_id:endpoint:idempotency_key` in Redis with `SET NX EX 86400` (24h TTL).
+1. On first request: execute normally, cache response keyed by `merchant_id:endpoint:idempotency_key` in Redis with `SET NX EX 86400` (24h TTL). For money-changing endpoints, also persist an idempotency record in Postgres inside the business transaction.
 2. On duplicate request (key exists): return cached response with `Idempotent-Replayed: true` header. Do not re-execute.
 3. On in-flight duplicate (key exists but no cached response yet): return `409 Conflict` with `Retry-After: 1`.
 
@@ -227,7 +227,7 @@ Response: 201 Created
 
 #### List payments (with cursor pagination)
 ```
-GET /v1/payments?count=10&from=1714000000&to=1714100000&skip=0
+GET /v1/payments?count=10&from=1714000000&to=1714100000&cursor={opaque_cursor}
 Authorization: Basic {credentials}
 
 Response: 200 OK
@@ -313,14 +313,14 @@ Dr. CUSTOMER_RECEIVABLE    ₹500.00
   Cr. PLATFORM_FEE_REVENUE          ₹10.00
 ```
 
-**Full refund (₹500):**
+**Full refund confirmed by gateway (₹500):**
 ```
 Dr. MERCHANT_PAYABLE       ₹490.00
 Dr. PLATFORM_FEE_REVENUE   ₹10.00
   Cr. REFUND_CLEARING               ₹500.00
 ```
 
-**Partial refund (₹200 of ₹500):**
+**Partial refund confirmed by gateway (₹200 of ₹500):**
 ```
 Dr. MERCHANT_PAYABLE       ₹196.00
 Dr. PLATFORM_FEE_REVENUE   ₹4.00
@@ -341,10 +341,11 @@ Dr. SETTLEMENT_CLEARING    ₹490.00
 
 ### 4.3 Ledger rules
 
-1. Every entry must have a `debit_amount` equal to `credit_amount` (enforced by DB constraint).
+1. Every ledger transaction must balance: `SUM(debit_amount) = SUM(credit_amount)` across all rows with the same `transaction_id`.
 2. Every entry references its source: `source_type` (payment, refund, settlement) + `source_id`.
 3. Entries are **append-only**. Corrections are compensating entries, not updates.
 4. A periodic ledger-balance job sums all debits and credits per account and asserts zero net (assets - liabilities - equity = 0).
+5. Capture, refund-confirmation, settlement-creation, audit, and outbox writes must share one PostgreSQL transaction in Phase 1. If Ledger is extracted later, use an explicit saga with idempotent ledger commands.
 
 ---
 
@@ -438,7 +439,7 @@ Each event+subscription combination has a delivery fingerprint: `SHA256(event_id
 
 ### 6.5 Replay
 
-`POST /v1/webhooks/{event_id}/replay` — re-enqueues the event for delivery to all matching subscriptions. Bypasses duplicate suppression. Available to merchant admin and ops.
+`POST /v1/webhooks/events/{event_id}/replay` — re-enqueues the event for delivery to all matching subscriptions. Bypasses duplicate suppression. Available to merchant admin and ops.
 
 ---
 
@@ -446,7 +447,7 @@ Each event+subscription combination has a delivery fingerprint: `SHA256(event_id
 
 ### 7.1 Settlement cycle
 
-Default: T+2 (configurable per merchant). Settlement runs as a nightly batch job.
+Default: T+2 (configurable per merchant). Settlement runs as a nightly batch job. The PRD success target is T+2 unless a merchant setting overrides it.
 
 ### 7.2 Settlement batch process
 
@@ -510,17 +511,23 @@ Redis key: `idempotency:{merchant_id}:{endpoint_hash}:{client_key}`
 Value: JSON `{ "status": "completed|in_progress", "response_code": 201, "response_body": "..." }`
 TTL: 24 hours
 
+Postgres table for money-changing endpoints:
+`idempotency_records(merchant_id, endpoint_hash, client_key, request_hash, status, resource_type, resource_id, response_code, response_body, expires_at)`.
+
+Redis is an acceleration layer, not the source of truth for capture/refund/settlement idempotency.
+
 ### 9.2 Flow
 
 ```
 1. Request arrives with Idempotency-Key header
 2. Compute Redis key
-3. SET NX EX 86400 with status=in_progress
-4. If SET succeeded (key was new):
+3. For money-changing endpoints, insert or lock the Postgres idempotency row first. For low-risk endpoints, use Redis only.
+4. SET NX EX 86400 with status=in_progress as a cache hint
+5. If the key is new:
    a. Execute request
-   b. Store response in Redis key
+   b. Store response/resource pointer in Postgres and Redis
    c. Return response
-5. If SET failed (key exists):
+6. If the key exists:
    a. GET the key
    b. If status=completed: return cached response + Idempotent-Replayed: true header
    c. If status=in_progress: return 409 Conflict + Retry-After: 1
@@ -528,7 +535,8 @@ TTL: 24 hours
 
 ### 9.3 Edge cases
 
-- If the server crashes after SET NX but before execution: the `in_progress` key expires in 24h. Client can retry with a new idempotency key.
+- If the server crashes after setting Redis but before execution: Redis eventually expires. Money-changing endpoints recover from the Postgres idempotency record, not from Redis alone.
+- If the same idempotency key is reused with a different request body: return `409 IDEMPOTENCY_CONFLICT` and do not execute.
 - If the response is too large for Redis (>1MB): store only the response code and resource ID. Client can GET the resource.
 
 ---
@@ -614,3 +622,43 @@ Card numbers never leave the CDE. Non-CDE services only see tokens like `tok_xxx
 ### 12.3 Request scrubbing
 
 All request/response logging passes through a scrubber that removes: card numbers, CVV, key_secret values, webhook secrets, and any field matching `password|secret|token|cvv|card_number` regex. Scrubbing happens **before** the log is written, not after.
+
+---
+
+## 13. Advanced distributed track (optional, higher complexity)
+
+### 13.1 Saga orchestration for extracted services
+
+When Payment, Ledger, and Settlement are independently deployed, use a saga with idempotent commands:
+
+1. `payment.capture.requested`
+2. `ledger.capture.post.requested`
+3. `ledger.capture.posted` (or `ledger.capture.rejected`)
+4. `payment.capture.committed` (or `payment.capture.failed`)
+5. `settlement.eligibility.updated`
+
+Rules:
+- Every saga step carries `saga_id`, `step_id`, and `idempotency_key`.
+- Every command consumer stores `processed_commands(command_id)` and must be idempotent.
+- Compensation is explicit and append-only (never delete prior money records).
+
+### 13.2 Event schema governance
+
+- Every emitted event references a schema ID and version.
+- Compatibility policy: `backward` for additive changes, `major` bump for breaking changes.
+- CI gate must run producer schema checks and consumer contract tests before merge.
+- Rollout policy: dual-publish (`v1` + `v2`) until all critical consumers certify.
+
+### 13.3 Ledger reservations and holds
+
+Support pre-commit holds for risk/dispute scenarios:
+- `hold.created` reserves a liability amount
+- `hold.released` removes reservation
+- `hold.committed` converts hold into final posting
+
+This enables delayed capture/payout flows without violating balance invariants.
+
+### 13.4 Disaster recovery verification
+
+- Quarterly DR drill: fail primary region and recover within target RTO/RPO.
+- Post-recovery reconciliation must complete and show zero critical mismatches before normal settlement resumes.

@@ -249,3 +249,27 @@ WHERE id = '{mismatch_id}';
 - Topics retain data for 7-30 days (configurable)
 - Consumer groups track offsets — services resume from where they left off
 - If a topic is lost: recreate and replay from outbox table (outbox entries retained for 7 days after publishing)
+
+---
+
+## 5. Advanced operations (optional track)
+
+### Recover a stuck saga
+1. Inspect `saga_instances` and `saga_steps` for failed step and command ID.
+2. Confirm whether command was already processed via `processed_commands`.
+3. Trigger `POST /v1/sagas/{saga_id}/replay`.
+4. Verify no duplicate ledger transaction was created.
+
+### Perform schema rollout safely
+1. Register new schema in draft.
+2. Run producer compatibility and consumer contract checks.
+3. Activate dual-publish (`v1` + `v2`).
+4. Confirm consumer migration dashboard reaches 100%.
+5. Disable old version and mark deprecated.
+
+### DR drill checklist
+1. Simulate region failure.
+2. Restore DB to target point-in-time.
+3. Replay outbox backlog and verify Kafka consumer offsets.
+4. Run full reconciliation.
+5. Resume settlements only after zero critical mismatches.
