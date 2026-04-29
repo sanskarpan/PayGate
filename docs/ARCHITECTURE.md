@@ -6,13 +6,26 @@
 
 ## 1. Architecture style
 
-**Event-driven microservices** with a shared PostgreSQL cluster (per-service schemas) and Kafka as the event backbone. Services communicate synchronously via gRPC for queries and asynchronously via Kafka for state changes. The frontend is a separate Next.js application that talks to an API gateway.
+**Service-oriented modular monolith first, extractable microservices later.** The documentation describes service boundaries because they are the right domain seams, but the first production-quality implementation should run money-critical paths inside one Go backend process and one PostgreSQL transaction boundary. Kafka remains the event backbone for asynchronous consumers. The frontend is a separate Next.js application that talks to an API gateway.
 
-This is not a microservices-for-the-sake-of-microservices design. Each service boundary aligns with a distinct operational concern and a distinct failure domain.
+This is not a microservices-for-the-sake-of-microservices design. Each boundary aligns with a distinct operational concern, but boundaries are extracted only when the consistency model is explicit and tested. For a portfolio project, correctness beats distributed complexity.
+
+### 1.1 Implementation posture
+
+| Phase | Runtime shape | Why |
+|-------|---------------|-----|
+| Phase 1 | Modular monolith: API, order, payment, ledger, outbox, and auth packages in one deployable | Gives one DB transaction for capture + ledger + outbox, eliminating dual-write risk |
+| Phase 2 | Split workers: outbox relay, webhook worker, settlement worker, recon worker | Workers are async and safe to isolate because Postgres/Kafka provide replay |
+| Phase 3+ | Optional service extraction behind gRPC | Extract only after idempotent command handling, retries, and reconciliation are proven |
+| Phase 5 (advanced) | Ledger extraction + saga orchestrator + schema registry | Enables distributed ownership while preserving money invariants |
+
+The directory can still be service-shaped. The important rule is that the synchronous money path must not depend on best-effort cross-service writes.
 
 ---
 
-## 2. Service map
+## 2. Logical service map
+
+This map shows domain boundaries and future extraction seams. In Phase 1 these run mostly inside `cmd/api` plus separate async workers.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -59,7 +72,7 @@ This is not a microservices-for-the-sake-of-microservices design. Each service b
 - **Database**: `paygate_payments` schema in PostgreSQL
 - **Responsibilities**: create payment attempts, call gateway for authorization, handle capture, manage auto-capture scheduler, handle gateway callbacks
 - **Publishes**: `payment.authorized`, `payment.captured`, `payment.failed`
-- **Calls**: Gateway Proxy (simulated), Ledger Service (on capture, to write journal entries)
+- **Calls**: Gateway Proxy (simulated). Uses the ledger module in the same DB transaction on capture.
 - **Critical path**: this is the most latency-sensitive service. Optimize for minimal database round-trips during authorization.
 
 ### 3.4 Refund Service
@@ -67,21 +80,21 @@ This is not a microservices-for-the-sake-of-microservices design. Each service b
 - **Database**: `paygate_refunds` schema in PostgreSQL
 - **Responsibilities**: validate refund eligibility (payment must be captured, amount within remaining), create refund records, process refunds via gateway, track refund state
 - **Publishes**: `refund.created`, `refund.processed`, `refund.failed`
-- **Calls**: Ledger Service (on creation, to write compensating entries)
+- **Calls**: Ledger module when a refund is confirmed as processed, in the same DB transaction as the refund status update.
 
 ### 3.5 Settlement Service
 - **Technology**: Go
 - **Database**: `paygate_settlements` schema in PostgreSQL
 - **Responsibilities**: nightly batch collection of eligible payments, fee calculation, settlement creation, settlement holds management, payout tracking
 - **Publishes**: `settlement.created`, `settlement.processed`
-- **Calls**: Ledger Service (to write settlement journal entries)
+- **Calls**: Ledger module in the same DB transaction as settlement item creation.
 
 ### 3.6 Ledger Service
 - **Technology**: Go
 - **Database**: `paygate_ledger` schema in PostgreSQL (dedicated, no sharing)
 - **Responsibilities**: accept journal entry requests, enforce double-entry invariant (debit = credit), provide balance queries, run periodic balance checks
-- **Important**: this service is **append-only** for writes. No UPDATE or DELETE on ledger entries, ever. The table has a CHECK constraint enforcing `debit_amount = credit_amount` per transaction.
-- **Does NOT publish events**: it is a synchronous dependency called by Payment, Refund, and Settlement services within their flows. This keeps the ledger as a pure source of truth, not an event emitter.
+- **Important**: this module/service is **append-only** for writes. No UPDATE or DELETE on ledger entries, ever.
+- **Money-path rule**: in Phase 1, ledger entries are written in the same PostgreSQL transaction as the payment/refund/settlement state change and outbox event. If Ledger is later extracted as a network service, it must expose idempotent commands and the calling flow must become an explicit saga. Do not combine synchronous network ledger calls with independent payment commits without a recovery protocol.
 
 ### 3.7 Webhook Service
 - **Technology**: Go
@@ -113,7 +126,7 @@ This is not a microservices-for-the-sake-of-microservices design. Each service b
 
 ### 4.1 Database strategy
 
-One PostgreSQL cluster, logically separated schemas per service. Each service owns its schema and no other service reads from it directly. Cross-service data access goes through APIs or events.
+One PostgreSQL cluster, logically separated schemas per domain. Runtime packages own their schemas. In Phase 1, a single backend role may write multiple schemas only inside money-critical transactions. Outside those explicitly documented transaction boundaries, cross-domain reads should go through query APIs, read models, or reconciliation jobs.
 
 ```
 PostgreSQL cluster
@@ -124,12 +137,13 @@ PostgreSQL cluster
 ├── paygate_ledger       (Ledger Service — most critical)
 ├── paygate_webhooks     (Webhook Service)
 ├── paygate_merchants    (shared merchant/auth data)
-└── paygate_audit        (Audit events — append-only)
+├── paygate_audit        (Audit events — append-only)
+└── paygate_idempotency  (Durable idempotency records)
 ```
 
 ### 4.2 Why not separate databases?
 
-For a portfolio project, a single Postgres cluster with schema isolation gives you the conceptual separation of microservices without the operational overhead of multiple database clusters. In production, you'd split the ledger into its own cluster first (it has the strictest durability and consistency requirements).
+For a portfolio project, a single Postgres cluster with schema isolation gives conceptual separation without the operational overhead of multiple database clusters. In production, split async workers first. Split the ledger last unless you also introduce idempotent command processing, a durable command log, and reconciliation for in-flight ledger commands.
 
 ### 4.3 Kafka topics
 
@@ -161,6 +175,17 @@ Partitioned by `merchant_id` to guarantee per-merchant ordering.
 - Reconciliation batch exports
 - Audit log archives (after retention rotation)
 - API request/response logs (long-term)
+- Event schema snapshots and compatibility reports
+
+### 4.6 Advanced distributed components
+
+| Component | Responsibility |
+|----------|----------------|
+| `saga-orchestrator` | Coordinates long-running payment/refund/settlement workflows across extracted services |
+| `schema-registry` | Stores event schemas, version metadata, and compatibility policy |
+| `payout-rail-sim` | Simulates asynchronous payout rails with return/failure scenarios |
+| `risk-scorer` | Combines rules and model score, emits explainable risk decisions |
+| `dr-coordinator` | Runs disaster-recovery drills and verifies catch-up checkpoints |
 
 ---
 
@@ -181,6 +206,10 @@ Namespace: paygate
 │   ├── recon-worker         (1 replica — scheduled)
 │   ├── outbox-relay         (2 replicas — active-passive)
 │   ├── gateway-proxy        (1 replica — simulator)
+│   ├── saga-orchestrator    (2 replicas — leader election)
+│   ├── schema-registry      (2 replicas)
+│   ├── risk-scorer          (2 replicas)
+│   ├── payout-rail-sim      (1 replica)
 │   └── dashboard            (2 replicas)
 ├── StatefulSets
 │   ├── postgresql           (1 primary + 1 replica)
@@ -277,7 +306,7 @@ Secrets (DB passwords, API keys, encryption keys) are **never** in config files.
 |---------|-------------|------------|
 | PostgreSQL primary down | All writes blocked | Automatic failover to replica, connection pooling with PgBouncer retries |
 | Kafka broker down | Event publishing delayed | 3-broker cluster, replication factor 2, outbox buffers events |
-| Redis down | Idempotency checks fail-open, rate limiting disabled | Degrade gracefully: skip idempotency check, log warning, allow request through |
+| Redis down | Rate limiting disabled; idempotency cache unavailable | Fail-open only for non-money-changing endpoints. For capture/refund/settlement writes, fall back to DB-backed idempotency or return 503. Never knowingly allow duplicate money movement because Redis is down. |
 | Payment Service down | No new payments | HPA scales up, circuit breaker returns 503, checkout shows retry UI |
 | Webhook Service down | Webhooks delayed | Events stay in Kafka until service recovers, no data loss |
 | Outbox relay down | Events delayed | Events accumulate in outbox table, relay catches up on restart, alert fires if backlog > 1000 |
@@ -317,3 +346,11 @@ CREATE TABLE feature_flags (
 ```
 
 Checked at request time via cached lookup (Redis, 30s TTL).
+
+### 9.4 Extraction guardrails (advanced track)
+
+- Never extract a synchronous money-path boundary unless:
+- command idempotency table exists for the consumer
+- replay and compensation are implemented and tested
+- reconciliation has mismatch rules for that boundary
+- runbook includes failure and recovery playbook for that boundary
