@@ -9,6 +9,7 @@
 ### Repository and tooling
 - [ ] Initialize Go module: `go mod init github.com/{you}/paygate`
 - [ ] Set up monorepo structure (see directory layout below)
+- [ ] Start as a modular monolith: one backend deployable, strict internal package boundaries, extract workers later
 - [ ] Configure `golangci-lint` with strict config
 - [ ] Set up `Makefile` with targets: `build`, `test`, `lint`, `migrate`, `dev`, `docker`
 - [ ] Create `docker-compose.yml` with Postgres, Kafka (KRaft), Redis, MinIO
@@ -151,7 +152,8 @@ paygate/
 ## Phase 2 — Reliability and money movement
 
 ### Idempotency
-- [ ] Idempotency middleware (Redis SET NX EX)
+- [ ] Idempotency middleware (Redis SET NX EX + durable Postgres records for money-changing writes)
+- [ ] Reject same idempotency key with different request hash
 - [ ] Handle all three cases: new, completed, in-progress
 - [ ] `Idempotent-Replayed: true` header on cached responses
 - [ ] `409 Conflict` with `Retry-After` for in-progress requests
@@ -177,7 +179,9 @@ paygate/
 - [ ] Refund eligibility validation with row-level locking
 - [ ] Concurrent refund protection (`SELECT FOR UPDATE`)
 - [ ] Async refund processing (queue → gateway → status update)
-- [ ] Compensating ledger entries on refund processed
+- [ ] Reserve refund amount on creation via `amount_refunded_pending`
+- [ ] Create refund reversal ledger entries only after gateway confirms `processed`
+- [ ] Release pending refund reservation on `failed`
 - [ ] Update `payment.amount_refunded` and `payment.refund_status`
 - [ ] Outbox: `refund.created`, `refund.processed`, `refund.failed`
 - [ ] Unit tests: eligibility checks, concurrent refund prevention
@@ -194,7 +198,7 @@ paygate/
 - [ ] Retry worker (polls sorted set, re-delivers)
 - [ ] Dead-letter queue (after 18 attempts)
 - [ ] Duplicate suppression (Redis fingerprint, 48h TTL)
-- [ ] `POST /v1/webhooks/{event_id}/replay` — manual replay
+- [ ] `POST /v1/webhooks/events/{event_id}/replay` — manual replay
 - [ ] Webhook secret rotation endpoint
 - [ ] Unit tests: signature generation/verification, retry scheduling
 - [ ] Integration test: capture → webhook delivered to mock endpoint
@@ -320,7 +324,7 @@ paygate/
 - [ ] Toxiproxy setup for inter-service fault injection
 - [ ] Chaos test: DB failure during capture
 - [ ] Chaos test: Kafka broker failure
-- [ ] Chaos test: Redis failure (fail-open behavior)
+- [ ] Chaos test: Redis failure (DB-backed idempotency for money writes, fail-open only for low-risk cache paths)
 - [ ] Chaos test: webhook endpoint slow/down
 - [ ] Chaos test: outbox relay crash and recovery
 - [ ] Document results in runbook
@@ -338,6 +342,35 @@ paygate/
 - [ ] Observability dashboards (embedded Grafana or custom)
 - [ ] Gateway simulator control panel
 - [ ] Reconciliation drill-down with mismatch details
+
+---
+
+## Phase 5 — Advanced distributed systems track
+
+### Saga orchestration and extraction
+- [ ] Add `saga_instances`, `saga_steps`, and `processed_commands` tables
+- [ ] Build saga orchestrator service with replay endpoint
+- [ ] Add idempotent command handlers in extracted services
+- [ ] Implement compensation flows for failed saga branches
+- [ ] Integration test: crash/restart in middle of saga without double-posting
+
+### Event schema governance
+- [ ] Add schema registry APIs and persistence (`event_schemas`)
+- [ ] Add CI compatibility check for producer schema changes
+- [ ] Add consumer contract test gate before schema activation
+- [ ] Support dual-publish rollout and cutover tracking
+
+### Ledger holds and payout rail simulation
+- [ ] Add `ledger_holds` table and hold APIs (create/release/commit)
+- [ ] Enforce payout eligibility checks against active holds
+- [ ] Build payout rail simulator with async callbacks and returns
+- [ ] Integration test: hold commit produces exactly one final posting
+
+### Disaster recovery maturity
+- [ ] Run quarterly DR drill in staging
+- [ ] Measure and record RTO/RPO and replay duration
+- [ ] Verify post-restore reconciliation before reopening settlements
+- [ ] Add DR drill artifact checklist to runbook
 
 ---
 
