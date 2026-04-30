@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package paygate.ledger.v1;
+
+option go_package = "github.com/sanskarpan/PayGate/internal/ledger/pb;ledgerpb";
+
+message Entry {
+  string account_code = 1;
+  int64 debit_amount = 2;
+  int64 credit_amount = 3;
+  string currency = 4;
+  string description = 5;
+}
+
+message CreateEntriesRequest {
+  string transaction_id = 1;
+  string merchant_id = 2;
+  string source_type = 3;
+  string source_id = 4;
+  repeated Entry entries = 5;
+}
+
+message CreateEntriesResponse {
+  string transaction_id = 1;
+}
+
+message GetBalanceRequest {
+  string merchant_id = 1;
+  string account_code = 2;
+}
+
+message GetBalanceResponse {
+  string merchant_id = 1;
+  string account_code = 2;
+  int64 balance = 3;
+}
+
+service LedgerService {
+  rpc CreateEntries(CreateEntriesRequest) returns (CreateEntriesResponse);
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+}
