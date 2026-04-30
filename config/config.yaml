@@ -1,0 +1,12 @@
+server:
+  port: 8080
+
+database:
+  dsn: postgres://paygate:paygate@localhost:5432/paygate?sslmode=disable
+
+redis:
+  addr: localhost:6379
+
+kafka:
+  brokers:
+    - localhost:9092
