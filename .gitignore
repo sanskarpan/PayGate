@@ -1,0 +1,31 @@
+# Build outputs
+bin/
+dist/
+
+# Go
+*.test
+*.out
+coverage.out
+
+# Env
+.env
+.env.local
+
+# IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Node/dashboard
+node_modules/
+.next/
+
+# Local infra data
+.pgdata/
+.minio/
+.kafka/
+.redis/
+
+.gocache/
+.gomodcache/
+.golangci-cache/
