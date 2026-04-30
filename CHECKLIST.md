@@ -7,21 +7,21 @@
 ## Phase 0 — Project setup
 
 ### Repository and tooling
-- [ ] Initialize Go module: `go mod init github.com/{you}/paygate`
-- [ ] Set up monorepo structure (see directory layout below)
-- [ ] Start as a modular monolith: one backend deployable, strict internal package boundaries, extract workers later
-- [ ] Configure `golangci-lint` with strict config
-- [ ] Set up `Makefile` with targets: `build`, `test`, `lint`, `migrate`, `dev`, `docker`
-- [ ] Create `docker-compose.yml` with Postgres, Kafka (KRaft), Redis, MinIO
-- [ ] Create `docker-compose.test.yml` for integration tests
-- [ ] Set up database migration tool (`golang-migrate`)
-- [ ] Create initial migration: merchant and API key tables
-- [ ] Write `KSUID` ID generator with prefix support
-- [ ] Set up structured JSON logger (zerolog or slog)
-- [ ] Set up OpenTelemetry tracing (basic, wire through HTTP/gRPC)
-- [ ] Create health check endpoints (`/healthz`, `/readyz`) as shared middleware
-- [ ] Initialize Next.js frontend in `dashboard/` directory
-- [ ] Set up CI pipeline (lint → unit test → build → integration test)
+- [x] Initialize Go module: `go mod init github.com/{you}/paygate`
+- [x] Set up monorepo structure (see directory layout below)
+- [x] Start as a modular monolith: one backend deployable, strict internal package boundaries, extract workers later
+- [x] Configure `golangci-lint` with strict config
+- [x] Set up `Makefile` with targets: `build`, `test`, `lint`, `migrate`, `dev`, `docker`
+- [x] Create `docker-compose.yml` with Postgres, Kafka (KRaft), Redis, MinIO
+- [x] Create `docker-compose.test.yml` for integration tests
+- [x] Set up database migration tool (`golang-migrate`)
+- [x] Create initial migration: merchant and API key tables
+- [x] Write `KSUID` ID generator with prefix support
+- [x] Set up structured JSON logger (zerolog or slog)
+- [x] Set up OpenTelemetry tracing (basic, wire through HTTP/gRPC)
+- [x] Create health check endpoints (`/healthz`, `/readyz`) as shared middleware
+- [x] Initialize Next.js frontend in `dashboard/` directory
+- [x] Set up CI pipeline (lint → unit test → build → integration test)
 
 ### Directory layout
 ```
@@ -77,75 +77,75 @@ paygate/
 ## Phase 1 — Core payments backbone
 
 ### Merchant and API keys
-- [ ] Merchant registration endpoint: `POST /v1/merchants`
-- [ ] Merchant model with settings (auto_capture, fee_rate, etc.)
-- [ ] API key generation: `POST /v1/merchants/{id}/keys`
-- [ ] API key authentication middleware (Basic auth, bcrypt verification)
-- [ ] API key scoping (read, write, admin)
-- [ ] API key revocation endpoint
-- [ ] Unit tests: auth middleware, key validation, scope checking
+- [x] Merchant registration endpoint: `POST /v1/merchants`
+- [x] Merchant model with settings (auto_capture, fee_rate, etc.)
+- [x] API key generation: `POST /v1/merchants/{id}/keys`
+- [x] API key authentication middleware (Basic auth, bcrypt verification)
+- [x] API key scoping (read, write, admin)
+- [x] API key revocation endpoint
+- [x] Unit tests: auth middleware, key validation, scope checking
 
 ### Order service
-- [ ] Order domain model with state machine
-- [ ] `POST /v1/orders` — create order
-- [ ] `GET /v1/orders/{id}` — fetch order
-- [ ] `GET /v1/orders` — list orders (cursor pagination)
-- [ ] Order expiry: set `expires_at` on creation (default 30 min)
-- [ ] Order expiry sweeper (CronJob or ticker goroutine)
-- [ ] Outbox: write `order.created` event in same transaction
-- [ ] Unit tests: state machine transitions, validation, pagination
-- [ ] Integration test: create order → verify in DB
+- [x] Order domain model with state machine
+- [x] `POST /v1/orders` — create order
+- [x] `GET /v1/orders/{id}` — fetch order
+- [x] `GET /v1/orders` — list orders (cursor pagination)
+- [x] Order expiry: set `expires_at` on creation (default 30 min)
+- [x] Order expiry sweeper (CronJob or ticker goroutine)
+- [x] Outbox: write `order.created` event in same transaction
+- [x] Unit tests: state machine transitions, validation, pagination
+- [x] Integration test: create order → verify in DB
 
 ### Payment service
-- [ ] Payment attempt model
-- [ ] Payment domain model with state machine
-- [ ] Simulated gateway proxy service (happy path: immediate success)
-- [ ] Payment initiation: create attempt → call gateway → transition state
-- [ ] `POST /v1/payments/{id}/capture` — capture from authorized
-- [ ] Auto-capture scheduler (Redis timer or DB sweeper)
-- [ ] Auth window expiry sweeper (auto-refund uncaptured payments)
-- [ ] Outbox: write `payment.authorized`, `payment.captured`, `payment.failed`
-- [ ] Connect to order service: update order status on capture
-- [ ] Unit tests: state machine (all transitions + invalid transitions)
-- [ ] Unit tests: auto-capture logic, expiry logic
-- [ ] Integration test: order → payment → capture full flow
+- [x] Payment attempt model
+- [x] Payment domain model with state machine
+- [x] Simulated gateway proxy service (happy path: immediate success)
+- [x] Payment initiation: create attempt → call gateway → transition state
+- [x] `POST /v1/payments/{id}/capture` — capture from authorized
+- [x] Auto-capture scheduler (Redis timer or DB sweeper)
+- [x] Auth window expiry sweeper (auto-refund uncaptured payments)
+- [x] Outbox: write `payment.authorized`, `payment.captured`, `payment.failed`
+- [x] Connect to order service: update order status on capture
+- [x] Unit tests: state machine (all transitions + invalid transitions)
+- [x] Unit tests: auto-capture logic, expiry logic
+- [x] Integration test: order → payment → capture full flow
 
 ### Checkout (simulated)
-- [ ] Simple HTML checkout page that submits payment against an order
-- [ ] Checkout verifies order exists and is not expired
-- [ ] Callback URL handling: redirect after payment
+- [x] Simple HTML checkout page that submits payment against an order
+- [x] Checkout verifies order exists and is not expired
+- [x] Callback URL handling: redirect after payment
 
 ### Ledger service (Phase 1 — basic)
-- [ ] Ledger accounts table with seed data
-- [ ] Ledger entry creation with double-entry validation
-- [ ] gRPC endpoint: `CreateEntries(transaction_id, entries[])`
-- [ ] Balance query: sum debits and credits per account
-- [ ] Unit tests: debit == credit constraint, single-side constraint
-- [ ] Integration test: capture creates correct ledger entries
+- [x] Ledger accounts table with seed data
+- [x] Ledger entry creation with double-entry validation
+- [x] gRPC endpoint: `CreateEntries(transaction_id, entries[])`
+- [x] Balance query: sum debits and credits per account
+- [x] Unit tests: debit == credit constraint, single-side constraint
+- [x] Integration test: capture creates correct ledger entries
 
 ### API gateway (basic)
-- [ ] Request routing to backend services
-- [ ] API key authentication (delegates to auth package)
-- [ ] Correlation ID injection (`X-Request-Id`)
-- [ ] Request/response logging (structured JSON, scrubbed)
-- [ ] Basic rate limiting (per-merchant, per-endpoint)
+- [x] Request routing to backend services
+- [x] API key authentication (delegates to auth package)
+- [x] Correlation ID injection (`X-Request-Id`)
+- [x] Request/response logging (structured JSON, scrubbed)
+- [x] Basic rate limiting (per-merchant, per-endpoint)
 
 ### Dashboard (Phase 1)
-- [ ] Login page (merchant user auth)
-- [ ] Orders list page with pagination
-- [ ] Order detail page
-- [ ] Payment detail page with state history
-- [ ] API key management page (create, view, revoke)
-- [ ] Basic layout with navigation
+- [x] Login page (merchant user auth)
+- [x] Orders list page with pagination
+- [x] Order detail page
+- [x] Payment detail page with state history
+- [x] API key management page (create, view, revoke)
+- [x] Basic layout with navigation
 
 ### Phase 1 milestone tests
-- [ ] Can create a merchant and generate API keys
-- [ ] Can create an order via API
-- [ ] Can simulate a payment through checkout
-- [ ] Payment moves through created → authorized → captured
-- [ ] Capture creates ledger entries with correct amounts
-- [ ] Order transitions to `paid` after capture
-- [ ] Dashboard shows orders and payments
+- [x] Can create a merchant and generate API keys
+- [x] Can create an order via API
+- [x] Can simulate a payment through checkout
+- [x] Payment moves through created → authorized → captured
+- [x] Capture creates ledger entries with correct amounts
+- [x] Order transitions to `paid` after capture
+- [x] Dashboard shows orders and payments
 
 ---
 
