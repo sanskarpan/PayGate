@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: paygate-postgres-test
+    environment:
+      POSTGRES_DB: paygate_test
+      POSTGRES_USER: paygate
+      POSTGRES_PASSWORD: paygate
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paygate -d paygate_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: paygate-redis-test
+    ports:
+      - "6380:6379"
