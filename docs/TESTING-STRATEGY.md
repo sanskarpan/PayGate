@@ -183,7 +183,7 @@ func TestIntegration_PaymentCaptureCreatesLedgerEntries(t *testing.T) {
     // Execute flow
     order := createTestOrder(t, pg.Pool, testMerchant)
     pay := authorizeTestPayment(t, paymentSvc, order)
-    captured, err := paymentSvc.Capture(ctx, pay.ID, pay.Amount)
+    captured, err := paymentSvc.CaptureForMerchant(ctx, pay.MerchantID, pay.ID, pay.Amount)
 
     // Assert
     assert.NoError(t, err)
