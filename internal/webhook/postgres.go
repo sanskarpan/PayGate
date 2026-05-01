@@ -290,6 +290,52 @@ WHERE event_id = $1 AND subscription_id = $2 AND status = 'succeeded'
 	return count > 0, err
 }
 
+func (r *PostgresRepository) FindDeliveryByEvent(ctx context.Context, merchantID, eventID string) ([]WebhookDeliveryAttempt, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT id, event_id, subscription_id, merchant_id, status, request_url, request_body,
+       response_code, response_body, error_message, attempt_number, next_retry_at, created_at
+FROM paygate_webhooks.webhook_delivery_attempts
+WHERE merchant_id = $1 AND event_id = $2
+ORDER BY created_at DESC
+LIMIT 100
+`, merchantID, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var attempts []WebhookDeliveryAttempt
+	for rows.Next() {
+		var a WebhookDeliveryAttempt
+		if err := rows.Scan(&a.ID, &a.EventID, &a.SubscriptionID, &a.MerchantID, &a.Status,
+			&a.RequestURL, &a.RequestBody, &a.ResponseCode, &a.ResponseBody, &a.ErrorMessage,
+			&a.AttemptNumber, &a.NextRetryAt, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		attempts = append(attempts, a)
+	}
+	return attempts, rows.Err()
+}
+
+func (r *PostgresRepository) RotateSecret(ctx context.Context, merchantID, id string) (WebhookSubscription, error) {
+	if _, err := r.GetSubscription(ctx, merchantID, id); err != nil {
+		return WebhookSubscription{}, err
+	}
+	secret, err := generateSecret()
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
+	_, err = r.db.Exec(ctx, `
+UPDATE paygate_webhooks.webhook_subscriptions
+SET secret = $1, updated_at = NOW()
+WHERE id = $2 AND merchant_id = $3
+`, secret, id, merchantID)
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
+	return r.GetSubscription(ctx, merchantID, id)
+}
+
 // generateSecret returns a cryptographically random 32-byte hex string.
 func generateSecret() (string, error) {
 	b := make([]byte, 32)

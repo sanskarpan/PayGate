@@ -96,6 +96,7 @@ func run() error {
 	webhookHandler := webhook.NewHandler(webhookSvc)
 
 	go order.NewExpirySweeper(orderSvc, time.Minute, l).Start(ctx)
+	go webhook.NewRetryWorker(webhookSvc, 30*time.Second, l).Start(ctx)
 	go payment.NewSweeper(paymentSvc, 30*time.Second, l).Start(ctx)
 
 	mux := http.NewServeMux()
