@@ -124,7 +124,7 @@ func RetryDelay(attemptNumber int) time.Duration {
 	if attemptNumber <= 0 || attemptNumber > len(delays) {
 		return 1 * time.Hour
 	}
-	return delays[attemptNumber-1]
+	return delays[attemptNumber-1] //nolint:gosec // bounds are checked on the line above
 }
 
 // MatchesEvent reports whether the subscription is subscribed to the given event type.
