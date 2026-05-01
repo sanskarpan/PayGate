@@ -3,9 +3,13 @@ import Link from "next/link";
 import { getOrders, requireViewer } from "../../lib/api";
 import { formatMoney, formatTime } from "../../lib/types";
 
-export default async function OrdersPage() {
+export default async function OrdersPage({
+  searchParams,
+}: {
+  searchParams: { cursor?: string };
+}) {
   const viewer = await requireViewer();
-  const orders = await getOrders();
+  const orders = await getOrders(searchParams.cursor);
 
   return (
     <section className="stack">
@@ -35,6 +39,16 @@ export default async function OrdersPage() {
           ))
         )}
       </div>
+      {orders.has_more && orders.next_cursor && (
+        <div style={{ textAlign: "center" }}>
+          <Link
+            className="ghost-button"
+            href={`/orders?cursor=${encodeURIComponent(orders.next_cursor)}`}
+          >
+            Load more
+          </Link>
+        </div>
+      )}
     </section>
   );
 }

@@ -40,7 +40,7 @@ export default async function RiskEventsPage() {
                   <span>{formatTime(ev.created_at)}</span>
                 </div>
               </div>
-              <div className="amount-pill">{ev.id}</div>
+              <div className="amount-pill">Score: {ev.score}</div>
             </div>
           ))
         )}
