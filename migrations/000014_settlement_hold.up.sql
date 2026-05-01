@@ -1,0 +1,5 @@
+ALTER TABLE paygate_settlements.settlements
+    ADD COLUMN IF NOT EXISTS on_hold      BOOLEAN     NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS hold_reason  TEXT,
+    ADD COLUMN IF NOT EXISTS held_at      TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS released_at  TIMESTAMPTZ;
