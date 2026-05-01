@@ -1,6 +1,7 @@
 package risk
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -25,6 +26,11 @@ const (
 var (
 	ErrRiskEventNotFound = errors.New("risk event not found")
 )
+
+// AlertFunc is called when a risk evaluation results in a hold or block action.
+// It receives the risk event so callers can write outbox events or send notifications.
+// A nil AlertFunc means alerts are disabled.
+type AlertFunc func(ctx context.Context, ev RiskEvent)
 
 // RiskEvent records the risk evaluation for a single payment.
 type RiskEvent struct {
