@@ -138,6 +138,29 @@ func run() error {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"entity": "merchant_auth_context", "merchant_id": p.MerchantID, "key_id": p.KeyID, "user_id": p.UserID, "email": p.Email, "role": p.Role, "scope": p.Scope, "auth_type": p.AuthType})
 	})))
 
+	mux.Handle("GET /v1/merchants/me/balance", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, ok := httpx.PrincipalFromContext(r.Context())
+		if !ok {
+			httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+			return
+		}
+		accountCodes := []string{"CUSTOMER_RECEIVABLE", "MERCHANT_PAYABLE", "PLATFORM_FEE_REVENUE"}
+		balances := make(map[string]int64, len(accountCodes))
+		for _, code := range accountCodes {
+			bal, err := ledgerSvc.GetBalance(r.Context(), p.MerchantID, code)
+			if err != nil {
+				httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "could not retrieve balance"})
+				return
+			}
+			balances[code] = bal
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"entity":      "merchant_balance",
+			"merchant_id": p.MerchantID,
+			"balances":    balances,
+		})
+	})))
+
 	rateLimiter := middleware.NewRateLimiter(25, 25)
 	handler := telemetry.WrapHTTP(httpx.NewRouter(middleware.Logging(l, rateLimiter.Middleware(mux))), "api-gateway")
 
