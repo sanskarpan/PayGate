@@ -61,7 +61,7 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"amount": 9900, "reason": "customer request"})
 		req := httptest.NewRequest(http.MethodPost, "/v1/payments/"+authorized.PaymentID+"/refunds", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Basic "+authHeader)
+		req.Header.Set("Authorization", authHeader)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -107,7 +107,7 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"amount": 9999})
 		req := httptest.NewRequest(http.MethodPost, "/v1/payments/"+authorized2.PaymentID+"/refunds", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Basic "+authHeader)
+		req.Header.Set("Authorization", authHeader)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -128,7 +128,7 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"amount": 3000})
 		req := httptest.NewRequest(http.MethodPost, "/v1/payments/"+authorized3.PaymentID+"/refunds", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Basic "+authHeader)
+		req.Header.Set("Authorization", authHeader)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -139,7 +139,7 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 
 	t.Run("list refunds for payment", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v1/payments/"+authorized.PaymentID+"/refunds", nil)
-		req.Header.Set("Authorization", "Basic "+authHeader)
+		req.Header.Set("Authorization", authHeader)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
