@@ -36,6 +36,11 @@ const (
 // MaxDeliveryAttempts is the number of attempts before an event is dead-lettered.
 const MaxDeliveryAttempts = 18
 
+// RotateSecretGracePeriod is the duration the previous secret remains valid
+// after a rotation so consumers can update their verification code without
+// downtime.
+const RotateSecretGracePeriod = 24 * time.Hour
+
 var (
 	ErrSubscriptionNotFound    = errors.New("webhook subscription not found")
 	ErrDeliveryAttemptNotFound = errors.New("webhook delivery attempt not found")
@@ -75,9 +80,14 @@ type WebhookSubscription struct {
 	URL        string
 	Events     []string // event type patterns subscribed to, e.g. ["payment.captured"]
 	Secret     string   // HMAC-SHA256 signing secret (never returned to client after creation)
-	Status     SubscriptionStatus
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// PreviousSecret is the signing secret that was replaced by the most recent
+	// rotation. It remains valid until PreviousSecretExpiresAt to allow a
+	// grace-period overlap when consumers update their verification logic.
+	PreviousSecret           string
+	PreviousSecretExpiresAt  *time.Time
+	Status                   SubscriptionStatus
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 }
 
 // WebhookDeliveryAttempt records one HTTP delivery attempt to a subscription.
