@@ -1,7 +1,7 @@
 -- Team invitations
-CREATE TABLE IF NOT EXISTS public.merchant_invitations (
+CREATE TABLE IF NOT EXISTS paygate_merchants.merchant_invitations (
     id          TEXT PRIMARY KEY,
-    merchant_id TEXT        NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    merchant_id TEXT        NOT NULL REFERENCES paygate_merchants.merchants(id) ON DELETE CASCADE,
     email       TEXT        NOT NULL,
     role        TEXT        NOT NULL CHECK (role IN ('admin','developer','readonly','ops')),
     token_hash  TEXT        NOT NULL UNIQUE,
@@ -14,10 +14,10 @@ CREATE TABLE IF NOT EXISTS public.merchant_invitations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_merchant_invitations_merchant_id
-    ON public.merchant_invitations(merchant_id);
+    ON paygate_merchants.merchant_invitations(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_merchant_invitations_email
-    ON public.merchant_invitations(merchant_id, email);
+    ON paygate_merchants.merchant_invitations(merchant_id, email);
 
 -- IP allowlist per API key (empty array = no restriction)
-ALTER TABLE public.merchant_api_keys
+ALTER TABLE paygate_merchants.api_keys
     ADD COLUMN IF NOT EXISTS allowed_ips TEXT[] NOT NULL DEFAULT '{}';
