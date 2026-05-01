@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -32,6 +33,11 @@ func main() {
 
 func run() error {
 	cfg := config.FromEnv()
+	if os.Getenv("APP_ENV") == "production" {
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+	}
 	l := logger.New("api-gateway")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
