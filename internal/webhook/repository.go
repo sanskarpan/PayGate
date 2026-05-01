@@ -26,4 +26,10 @@ type Repository interface {
 
 	// Event deduplication: returns true if the (event_id, subscription_id) pair was already delivered
 	IsDelivered(ctx context.Context, eventID, subscriptionID string) (bool, error)
+
+	// Replay: find the most recent succeeded delivery attempt for eventID to replay
+	FindDeliveryByEvent(ctx context.Context, merchantID, eventID string) ([]WebhookDeliveryAttempt, error)
+
+	// RotateSecret replaces the signing secret for a subscription.
+	RotateSecret(ctx context.Context, merchantID, id string) (WebhookSubscription, error)
 }
