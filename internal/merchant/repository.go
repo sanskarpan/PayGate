@@ -16,4 +16,14 @@ type Repository interface {
 	GetMerchantUserByMerchantAndEmail(ctx context.Context, merchantID, email string) (MerchantUser, error)
 	CountMerchantUsersByMerchant(ctx context.Context, merchantID string) (int, error)
 	UpdateMerchantUserLastLogin(ctx context.Context, userID string) error
+
+	// Team invitations
+	CreateInvitation(ctx context.Context, inv Invitation) (Invitation, error)
+	GetInvitationByTokenHash(ctx context.Context, tokenHash string) (Invitation, error)
+	ListInvitationsByMerchant(ctx context.Context, merchantID string) ([]Invitation, error)
+	MarkInvitationAccepted(ctx context.Context, invitationID string) error
+	RevokeInvitation(ctx context.Context, merchantID, invitationID string) error
+
+	// API key IP allowlist
+	UpdateAPIKeyAllowedIPs(ctx context.Context, merchantID, keyID string, ips []string) error
 }
