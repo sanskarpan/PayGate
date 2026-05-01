@@ -23,6 +23,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/merchant"
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
+	"github.com/sanskarpan/PayGate/internal/recon"
 	"github.com/sanskarpan/PayGate/internal/refund"
 	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/webhook"
@@ -103,6 +104,7 @@ func run() error {
 	go order.NewExpirySweeper(orderSvc, time.Minute, l).Start(ctx)
 	go webhook.NewRetryWorker(webhookSvc, 30*time.Second, l).Start(ctx)
 	go payment.NewSweeper(paymentSvc, 30*time.Second, l).Start(ctx)
+	go recon.NewWorker(db, l).Start(ctx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", httpx.Healthz)
