@@ -30,6 +30,16 @@ func (s *Service) List(ctx context.Context, merchantID string) ([]Settlement, er
 	return s.repo.ListSettlements(ctx, merchantID)
 }
 
+// Hold places a settlement on hold with the given reason.
+func (s *Service) Hold(ctx context.Context, merchantID, settlementID, reason string) error {
+	return s.repo.HoldSettlement(ctx, merchantID, settlementID, reason)
+}
+
+// Release removes a hold from a settlement.
+func (s *Service) Release(ctx context.Context, merchantID, settlementID string) error {
+	return s.repo.ReleaseSettlement(ctx, merchantID, settlementID)
+}
+
 // GetItems returns the settlement items for a settlement.
 func (s *Service) GetItems(ctx context.Context, merchantID, settlementID string) (Settlement, []SettlementItem, error) {
 	sttl, err := s.repo.GetSettlement(ctx, merchantID, settlementID)

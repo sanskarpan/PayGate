@@ -150,16 +150,22 @@ WHERE id = ANY($2)
 
 func (r *PostgresRepository) GetSettlement(ctx context.Context, merchantID, id string) (Settlement, error) {
 	var s Settlement
+	var holdReason *string
 	err := r.db.QueryRow(ctx, `
 SELECT id, merchant_id, status, period_start, period_end, total_amount, total_fees,
-       total_refunds, net_amount, payment_count, currency, processed_at, created_at, updated_at
+       total_refunds, net_amount, payment_count, currency, processed_at, created_at, updated_at,
+       on_hold, hold_reason, held_at, released_at
 FROM paygate_settlements.settlements
 WHERE id = $1 AND merchant_id = $2
 `, id, merchantID).Scan(
 		&s.ID, &s.MerchantID, &s.Status, &s.PeriodStart, &s.PeriodEnd,
 		&s.TotalAmount, &s.TotalFees, &s.TotalRefunds, &s.NetAmount,
 		&s.PaymentCount, &s.Currency, &s.ProcessedAt, &s.CreatedAt, &s.UpdatedAt,
+		&s.OnHold, &holdReason, &s.HeldAt, &s.ReleasedAt,
 	)
+	if holdReason != nil {
+		s.HoldReason = *holdReason
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Settlement{}, ErrSettlementNotFound
 	}
@@ -169,7 +175,8 @@ WHERE id = $1 AND merchant_id = $2
 func (r *PostgresRepository) ListSettlements(ctx context.Context, merchantID string) ([]Settlement, error) {
 	rows, err := r.db.Query(ctx, `
 SELECT id, merchant_id, status, period_start, period_end, total_amount, total_fees,
-       total_refunds, net_amount, payment_count, currency, processed_at, created_at, updated_at
+       total_refunds, net_amount, payment_count, currency, processed_at, created_at, updated_at,
+       on_hold, hold_reason, held_at, released_at
 FROM paygate_settlements.settlements
 WHERE merchant_id = $1
 ORDER BY created_at DESC
@@ -183,16 +190,51 @@ LIMIT 100
 	var settlements []Settlement
 	for rows.Next() {
 		var s Settlement
+		var holdReason *string
 		if err := rows.Scan(
 			&s.ID, &s.MerchantID, &s.Status, &s.PeriodStart, &s.PeriodEnd,
 			&s.TotalAmount, &s.TotalFees, &s.TotalRefunds, &s.NetAmount,
 			&s.PaymentCount, &s.Currency, &s.ProcessedAt, &s.CreatedAt, &s.UpdatedAt,
+			&s.OnHold, &holdReason, &s.HeldAt, &s.ReleasedAt,
 		); err != nil {
 			return nil, err
+		}
+		if holdReason != nil {
+			s.HoldReason = *holdReason
 		}
 		settlements = append(settlements, s)
 	}
 	return settlements, rows.Err()
+}
+
+func (r *PostgresRepository) HoldSettlement(ctx context.Context, merchantID, settlementID, reason string) error {
+	tag, err := r.db.Exec(ctx, `
+UPDATE paygate_settlements.settlements
+SET on_hold = TRUE, hold_reason = $3, held_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2 AND on_hold = FALSE
+`, settlementID, merchantID, reason)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrSettlementOnHold
+	}
+	return nil
+}
+
+func (r *PostgresRepository) ReleaseSettlement(ctx context.Context, merchantID, settlementID string) error {
+	tag, err := r.db.Exec(ctx, `
+UPDATE paygate_settlements.settlements
+SET on_hold = FALSE, hold_reason = NULL, released_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2 AND on_hold = TRUE
+`, settlementID, merchantID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrSettlementNotOnHold
+	}
+	return nil
 }
 
 func (r *PostgresRepository) GetSettlementItems(ctx context.Context, settlementID string) ([]SettlementItem, error) {
