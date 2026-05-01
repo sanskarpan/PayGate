@@ -2,20 +2,40 @@ package webhook
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
+
+// Option is a functional option for configuring a Service.
+type Option func(*Service)
+
+// WithRedis attaches a Redis client to the Service for fast dedup fingerprint
+// checks. Pass nil to disable Redis-backed dedup (the repo-level IsDelivered
+// check still applies).
+func WithRedis(client *redis.Client) Option {
+	return func(s *Service) {
+		s.redis = client
+	}
+}
 
 // Service orchestrates webhook subscription management and event delivery.
 type Service struct {
 	repo      Repository
 	deliverer *Deliverer
+	redis     *redis.Client // nullable; nil means Redis dedup is disabled
 }
 
-// NewService creates a new Service.
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo, deliverer: NewDeliverer()}
+// NewService creates a new Service, applying any functional options.
+func NewService(repo Repository, opts ...Option) *Service {
+	s := &Service{repo: repo, deliverer: NewDeliverer()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // CreateSubscription creates a new webhook subscription.
@@ -77,6 +97,17 @@ func (s *Service) DeliverEvent(ctx context.Context, eventID, merchantID, eventTy
 	}
 
 	for _, sub := range subs {
+		// Fast-path Redis dedup: check fingerprint key before hitting the DB.
+		fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(eventID+":"+sub.ID)))
+		redisKey := "webhook:dedup:" + fingerprint
+		if s.redis != nil {
+			exists, err := s.redis.Exists(ctx, redisKey).Result()
+			if err == nil && exists > 0 {
+				// Already marked as delivered in Redis — skip without a DB round-trip.
+				continue
+			}
+		}
+
 		// Skip if already delivered to this subscription (idempotency).
 		delivered, err := s.repo.IsDelivered(ctx, eventID, sub.ID)
 		if err != nil {
@@ -114,6 +145,13 @@ func (s *Service) DeliverEvent(ctx context.Context, eventID, merchantID, eventTy
 
 		if _, err := s.repo.CreateDeliveryAttempt(ctx, attempt); err != nil {
 			return fmt.Errorf("record delivery attempt: %w", err)
+		}
+
+		// Persist the dedup fingerprint in Redis so subsequent consumers can
+		// skip the DB check entirely for 48 hours.
+		if s.redis != nil && result.Succeeded {
+			// Best-effort: ignore errors so a Redis outage never blocks delivery.
+			_ = s.redis.Set(ctx, redisKey, "1", 48*time.Hour).Err()
 		}
 	}
 	return nil
