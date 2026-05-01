@@ -142,11 +142,12 @@ func (s *Service) RetryPendingDeliveries(ctx context.Context, limit int) (int, e
 			nextRetryAt *string
 		)
 
-		if result.Succeeded {
+		switch {
+		case result.Succeeded:
 			status = DeliverySucceeded
-		} else if nextAttempt > MaxDeliveryAttempts {
+		case nextAttempt > MaxDeliveryAttempts:
 			status = DeliveryDeadLettered
-		} else {
+		default:
 			status = DeliveryFailed
 			delay := RetryDelay(nextAttempt)
 			t := time.Now().Add(delay).Format(time.RFC3339)
