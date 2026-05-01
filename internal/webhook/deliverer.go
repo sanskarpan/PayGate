@@ -60,7 +60,7 @@ func (d *Deliverer) Deliver(ctx context.Context, url, secret, eventType string, 
 	if err != nil {
 		return DeliveryResult{Error: err.Error()}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	succeeded := resp.StatusCode >= 200 && resp.StatusCode < 300
