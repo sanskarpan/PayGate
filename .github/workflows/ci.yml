@@ -61,5 +61,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install golang-migrate
+        run: go install github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
+      - name: Run database migrations
+        run: migrate -path ./migrations -database "$PAYGATE_TEST_DB_URL" up
       - name: Integration tests
         run: go test -tags=integration ./...
