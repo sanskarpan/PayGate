@@ -4,12 +4,33 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
 )
+
+// safeCallbackURL validates that the provided URL is a safe relative path to
+// prevent open redirect attacks. Only paths starting with "/" are accepted;
+// absolute URLs with a host are rejected. Returns the default fallback if the
+// input is empty or unsafe.
+func safeCallbackURL(raw, fallback string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host != "" || u.Scheme != "" {
+		return fallback
+	}
+	if !strings.HasPrefix(u.Path, "/") {
+		return fallback
+	}
+	return raw
+}
 
 type CheckoutHandler struct {
 	paymentSvc *payment.Service
@@ -29,10 +50,7 @@ func (h *CheckoutHandler) RegisterRoutes(mux *http.ServeMux) {
 func (h *CheckoutHandler) checkoutPage(w http.ResponseWriter, r *http.Request) {
 	orderID := r.URL.Query().Get("order_id")
 	merchantID := r.URL.Query().Get("merchant_id")
-	callbackURL := r.URL.Query().Get("callback_url")
-	if callbackURL == "" {
-		callbackURL = "/checkout/callback"
-	}
+	callbackURL := safeCallbackURL(r.URL.Query().Get("callback_url"), "/checkout/callback")
 
 	o, err := h.orderSvc.GetByID(r.Context(), merchantID, orderID)
 	if err != nil {
@@ -75,7 +93,7 @@ func (h *CheckoutHandler) pay(w http.ResponseWriter, r *http.Request) {
 	}
 	orderID := r.FormValue("order_id")
 	merchantID := r.FormValue("merchant_id")
-	callbackURL := r.FormValue("callback_url")
+	callbackURL := safeCallbackURL(r.FormValue("callback_url"), "/checkout/callback")
 	method := r.FormValue("method")
 
 	if orderID == "" || merchantID == "" {
