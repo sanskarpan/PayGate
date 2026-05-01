@@ -28,6 +28,8 @@ var (
 	ErrSettlementNotFound    = errors.New("settlement not found")
 	ErrInvalidTransition     = errors.New("invalid settlement state transition")
 	ErrNoEligiblePayments    = errors.New("no eligible payments found for settlement")
+	ErrSettlementOnHold      = errors.New("settlement is already on hold")
+	ErrSettlementNotOnHold   = errors.New("settlement is not on hold")
 )
 
 // Transition returns the next SettlementState for the given event,
@@ -69,6 +71,10 @@ type Settlement struct {
 	ProcessedAt  *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	OnHold       bool
+	HoldReason   string
+	HeldAt       *time.Time
+	ReleasedAt   *time.Time
 }
 
 // SettlementItem is one payment's contribution to a settlement batch.
