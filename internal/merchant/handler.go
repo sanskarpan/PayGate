@@ -26,6 +26,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/merchants/{merchantID}/users/bootstrap", h.bootstrapMerchantUser)
 	mux.HandleFunc("POST /v1/dashboard/login", h.dashboardLogin)
 	mux.HandleFunc("POST /v1/dashboard/logout", h.dashboardLogout)
+	mux.HandleFunc("POST /v1/dashboard/accept-invitation", h.acceptInvitation)
 }
 
 func (h *Handler) RegisterProtectedRoutes(mux *http.ServeMux, wrap func(scope APIKeyScope, next http.Handler) http.Handler) {
@@ -34,6 +35,10 @@ func (h *Handler) RegisterProtectedRoutes(mux *http.ServeMux, wrap func(scope AP
 	mux.Handle("POST /v1/merchants/me/api-keys", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.createOwnAPIKey)))
 	mux.Handle("DELETE /v1/merchants/me/api-keys/{keyID}", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.revokeOwnAPIKey)))
 	mux.Handle("POST /v1/merchants/me/api-keys/{keyID}/rotate", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.rotateOwnAPIKey)))
+	mux.Handle("PUT /v1/merchants/me/api-keys/{keyID}/allowed-ips", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.updateAPIKeyAllowedIPs)))
+	mux.Handle("GET /v1/merchants/me/invitations", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.listInvitations)))
+	mux.Handle("POST /v1/merchants/me/invitations", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.inviteUser)))
+	mux.Handle("DELETE /v1/merchants/me/invitations/{id}", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.revokeInvitation)))
 }
 
 func (h *Handler) createMerchant(w http.ResponseWriter, r *http.Request) {
@@ -402,6 +407,132 @@ func parseBasicAuthHeader(header string) (string, string, bool) {
 		return "", "", false
 	}
 	return pair[0], pair[1], true
+}
+
+func (h *Handler) inviteUser(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req InviteUserInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	req.InvitedBy = p.UserID
+
+	inv, token, err := h.svc.InviteUser(r.Context(), p.MerchantID, req)
+	if err != nil {
+		handleMerchantError(w, err, "team_invite")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"id":          inv.ID,
+		"email":       inv.Email,
+		"role":        inv.Role,
+		"status":      inv.Status,
+		"token":       token,
+		"expires_at":  inv.ExpiresAt.Unix(),
+		"created_at":  inv.CreatedAt.Unix(),
+	})
+}
+
+func (h *Handler) listInvitations(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	invs, err := h.svc.ListInvitations(r.Context(), p.MerchantID)
+	if err != nil {
+		handleMerchantError(w, err, "team_invite_list")
+		return
+	}
+	items := make([]map[string]any, 0, len(invs))
+	for _, inv := range invs {
+		items = append(items, map[string]any{
+			"id":         inv.ID,
+			"email":      inv.Email,
+			"role":       inv.Role,
+			"status":     inv.Status,
+			"invited_by": inv.InvitedBy,
+			"expires_at": inv.ExpiresAt.Unix(),
+			"created_at": inv.CreatedAt.Unix(),
+		})
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"entity": "collection",
+		"count":  len(items),
+		"items":  items,
+	})
+}
+
+func (h *Handler) revokeInvitation(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	if err := h.svc.RevokeInvitation(r.Context(), p.MerchantID, r.PathValue("id")); err != nil {
+		handleMerchantError(w, err, "team_invite_revoke")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (h *Handler) acceptInvitation(w http.ResponseWriter, r *http.Request) {
+	var req AcceptInvitationInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	user, err := h.svc.AcceptInvitation(r.Context(), req)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvitationInvalid), errors.Is(err, ErrInvitationExpired), errors.Is(err, ErrInvitationUsed):
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{
+				Code:        "BAD_REQUEST_ERROR",
+				Description: err.Error(),
+				Source:      "business",
+				Step:        "accept_invitation",
+				Reason:      "invalid_invitation",
+			})
+		default:
+			handleMerchantError(w, err, "accept_invitation")
+		}
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"id":          user.ID,
+		"merchant_id": user.MerchantID,
+		"email":       user.Email,
+		"role":        user.Role,
+		"status":      user.Status,
+	})
+}
+
+func (h *Handler) updateAPIKeyAllowedIPs(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var body struct {
+		AllowedIPs []string `json:"allowed_ips"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	if err := h.svc.repo.UpdateAPIKeyAllowedIPs(r.Context(), p.MerchantID, r.PathValue("keyID"), body.AllowedIPs); err != nil {
+		handleMerchantError(w, err, "api_key_allowed_ips")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"key_id":      r.PathValue("keyID"),
+		"allowed_ips": body.AllowedIPs,
+	})
 }
 
 func handleMerchantError(w http.ResponseWriter, err error, step string) {
