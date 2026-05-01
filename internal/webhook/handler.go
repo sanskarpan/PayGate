@@ -30,6 +30,8 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 	mux.Handle("POST /v1/webhooks/{webhookID}/enable", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.enable)))
 	mux.Handle("POST /v1/webhooks/{webhookID}/disable", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.disable)))
 	mux.Handle("GET /v1/webhooks/{webhookID}/deliveries", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listDeliveries)))
+	mux.Handle("POST /v1/webhooks/{webhookID}/rotate-secret", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.rotateSecret)))
+	mux.Handle("POST /v1/webhooks/events/{eventID}/replay", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.replay)))
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +182,39 @@ func (h *Handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 		"entity": "collection",
 		"count":  len(items),
 		"items":  items,
+	})
+}
+
+func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	sub, err := h.svc.RotateSecret(r.Context(), p.MerchantID, r.PathValue("webhookID"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	// Return new secret on rotation.
+	httpx.WriteJSON(w, http.StatusOK, presentWithSecret(sub))
+}
+
+func (h *Handler) replay(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	n, err := h.svc.ReplayEvent(r.Context(), p.MerchantID, r.PathValue("eventID"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"entity":     "replay",
+		"event_id":   r.PathValue("eventID"),
+		"deliveries": n,
 	})
 }
 
