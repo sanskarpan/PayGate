@@ -51,10 +51,18 @@ VALUES
 ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING created_at, updated_at`
 
+	// Store NULL (not empty string) when no idempotency key is provided so the
+	// partial unique index (WHERE idempotency_key IS NOT NULL) does not falsely
+	// deduplicate orders that have no key.
+	var idempKey *string
+	if order.IdempotencyKey != "" {
+		idempKey = &order.IdempotencyKey
+	}
+
 	if err := tx.QueryRow(ctx, q,
 		order.ID,
 		order.MerchantID,
-		order.IdempotencyKey,
+		idempKey,
 		order.Amount,
 		order.AmountPaid,
 		order.AmountDue,
