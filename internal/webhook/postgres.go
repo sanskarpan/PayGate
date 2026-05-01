@@ -59,11 +59,13 @@ VALUES ($1, $2, $3, $4, $5, $6)
 func (r *PostgresRepository) GetSubscription(ctx context.Context, merchantID, id string) (WebhookSubscription, error) {
 	var sub WebhookSubscription
 	err := r.db.QueryRow(ctx, `
-SELECT id, merchant_id, url, events, secret, status, created_at, updated_at
+SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at,
+       status, created_at, updated_at
 FROM paygate_webhooks.webhook_subscriptions
 WHERE id = $1 AND merchant_id = $2 AND status != 'deleted'
 `, id, merchantID).Scan(
 		&sub.ID, &sub.MerchantID, &sub.URL, &sub.Events, &sub.Secret,
+		&sub.PreviousSecret, &sub.PreviousSecretExpiresAt,
 		&sub.Status, &sub.CreatedAt, &sub.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -74,7 +76,8 @@ WHERE id = $1 AND merchant_id = $2 AND status != 'deleted'
 
 func (r *PostgresRepository) ListSubscriptions(ctx context.Context, merchantID string) ([]WebhookSubscription, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, url, events, secret, status, created_at, updated_at
+SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at,
+       status, created_at, updated_at
 FROM paygate_webhooks.webhook_subscriptions
 WHERE merchant_id = $1 AND status != 'deleted'
 ORDER BY created_at DESC
@@ -88,6 +91,7 @@ ORDER BY created_at DESC
 	for rows.Next() {
 		var sub WebhookSubscription
 		if err := rows.Scan(&sub.ID, &sub.MerchantID, &sub.URL, &sub.Events, &sub.Secret,
+			&sub.PreviousSecret, &sub.PreviousSecretExpiresAt,
 			&sub.Status, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -143,7 +147,8 @@ func (r *PostgresRepository) DeleteSubscription(ctx context.Context, merchantID,
 
 func (r *PostgresRepository) FindActiveSubscriptions(ctx context.Context, merchantID, eventType string) ([]WebhookSubscription, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, url, events, secret, status, created_at, updated_at
+SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at,
+       status, created_at, updated_at
 FROM paygate_webhooks.webhook_subscriptions
 WHERE merchant_id = $1 AND status = 'active'
 `, merchantID)
@@ -156,6 +161,7 @@ WHERE merchant_id = $1 AND status = 'active'
 	for rows.Next() {
 		var sub WebhookSubscription
 		if err := rows.Scan(&sub.ID, &sub.MerchantID, &sub.URL, &sub.Events, &sub.Secret,
+			&sub.PreviousSecret, &sub.PreviousSecretExpiresAt,
 			&sub.Status, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -318,21 +324,27 @@ LIMIT 100
 }
 
 func (r *PostgresRepository) RotateSecret(ctx context.Context, merchantID, id string) (WebhookSubscription, error) {
-	if _, err := r.GetSubscription(ctx, merchantID, id); err != nil {
-		return WebhookSubscription{}, err
-	}
-	secret, err := generateSecret()
+	current, err := r.GetSubscription(ctx, merchantID, id)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
+	newSecret, err := generateSecret()
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
+	expiresAt := time.Now().Add(RotateSecretGracePeriod)
 	_, err = r.db.Exec(ctx, `
 UPDATE paygate_webhooks.webhook_subscriptions
-SET secret = $1, updated_at = NOW()
-WHERE id = $2 AND merchant_id = $3
-`, secret, id, merchantID)
+SET previous_secret            = secret,
+    previous_secret_expires_at = $1,
+    secret                     = $2,
+    updated_at                 = NOW()
+WHERE id = $3 AND merchant_id = $4
+`, expiresAt, newSecret, id, merchantID)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
+	_ = current // consumed above to verify existence
 	return r.GetSubscription(ctx, merchantID, id)
 }
 
