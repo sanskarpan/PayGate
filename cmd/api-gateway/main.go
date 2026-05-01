@@ -24,6 +24,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
 	"github.com/sanskarpan/PayGate/internal/refund"
+	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
 
@@ -91,6 +92,10 @@ func run() error {
 	refundSvc := refund.NewService(refundRepo)
 	refundHandler := refund.NewHandler(refundSvc)
 
+	settlementRepo := settlement.NewPostgresRepository(db, ledgerSvc)
+	settlementSvc := settlement.NewService(settlementRepo)
+	settlementHandler := settlement.NewHandler(settlementSvc)
+
 	webhookRepo := webhook.NewPostgresRepository(db)
 	webhookSvc := webhook.NewService(webhookRepo)
 	webhookHandler := webhook.NewHandler(webhookSvc)
@@ -144,6 +149,7 @@ func run() error {
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
 	refundHandler.RegisterRoutesWithAuth(mux, protected)
+	settlementHandler.RegisterRoutesWithAuth(mux, protected)
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	checkoutHandler.RegisterRoutes(mux)
