@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/sanskarpan/PayGate/internal/audit"
 	"github.com/sanskarpan/PayGate/internal/auth"
 	"github.com/sanskarpan/PayGate/internal/common/config"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
@@ -102,6 +103,10 @@ func run() error {
 	webhookSvc := webhook.NewService(webhookRepo)
 	webhookHandler := webhook.NewHandler(webhookSvc)
 
+	auditRepo := audit.NewPostgresRepository(db)
+	auditSvc := audit.NewService(auditRepo, l)
+	auditHandler := audit.NewHandler(auditSvc)
+
 	go order.NewExpirySweeper(orderSvc, time.Minute, l).Start(ctx)
 	go webhook.NewRetryWorker(webhookSvc, 30*time.Second, l).Start(ctx)
 	go payment.NewSweeper(paymentSvc, 30*time.Second, l).Start(ctx)
@@ -153,7 +158,7 @@ func run() error {
 
 	merchantHandler.RegisterRoutes(mux)
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
-		return authMw.RequireScope(scope, idemMw.Wrap(next))
+		return authMw.RequireScope(scope, idemMw.Wrap(auditSvc.Middleware(next)))
 	}
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
@@ -162,6 +167,9 @@ func run() error {
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	checkoutHandler.RegisterRoutes(mux)
+	auditHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
+		return authMw.RequireScope(merchant.APIKeyScopeRead, next)
+	})
 
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := httpx.PrincipalFromContext(r.Context())
