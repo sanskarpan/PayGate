@@ -2,7 +2,9 @@ package ledger
 
 import (
 	"context"
+	"errors"
 
+	"github.com/jackc/pgconn"
 	ledgerpb "github.com/sanskarpan/PayGate/internal/ledger/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,6 +32,12 @@ func (s *GRPCServer) CreateEntries(ctx context.Context, req *ledgerpb.CreateEntr
 	}
 	txnID, err := s.svc.CreateEntries(ctx, req.MerchantId, req.SourceType, req.SourceId, "grpc create entries", entries)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// Duplicate (source_type, source_id) — idempotent replay; return AlreadyExists
+			// so callers can distinguish a genuine duplicate from a data-validation error.
+			return nil, status.Errorf(codes.AlreadyExists, "ledger entries already exist for source %s/%s", req.SourceType, req.SourceId)
+		}
 		return nil, status.Errorf(codes.InvalidArgument, "create entries: %v", err)
 	}
 	return &ledgerpb.CreateEntriesResponse{TransactionId: txnID}, nil
