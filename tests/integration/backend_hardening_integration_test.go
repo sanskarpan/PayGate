@@ -22,6 +22,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/outbox"
 	"github.com/sanskarpan/PayGate/internal/payment"
+	"github.com/sanskarpan/PayGate/internal/refund"
 )
 
 func TestIntegrationIdempotentOrderCreateReplaysResponse(t *testing.T) {
@@ -283,10 +284,12 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	orderSvc := order.NewService(order.NewPostgresRepository(db))
 	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
 	paymentSvc := payment.NewService(payment.NewPostgresRepository(db, ledgerSvc, orderSvc), gateway.NewSimulator())
+	refundSvc := refund.NewService(refund.NewPostgresRepository(db, ledgerSvc))
 
 	merchantHandler := merchant.NewHandler(merchantSvc)
 	orderHandler := order.NewHandler(orderSvc)
 	paymentHandler := payment.NewHandler(paymentSvc)
+	refundHandler := refund.NewHandler(refundSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
@@ -297,6 +300,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
+	refundHandler.RegisterRoutesWithAuth(mux, protected)
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := httpx.PrincipalFromContext(r.Context())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})
