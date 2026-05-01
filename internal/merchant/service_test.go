@@ -111,6 +111,22 @@ func (f *fakeRepo) UpdateMerchantUserLastLogin(_ context.Context, _ string) erro
 	return nil
 }
 
+// Invitation stubs — not exercised by unit tests but required by interface.
+func (f *fakeRepo) CreateInvitation(_ context.Context, inv Invitation) (Invitation, error) {
+	return inv, nil
+}
+func (f *fakeRepo) GetInvitationByTokenHash(_ context.Context, _ string) (Invitation, error) {
+	return Invitation{}, ErrInvitationNotFound
+}
+func (f *fakeRepo) ListInvitationsByMerchant(_ context.Context, _ string) ([]Invitation, error) {
+	return nil, nil
+}
+func (f *fakeRepo) MarkInvitationAccepted(_ context.Context, _ string) error { return nil }
+func (f *fakeRepo) RevokeInvitation(_ context.Context, _, _ string) error    { return nil }
+func (f *fakeRepo) UpdateAPIKeyAllowedIPs(_ context.Context, _, _ string, _ []string) error {
+	return nil
+}
+
 func TestCreateAPIKey(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo)
