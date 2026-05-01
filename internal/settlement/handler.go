@@ -1,6 +1,7 @@
 package settlement
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -23,6 +24,8 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("GET /v1/settlements", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.list)))
 	mux.Handle("GET /v1/settlements/{settlementID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.get)))
+	mux.Handle("POST /v1/settlements/{settlementID}/hold", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.hold)))
+	mux.Handle("POST /v1/settlements/{settlementID}/release", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.release)))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +68,52 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	resp["items"] = itemsJSON
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) hold(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	settlementID := r.PathValue("settlementID")
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST", Description: "invalid request body"})
+			return
+		}
+	}
+
+	if err := h.svc.Hold(r.Context(), p.MerchantID, settlementID, body.Reason); err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":      settlementID,
+		"on_hold": true,
+	})
+}
+
+func (h *Handler) release(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	settlementID := r.PathValue("settlementID")
+
+	if err := h.svc.Release(r.Context(), p.MerchantID, settlementID); err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":      settlementID,
+		"on_hold": false,
+	})
 }
 
 func present(s Settlement) map[string]any {
@@ -115,6 +164,10 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "NO_ELIGIBLE_PAYMENTS", Description: err.Error()})
 	case errors.Is(err, ErrInvalidTransition):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "INVALID_STATE", Description: err.Error()})
+	case errors.Is(err, ErrSettlementOnHold):
+		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "SETTLEMENT_ON_HOLD", Description: err.Error()})
+	case errors.Is(err, ErrSettlementNotOnHold):
+		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "SETTLEMENT_NOT_ON_HOLD", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error"})
 	}
