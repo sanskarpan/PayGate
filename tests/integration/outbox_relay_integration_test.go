@@ -15,7 +15,20 @@ func TestOutboxRelayPublishBatchAndCleanup(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 
-	// Clear unpublished rows so the count assertions below are deterministic.
+	// Drain all pre-existing unpublished rows so counts are deterministic.
+	drainPublisher := &fakePublisher{}
+	drainRelay := outbox.NewRelay(db, drainPublisher, 0, nil)
+	for {
+		n, err := drainRelay.PublishBatch(ctx, 100)
+		if err != nil {
+			t.Fatalf("drain PublishBatch: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+
+	// Clean up any stale test rows.
 	if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE aggregate_id = 'pay_test_relay'`); err != nil {
 		t.Fatalf("cleanup prior test rows: %v", err)
 	}
@@ -54,7 +67,7 @@ VALUES (gen_random_uuid()::text, 'payment', 'pay_test_relay', 'payment.captured'
 		t.Fatal("expected published_at to be set after PublishBatch")
 	}
 
-	// CountUnpublished should return 0 (our row is now published).
+	// CountUnpublished should return 0 (our row and all prior rows are now published).
 	unpublished, err := relay.CountUnpublished(ctx)
 	if err != nil {
 		t.Fatalf("CountUnpublished: %v", err)
@@ -72,7 +85,7 @@ VALUES (gen_random_uuid()::text, 'payment', 'pay_test_relay', 'payment.captured'
 		t.Fatalf("expected CleanupPublished to delete at least 1 row, got %d", deleted)
 	}
 
-	// Verify the row is gone.
+	// Verify our specific row is gone.
 	var remaining int
 	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM public.outbox WHERE aggregate_id = 'pay_test_relay'`).Scan(&remaining); err != nil {
 		t.Fatalf("count remaining rows: %v", err)
