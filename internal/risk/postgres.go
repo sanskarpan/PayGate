@@ -134,9 +134,9 @@ func (r *PostgresRepository) UpsertVelocityCounter(ctx context.Context, dimensio
 	id := idgen.New("vel")
 
 	q := `
-INSERT INTO paygate_risk.velocity_counters (id, dimension, dim_value, window, count, amount, window_end)
+INSERT INTO paygate_risk.velocity_counters (id, dimension, dim_value, window_type, count, amount, window_end)
 VALUES ($1, $2, $3, $4, 1, $5, $6)
-ON CONFLICT (dimension, dim_value, window, window_end) DO UPDATE
+ON CONFLICT (dimension, dim_value, window_type, window_end) DO UPDATE
 SET count = paygate_risk.velocity_counters.count + 1,
     amount = paygate_risk.velocity_counters.amount + EXCLUDED.amount,
     updated_at = NOW()
@@ -155,7 +155,7 @@ func (r *PostgresRepository) GetVelocityCount(ctx context.Context, dimension, di
 	err := r.db.QueryRow(ctx, `
 SELECT COALESCE(count, 0)
 FROM paygate_risk.velocity_counters
-WHERE dimension = $1 AND dim_value = $2 AND window = $3 AND window_end = $4
+WHERE dimension = $1 AND dim_value = $2 AND window_type = $3 AND window_end = $4
 `, dimension, dimValue, window, windowEnd).Scan(&count)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
