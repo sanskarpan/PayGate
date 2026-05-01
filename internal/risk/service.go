@@ -7,15 +7,27 @@ import (
 
 // Service evaluates payment risk and manages risk event records.
 type Service struct {
-	repo   Repository
-	logger *slog.Logger
+	repo    Repository
+	logger  *slog.Logger
+	alertFn AlertFunc
 }
 
-func NewService(repo Repository, logger *slog.Logger) *Service {
+// WithAlertFunc returns a functional option that sets the alert function on the Service.
+func WithAlertFunc(fn AlertFunc) func(*Service) {
+	return func(s *Service) {
+		s.alertFn = fn
+	}
+}
+
+func NewService(repo Repository, logger *slog.Logger, opts ...func(*Service)) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{repo: repo, logger: logger}
+	svc := &Service{repo: repo, logger: logger}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
 }
 
 // EvaluatePayment performs a risk evaluation for a payment attempt.
@@ -71,6 +83,9 @@ func (s *Service) EvaluatePayment(ctx context.Context, in EvalInput) (RiskEvent,
 			"action", result.Action,
 			"rules", result.TriggeredRules,
 		)
+		if s.alertFn != nil {
+			go s.alertFn(ctx, ev)
+		}
 	}
 
 	return ev, nil
