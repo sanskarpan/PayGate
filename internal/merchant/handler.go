@@ -33,6 +33,7 @@ func (h *Handler) RegisterProtectedRoutes(mux *http.ServeMux, wrap func(scope AP
 	mux.Handle("GET /v1/merchants/me/api-keys", wrap(APIKeyScopeRead, http.HandlerFunc(h.listOwnAPIKeys)))
 	mux.Handle("POST /v1/merchants/me/api-keys", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.createOwnAPIKey)))
 	mux.Handle("DELETE /v1/merchants/me/api-keys/{keyID}", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.revokeOwnAPIKey)))
+	mux.Handle("POST /v1/merchants/me/api-keys/{keyID}/rotate", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.rotateOwnAPIKey)))
 }
 
 func (h *Handler) createMerchant(w http.ResponseWriter, r *http.Request) {
@@ -333,6 +334,25 @@ func (h *Handler) revokeOwnAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (h *Handler) rotateOwnAPIKey(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	created, err := h.svc.RotateAPIKey(r.Context(), p.MerchantID, r.PathValue("keyID"))
+	if err != nil {
+		handleMerchantError(w, err, "api_key_rotation")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"key_id":     created.KeyID,
+		"key_secret": created.KeySecret,
+		"mode":       created.Mode,
+		"scope":      created.Scope,
+	})
 }
 
 func (h *Handler) authorizeAPIKeyMutation(r *http.Request, merchantID string) (bool, error) {
