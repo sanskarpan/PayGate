@@ -78,11 +78,11 @@ const (
 	ThresholdIPTxnPerHour        = 20   // max transactions per IP per hour
 	ThresholdAmountSpikeFactor   = 3    // flag if amount > 3x merchant average
 	ThresholdAmountSpikeMinAvg   = 1000 // only apply spike check when avg > 10 INR (in paise)
-	ScoreVelocityMerchant        = 20
-	ScoreVelocityIP              = 30
-	ScoreAmountSpike             = 40
-	ScoreHoldThreshold           = 50 // score >= 50 → hold
-	ScoreBlockThreshold          = 90 // score >= 90 → block
+	ScoreVelocityMerchant        = 50
+	ScoreVelocityIP              = 50
+	ScoreAmountSpike             = 50
+	ScoreHoldThreshold           = 40 // score >= 40 → hold; any single rule triggers hold
+	ScoreBlockThreshold          = 90 // score >= 90 → block; any two rules trigger block
 )
 
 // Evaluate computes a risk score and action for the given input.
