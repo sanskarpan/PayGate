@@ -249,6 +249,7 @@ WHERE id = $2
 func (r *PostgresRepository) GetRefund(ctx context.Context, merchantID, refundID string) (Refund, error) {
 	var ref Refund
 	var notesRaw []byte
+	var gatewayRefundID *string
 	err := r.db.QueryRow(ctx, `
 SELECT id, payment_id, order_id, merchant_id, amount, currency,
        reason, status, gateway_refund_id, notes, processed_at, created_at, updated_at
@@ -256,7 +257,7 @@ FROM paygate_payments.refunds
 WHERE id = $1 AND merchant_id = $2
 `, refundID, merchantID).Scan(
 		&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency,
-		&ref.Reason, &ref.Status, &ref.GatewayRefundID, &notesRaw, &ref.ProcessedAt,
+		&ref.Reason, &ref.Status, &gatewayRefundID, &notesRaw, &ref.ProcessedAt,
 		&ref.CreatedAt, &ref.UpdatedAt,
 	)
 	if err != nil {
@@ -264,6 +265,9 @@ WHERE id = $1 AND merchant_id = $2
 			return Refund{}, ErrRefundNotFound
 		}
 		return Refund{}, err
+	}
+	if gatewayRefundID != nil {
+		ref.GatewayRefundID = *gatewayRefundID
 	}
 	if len(notesRaw) > 0 {
 		_ = json.Unmarshal(notesRaw, &ref.Notes)
@@ -289,12 +293,16 @@ ORDER BY created_at DESC
 	for rows.Next() {
 		var ref Refund
 		var notesRaw []byte
+		var gatewayRefundID *string
 		if err := rows.Scan(
 			&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency,
-			&ref.Reason, &ref.Status, &ref.GatewayRefundID, &notesRaw, &ref.ProcessedAt,
+			&ref.Reason, &ref.Status, &gatewayRefundID, &notesRaw, &ref.ProcessedAt,
 			&ref.CreatedAt, &ref.UpdatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if gatewayRefundID != nil {
+			ref.GatewayRefundID = *gatewayRefundID
 		}
 		if len(notesRaw) > 0 {
 			_ = json.Unmarshal(notesRaw, &ref.Notes)
