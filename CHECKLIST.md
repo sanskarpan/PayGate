@@ -152,144 +152,144 @@ paygate/
 ## Phase 2 — Reliability and money movement
 
 ### Idempotency
-- [ ] Idempotency middleware (Redis SET NX EX + durable Postgres records for money-changing writes)
-- [ ] Reject same idempotency key with different request hash
-- [ ] Handle all three cases: new, completed, in-progress
-- [ ] `Idempotent-Replayed: true` header on cached responses
-- [ ] `409 Conflict` with `Retry-After` for in-progress requests
-- [ ] Apply to all POST endpoints
-- [ ] Unit tests: all three idempotency cases
-- [ ] Integration test: duplicate request returns same response
+- [x] Idempotency middleware (Redis SET NX EX + durable Postgres records for money-changing writes)
+- [x] Reject same idempotency key with different request hash
+- [x] Handle all three cases: new, completed, in-progress
+- [x] `Idempotent-Replayed: true` header on cached responses
+- [x] `409 Conflict` with `Retry-After` for in-progress requests
+- [x] Apply to all POST endpoints
+- [x] Unit tests: all three idempotency cases
+- [x] Integration test: duplicate request returns same response
 
 ### Outbox relay
-- [ ] Outbox relay worker (polls outbox table, publishes to Kafka)
-- [ ] Polling with `FOR UPDATE SKIP LOCKED`
-- [ ] Mark `published_at` on successful publish
-- [ ] Retry logic on Kafka publish failure
-- [ ] Cleanup job (delete published entries > 7 days)
-- [ ] Health metric: unpublished entry count
-- [ ] Integration test: event appears in Kafka after outbox insert
+- [x] Outbox relay worker (polls outbox table, publishes to Kafka)
+- [x] Polling with `FOR UPDATE SKIP LOCKED`
+- [x] Mark `published_at` on successful publish
+- [x] Retry logic on Kafka publish failure
+- [x] Cleanup job (delete published entries > 7 days)
+- [x] Health metric: unpublished entry count
+- [x] Integration test: event appears in Kafka after outbox insert
 
 ### Refund service
-- [ ] Refund domain model with state machine
-- [ ] `POST /v1/payments/{id}/refunds` — create refund
-- [ ] `GET /v1/refunds/{id}` — fetch refund
-- [ ] `GET /v1/payments/{id}/refunds` — list refunds for payment
-- [ ] Full and partial refund support
-- [ ] Refund eligibility validation with row-level locking
-- [ ] Concurrent refund protection (`SELECT FOR UPDATE`)
-- [ ] Async refund processing (queue → gateway → status update)
-- [ ] Reserve refund amount on creation via `amount_refunded_pending`
-- [ ] Create refund reversal ledger entries only after gateway confirms `processed`
-- [ ] Release pending refund reservation on `failed`
-- [ ] Update `payment.amount_refunded` and `payment.refund_status`
-- [ ] Outbox: `refund.created`, `refund.processed`, `refund.failed`
-- [ ] Unit tests: eligibility checks, concurrent refund prevention
-- [ ] Integration test: capture → refund → verify ledger balances
+- [x] Refund domain model with state machine
+- [x] `POST /v1/payments/{id}/refunds` — create refund
+- [x] `GET /v1/refunds/{id}` — fetch refund
+- [x] `GET /v1/payments/{id}/refunds` — list refunds for payment
+- [x] Full and partial refund support
+- [x] Refund eligibility validation with row-level locking
+- [x] Concurrent refund protection (`SELECT FOR UPDATE`)
+- [x] Async refund processing (queue → gateway → status update)
+- [x] Reserve refund amount on creation via `amount_refunded_pending`
+- [x] Create refund reversal ledger entries only after gateway confirms `processed`
+- [x] Release pending refund reservation on `failed`
+- [x] Update `payment.amount_refunded` and `payment.refund_status`
+- [x] Outbox: `refund.created`, `refund.processed`, `refund.failed`
+- [x] Unit tests: eligibility checks, concurrent refund prevention
+- [x] Integration test: capture → refund → verify ledger balances
 
 ### Webhook service
-- [ ] Webhook subscription CRUD: create, list, update, delete
-- [ ] Kafka consumer: subscribe to all `paygate.*` topics
-- [ ] Event-to-subscription matching (by event type)
-- [ ] Signature generation: HMAC-SHA256 of raw payload
-- [ ] HTTP POST delivery with timeout (10s)
-- [ ] Delivery attempt recording
-- [ ] Retry engine (exponential backoff, Redis sorted set)
-- [ ] Retry worker (polls sorted set, re-delivers)
-- [ ] Dead-letter queue (after 18 attempts)
-- [ ] Duplicate suppression (Redis fingerprint, 48h TTL)
-- [ ] `POST /v1/webhooks/events/{event_id}/replay` — manual replay
-- [ ] Webhook secret rotation endpoint
-- [ ] Unit tests: signature generation/verification, retry scheduling
-- [ ] Integration test: capture → webhook delivered to mock endpoint
+- [x] Webhook subscription CRUD: create, list, update, delete
+- [x] Kafka consumer: subscribe to all `paygate.*` topics
+- [x] Event-to-subscription matching (by event type)
+- [x] Signature generation: HMAC-SHA256 of raw payload
+- [x] HTTP POST delivery with timeout (10s)
+- [x] Delivery attempt recording
+- [x] Retry engine (exponential backoff, Redis sorted set)
+- [x] Retry worker (polls sorted set, re-delivers)
+- [x] Dead-letter queue (after 18 attempts)
+- [x] Duplicate suppression (Redis fingerprint, 48h TTL)
+- [x] `POST /v1/webhooks/events/{event_id}/replay` — manual replay
+- [x] Webhook secret rotation endpoint
+- [x] Unit tests: signature generation/verification, retry scheduling
+- [x] Integration test: capture → webhook delivered to mock endpoint
 
 ### Settlement service
-- [ ] Settlement domain model with state machine
-- [ ] Nightly batch job: collect eligible payments
-- [ ] Fee calculation per payment
-- [ ] Net amount computation (gross - fees - refunds)
-- [ ] Settlement and settlement_items creation
-- [ ] Ledger entries for settlement
-- [ ] Mark payments as settled
-- [ ] Settlement hold/release mechanism
-- [ ] Outbox: `settlement.created`, `settlement.processed`
-- [ ] `GET /v1/settlements` — list settlements for merchant
-- [ ] `GET /v1/settlements/{id}` — settlement detail with items
-- [ ] Unit tests: fee calculation, net amount computation
-- [ ] Integration test: capture multiple payments → run settlement → verify
+- [x] Settlement domain model with state machine
+- [x] Nightly batch job: collect eligible payments
+- [x] Fee calculation per payment
+- [x] Net amount computation (gross - fees - refunds)
+- [x] Settlement and settlement_items creation
+- [x] Ledger entries for settlement
+- [x] Mark payments as settled
+- [x] Settlement hold/release mechanism
+- [x] Outbox: `settlement.created`, `settlement.processed`
+- [x] `GET /v1/settlements` — list settlements for merchant
+- [x] `GET /v1/settlements/{id}` — settlement detail with items
+- [x] Unit tests: fee calculation, net amount computation
+- [x] Integration test: capture multiple payments → run settlement → verify
 
 ### Reconciliation worker
-- [ ] Three-way match: payment ↔ ledger ↔ settlement
-- [ ] Mismatch detection and classification
-- [ ] Reconciliation batch recording
-- [ ] Continuous ledger balance check (every 5 min)
-- [ ] Hourly payment-to-ledger recon
-- [ ] Nightly full three-way recon
-- [ ] Mismatch alerting
-- [ ] Integration test: inject intentional mismatches → verify detection
+- [x] Three-way match: payment ↔ ledger ↔ settlement
+- [x] Mismatch detection and classification
+- [x] Reconciliation batch recording
+- [x] Continuous ledger balance check (every 5 min)
+- [x] Hourly payment-to-ledger recon
+- [x] Nightly full three-way recon
+- [x] Mismatch alerting
+- [x] Integration test: inject intentional mismatches → verify detection
 
 ### Dashboard (Phase 2)
-- [ ] Refund console (issue refund, view status)
-- [ ] Webhook delivery log (per event, per subscription)
-- [ ] Webhook subscription management
-- [ ] Settlement reports page
-- [ ] Reconciliation dashboard (mismatch summary)
+- [x] Refund console (issue refund, view status)
+- [x] Webhook delivery log (per event, per subscription)
+- [x] Webhook subscription management
+- [x] Settlement reports page
+- [x] Reconciliation dashboard (mismatch summary)
 
 ### Phase 2 milestone tests
-- [ ] Idempotent requests work correctly across all POST endpoints
-- [ ] Outbox relay publishes events within 500ms of state change
-- [ ] Full and partial refunds work with correct ledger entries
-- [ ] Concurrent refund requests don't exceed captured amount
-- [ ] Webhooks delivered within 5s of event creation
-- [ ] Failed webhooks retry with correct backoff schedule
-- [ ] Dead-lettered webhooks can be replayed
-- [ ] Settlement batch correctly groups and calculates
-- [ ] Reconciliation detects intentionally planted mismatches
-- [ ] Ledger balance check passes (debits = credits)
+- [x] Idempotent requests work correctly across all POST endpoints
+- [x] Outbox relay publishes events within 500ms of state change
+- [x] Full and partial refunds work with correct ledger entries
+- [x] Concurrent refund requests don't exceed captured amount
+- [x] Webhooks delivered within 5s of event creation
+- [x] Failed webhooks retry with correct backoff schedule
+- [x] Dead-lettered webhooks can be replayed
+- [x] Settlement batch correctly groups and calculates
+- [x] Reconciliation detects intentionally planted mismatches
+- [x] Ledger balance check passes (debits = credits)
 
 ---
 
 ## Phase 3 — Risk and controls
 
 ### Risk engine
-- [ ] Velocity check: per-merchant transaction rate (configurable threshold)
-- [ ] Velocity check: per-IP payment attempts
-- [ ] Velocity check: per-card/token payment attempts
-- [ ] Amount spike detection (> 3x average transaction)
-- [ ] Rule-based risk scoring (configurable rules per merchant)
-- [ ] Risk hold: flag payment for manual review before capture
-- [ ] Manual review queue: approve or reject flagged payments
-- [ ] Risk event recording
-- [ ] Risk alerts
+- [x] Velocity check: per-merchant transaction rate (configurable threshold)
+- [x] Velocity check: per-IP payment attempts
+- [x] Velocity check: per-card/token payment attempts
+- [x] Amount spike detection (> 3x average transaction)
+- [x] Rule-based risk scoring (configurable rules per merchant)
+- [x] Risk hold: flag payment for manual review before capture
+- [x] Manual review queue: approve or reject flagged payments
+- [x] Risk event recording
+- [x] Risk alerts
 
 ### Access control
-- [ ] RBAC: admin, developer, readonly, ops roles
-- [ ] Permission matrix per role per endpoint
-- [ ] API key scope enforcement (read key can't capture)
-- [ ] Team invitation flow
-- [ ] IP allowlisting per API key (optional)
-- [ ] Session management for dashboard users
+- [x] RBAC: admin, developer, readonly, ops roles
+- [x] Permission matrix per role per endpoint
+- [x] API key scope enforcement (read key can't capture)
+- [x] Team invitation flow
+- [x] IP allowlisting per API key (optional)
+- [x] Session management for dashboard users
 
 ### Audit logging
-- [ ] Audit event on every state mutation
-- [ ] Audit event on every auth event (login, key creation, key revocation)
-- [ ] Audit event includes: actor, action, resource, changes, IP, correlation ID
-- [ ] Audit log query API for ops
-- [ ] Audit log retention and archival (→ S3 after 90 days)
+- [x] Audit event on every state mutation
+- [x] Audit event on every auth event (login, key creation, key revocation)
+- [x] Audit event includes: actor, action, resource, changes, IP, correlation ID
+- [x] Audit log query API for ops
+- [x] Audit log retention and archival (→ S3 after 90 days)
 
 ### Security hardening
-- [ ] Webhook secret rotation with grace period
-- [ ] API key rotation flow (create new → migrate → revoke old)
-- [ ] Request scrubbing: strip card numbers, CVV, secrets from logs
-- [ ] Rate limit tuning per merchant tier
-- [ ] Input validation: max payload size, field length limits
+- [x] Webhook secret rotation with grace period
+- [x] API key rotation flow (create new → migrate → revoke old)
+- [x] Request scrubbing: strip card numbers, CVV, secrets from logs
+- [x] Rate limit tuning per merchant tier
+- [x] Input validation: max payload size, field length limits
 
 ### Dashboard (Phase 3)
-- [ ] Risk events page
-- [ ] Manual review queue
-- [ ] Audit log viewer
-- [ ] Team management (invite, roles)
-- [ ] IP allowlist configuration
+- [x] Risk events page
+- [x] Manual review queue
+- [x] Audit log viewer
+- [x] Team management (invite, roles)
+- [x] IP allowlist configuration
 
 ---
 
