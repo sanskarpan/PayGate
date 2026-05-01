@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -43,6 +45,23 @@ func FromEnv() Config {
 		KafkaBrokers:           splitCSV(kafkaBrokers),
 		DashboardSessionSecret: sessionSecret,
 	}
+}
+
+// Validate checks that all production-critical env vars have been set to
+// non-default values. Call this at startup when APP_ENV=production to prevent
+// running with insecure development defaults.
+func (c Config) Validate() error {
+	var errs []error
+	if c.DatabaseURL == "" {
+		errs = append(errs, fmt.Errorf("DATABASE_URL is required"))
+	}
+	if c.DashboardSessionSecret == "paygate-dev-dashboard-session-secret" {
+		errs = append(errs, fmt.Errorf("DASHBOARD_SESSION_SECRET must be changed from the default in production"))
+	}
+	if len(c.DashboardSessionSecret) < 32 {
+		errs = append(errs, fmt.Errorf("DASHBOARD_SESSION_SECRET must be at least 32 characters"))
+	}
+	return errors.Join(errs...)
 }
 
 func splitCSV(raw string) []string {
