@@ -1,7 +1,18 @@
 import { cookies } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
-import type { APIKeyItem, DashboardViewer, OrderItem, PaymentItem } from "./types";
+import type {
+  APIKeyItem,
+  DeliveryAttemptItem,
+  DashboardViewer,
+  OrderItem,
+  PaymentItem,
+  ReconMismatch,
+  RefundItem,
+  SettlementItem,
+  SettlementLineItem,
+  WebhookItem,
+} from "./types";
 
 type CollectionResponse<T> = {
   items: T[];
@@ -110,4 +121,74 @@ export async function getAPIKeys() {
     throw new Error(`api keys fetch failed: ${response.status}`);
   }
   return (await response.json()) as CollectionResponse<APIKeyItem>;
+}
+
+export async function getRefunds(paymentID: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/payments/${paymentID}/refunds`);
+  if (!response.ok) {
+    throw new Error(`refunds fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<RefundItem>;
+}
+
+export async function getWebhooks() {
+  await requireViewer();
+  const response = await apiFetch("/v1/webhooks");
+  if (!response.ok) {
+    throw new Error(`webhooks fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<WebhookItem>;
+}
+
+export async function getWebhook(id: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/webhooks/${id}`);
+  if (response.status === 404) {
+    notFound();
+  }
+  if (!response.ok) {
+    throw new Error(`webhook fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as WebhookItem;
+}
+
+export async function getWebhookDeliveries(webhookID: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/webhooks/${webhookID}/deliveries`);
+  if (!response.ok) {
+    throw new Error(`deliveries fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<DeliveryAttemptItem>;
+}
+
+export async function getSettlements() {
+  await requireViewer();
+  const response = await apiFetch("/v1/settlements");
+  if (!response.ok) {
+    throw new Error(`settlements fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<SettlementItem>;
+}
+
+export async function getSettlement(id: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/settlements/${id}`);
+  if (response.status === 404) {
+    notFound();
+  }
+  if (!response.ok) {
+    throw new Error(`settlement fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as SettlementItem & { items: SettlementLineItem[] };
+}
+
+export async function getReconMismatches() {
+  await requireViewer();
+  const response = await apiFetch("/v1/recon/mismatches");
+  if (!response.ok) {
+    // Recon endpoint may not exist yet — return empty list gracefully.
+    return { items: [] as ReconMismatch[], count: 0 };
+  }
+  return (await response.json()) as CollectionResponse<ReconMismatch>;
 }

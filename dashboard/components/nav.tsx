@@ -5,6 +5,9 @@ import type { DashboardViewer } from "../lib/types";
 
 const links = [
   ["/orders", "Orders"],
+  ["/webhooks", "Webhooks"],
+  ["/settlements", "Settlements"],
+  ["/recon", "Reconciliation"],
   ["/api-keys", "API Keys"],
 ];
 

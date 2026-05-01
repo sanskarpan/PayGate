@@ -43,6 +43,78 @@ export type APIKeyItem = {
   created_at: number;
 };
 
+export type RefundItem = {
+  id: string;
+  payment_id: string;
+  amount: number;
+  currency: string;
+  reason: string;
+  status: string;
+  processed_at: number;
+  created_at: number;
+};
+
+export type WebhookItem = {
+  id: string;
+  url: string;
+  events: string[];
+  status: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export type DeliveryAttemptItem = {
+  id: string;
+  event_id: string;
+  subscription_id: string;
+  status: string;
+  request_url: string;
+  response_code: number;
+  response_body: string;
+  error: string;
+  attempt_number: number;
+  next_retry_at: number | null;
+  created_at: number;
+};
+
+export type SettlementItem = {
+  id: string;
+  status: string;
+  period_start: number;
+  period_end: number;
+  total_amount: number;
+  total_fees: number;
+  total_refunds: number;
+  net_amount: number;
+  payment_count: number;
+  currency: string;
+  processed_at: number | null;
+  created_at: number;
+};
+
+export type SettlementLineItem = {
+  id: string;
+  payment_id: string;
+  amount: number;
+  fee: number;
+  refunds: number;
+  net: number;
+  currency: string;
+};
+
+export type ReconMismatch = {
+  id: string;
+  batch_id: string;
+  mismatch_type: string;
+  entity_type: string;
+  entity_id: string;
+  expected_value: string;
+  actual_value: string;
+  description: string;
+  resolved: boolean;
+  created_at: number;
+};
+
 export function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
