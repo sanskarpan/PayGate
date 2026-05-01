@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 )
 
@@ -20,6 +21,15 @@ func NewExpirySweeper(svc *Service, interval time.Duration, logger *slog.Logger)
 }
 
 func (s *ExpirySweeper) Start(ctx context.Context) {
+	// Random jitter up to one full interval so concurrent sweeper instances
+	// started simultaneously do not all tick at the same wall-clock time.
+	jitter := time.Duration(rand.Int64N(int64(s.interval)))
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(jitter):
+	}
+
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -32,9 +42,7 @@ func (s *ExpirySweeper) Start(ctx context.Context) {
 				s.logger.Error("order expiry sweep failed", "error", err)
 				continue
 			}
-			if count > 0 {
-				s.logger.Info("expired orders", "count", count)
-			}
+			s.logger.Info("order expiry sweep done", "count", count)
 		}
 	}
 }
