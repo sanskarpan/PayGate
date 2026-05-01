@@ -3,12 +3,15 @@ import { notFound, redirect } from "next/navigation";
 
 import type {
   APIKeyItem,
+  AuditLogItem,
   DeliveryAttemptItem,
   DashboardViewer,
+  InvitationItem,
   OrderItem,
   PaymentItem,
   ReconMismatch,
   RefundItem,
+  RiskEventItem,
   SettlementItem,
   SettlementLineItem,
   WebhookItem,
@@ -191,4 +194,77 @@ export async function getReconMismatches() {
     return { items: [] as ReconMismatch[], count: 0 };
   }
   return (await response.json()) as CollectionResponse<ReconMismatch>;
+}
+
+export async function getRiskEvents() {
+  await requireViewer();
+  const response = await apiFetch("/v1/risk/events");
+  if (!response.ok) {
+    throw new Error(`risk events fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<RiskEventItem>;
+}
+
+export async function resolveRiskEvent(id: string, resolvedBy: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/risk/events/${id}/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ resolved_by: resolvedBy }),
+  });
+  if (!response.ok) {
+    throw new Error(`resolve risk event failed: ${response.status}`);
+  }
+  return (await response.json()) as RiskEventItem;
+}
+
+export async function getAuditLogs(params?: {
+  resource_type?: string;
+  resource_id?: string;
+  actor_id?: string;
+}) {
+  await requireViewer();
+  const qs = params
+    ? "?" +
+      Object.entries(params)
+        .filter(([, v]) => v)
+        .map(([k, v]) => `${k}=${encodeURIComponent(v!)}`)
+        .join("&")
+    : "";
+  const response = await apiFetch(`/v1/audit-logs${qs}`);
+  if (!response.ok) {
+    throw new Error(`audit logs fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<AuditLogItem>;
+}
+
+export async function getInvitations() {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/invitations");
+  if (!response.ok) {
+    throw new Error(`invitations fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<InvitationItem>;
+}
+
+export async function inviteTeamMember(email: string, role: string) {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/invitations", {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as { error?: { description?: string } }).error?.description ?? "invite failed");
+  }
+  return (await response.json()) as InvitationItem;
+}
+
+export async function revokeInvitation(id: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/merchants/me/invitations/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(`revoke invitation failed: ${response.status}`);
+  }
 }

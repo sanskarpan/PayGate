@@ -115,6 +115,45 @@ export type ReconMismatch = {
   created_at: number;
 };
 
+export type RiskEventItem = {
+  id: string;
+  merchant_id: string;
+  payment_id: string;
+  score: number;
+  action: string;
+  triggered_rules: string[];
+  resolved: boolean;
+  resolved_by: string | null;
+  resolved_at: number | null;
+  created_at: number;
+};
+
+export type AuditLogItem = {
+  id: string;
+  merchant_id: string;
+  actor_id: string;
+  actor_email: string;
+  actor_type: string;
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  ip_address: string;
+  correlation_id: string;
+  created_at: number;
+};
+
+export type InvitationItem = {
+  id: string;
+  merchant_id: string;
+  email: string;
+  role: string;
+  status: string;
+  invited_by: string;
+  expires_at: number;
+  accepted_at: number | null;
+  created_at: number;
+};
+
 export function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
