@@ -20,4 +20,10 @@ type Repository interface {
 
 	// GetSettlementItems returns all items for a settlement.
 	GetSettlementItems(ctx context.Context, settlementID string) ([]SettlementItem, error)
+
+	// HoldSettlement places a settlement on hold with the given reason.
+	HoldSettlement(ctx context.Context, merchantID, settlementID, reason string) error
+
+	// ReleaseSettlement releases a settlement from hold.
+	ReleaseSettlement(ctx context.Context, merchantID, settlementID string) error
 }
