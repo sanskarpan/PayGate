@@ -83,8 +83,9 @@ type WebhookSubscription struct {
 	// PreviousSecret is the signing secret that was replaced by the most recent
 	// rotation. It remains valid until PreviousSecretExpiresAt to allow a
 	// grace-period overlap when consumers update their verification logic.
-	PreviousSecret           string
-	PreviousSecretExpiresAt  *time.Time
+	// Nil when no rotation has occurred yet.
+	PreviousSecret          *string
+	PreviousSecretExpiresAt *time.Time
 	Status                   SubscriptionStatus
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
