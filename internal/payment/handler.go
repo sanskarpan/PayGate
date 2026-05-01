@@ -1,22 +1,41 @@
 package payment
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/merchant"
 )
 
-type Handler struct {
-	svc *Service
+// RiskEvaluator is an optional hook called after gateway authorization to check
+// payment risk.  If the returned action is "block", the payment is declined.
+// If "hold", the payment is created but a risk event is recorded for review.
+type RiskEvaluator interface {
+	EvaluateAuthorize(ctx context.Context, merchantID, paymentID string, amount int64, ipAddress string) (string, error)
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+type Handler struct {
+	svc  *Service
+	risk RiskEvaluator // optional
+}
+
+func NewHandler(svc *Service, opts ...func(*Handler)) *Handler {
+	h := &Handler{svc: svc}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// WithRiskEvaluator attaches an optional risk evaluator to the payment handler.
+func WithRiskEvaluator(r RiskEvaluator) func(*Handler) {
+	return func(h *Handler) { h.risk = r }
 }
 
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
@@ -50,6 +69,26 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
+
+	// Run risk evaluation after authorization; block payment if score requires it.
+	if h.risk != nil {
+		ip := r.RemoteAddr
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			ip = strings.TrimSpace(strings.SplitN(fwd, ",", 2)[0])
+		}
+		action, riskErr := h.risk.EvaluateAuthorize(r.Context(), p.MerchantID, out.PaymentID, req.Amount, ip)
+		if riskErr == nil && action == "block" {
+			httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{
+				Code:        "RISK_BLOCKED",
+				Description: "payment blocked due to risk policy",
+				Source:      "risk",
+				Step:        "payment_authorization",
+				Reason:      "risk_score_exceeded",
+			})
+			return
+		}
+	}
+
 	httpx.WriteJSON(w, http.StatusCreated, present(out))
 }
 
