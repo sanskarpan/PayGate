@@ -10,7 +10,13 @@ import (
 	"time"
 )
 
-var scrubRe = regexp.MustCompile(`(?i)(password|secret|token|cvv|card_number)`)
+// scrubRe matches JSON keys whose values should be redacted from logs.
+var scrubRe = regexp.MustCompile(`(?i)(password|secret|token|cvv|card_number|email|phone|pan|account_number|card_no)`)
+
+// maxLogBodyBytes is the maximum request body size written to logs.
+// Larger bodies are replaced with a placeholder to avoid log bloat and
+// potential PII leakage in large JSON payloads.
+const maxLogBodyBytes = 4096
 
 type responseRecorder struct {
 	http.ResponseWriter
@@ -33,7 +39,13 @@ func Logging(logger *slog.Logger, next http.Handler) http.Handler {
 
 		body, _ := io.ReadAll(r.Body)
 		r.Body = io.NopCloser(bytes.NewBuffer(body))
-		scrubbed := scrub(string(body))
+
+		var scrubbed string
+		if len(body) > maxLogBodyBytes {
+			scrubbed = "[BODY_TOO_LARGE]"
+		} else {
+			scrubbed = scrub(string(body))
+		}
 
 		next.ServeHTTP(rec, r)
 		logger.Info("http_request",
@@ -46,6 +58,11 @@ func Logging(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
+// scrub replaces values of sensitive JSON keys with [SCRUBBED].
+// It operates on each line of the body so that compact single-line JSON and
+// pretty-printed multi-line JSON are both handled.  When a line contains a
+// sensitive key name anywhere, the whole line is replaced rather than
+// attempting to parse the JSON (which avoids regex-based false negatives).
 func scrub(v string) string {
 	if v == "" {
 		return v

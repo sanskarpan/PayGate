@@ -299,28 +299,45 @@ WHERE merchant_id = $1`
 }
 
 func (r *PostgresRepository) AutoCaptureDue(ctx context.Context) (int64, error) {
-	rows, err := r.db.Query(ctx, `SELECT id, amount FROM paygate_payments.payments WHERE status='authorized' AND auto_capture_at IS NOT NULL AND auto_capture_at <= NOW() LIMIT 50`)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
+	// Process payments one at a time. Each iteration locks a single row with
+	// FOR UPDATE SKIP LOCKED so concurrent sweeper instances never double-capture
+	// the same payment.
 	var count int64
-	for rows.Next() {
-		var id string
-		var amount int64
-		if err := rows.Scan(&id, &amount); err != nil {
-			return count, err
-		}
-		var merchantID string
-		err = r.db.QueryRow(ctx, `SELECT merchant_id FROM paygate_payments.payments WHERE id = $1`, id).Scan(&merchantID)
+	for range 50 {
+		tx, err := r.db.Begin(ctx)
 		if err != nil {
 			return count, err
 		}
+
+		var id, merchantID string
+		var amount int64
+		err = tx.QueryRow(ctx, `
+SELECT id, merchant_id, amount
+FROM paygate_payments.payments
+WHERE status = 'authorized'
+  AND auto_capture_at IS NOT NULL
+  AND auto_capture_at <= NOW()
+ORDER BY auto_capture_at
+LIMIT 1
+FOR UPDATE SKIP LOCKED
+`).Scan(&id, &merchantID, &amount)
+		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
+			break
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			return count, err
+		}
+		// Release the advisory lock; CaptureAuthorizedPayment opens its own TX
+		// with FOR UPDATE on the same row, which will immediately re-acquire.
+		_ = tx.Rollback(ctx)
+
 		if _, err := r.CaptureAuthorizedPayment(ctx, merchantID, id, amount); err == nil {
 			count++
 		}
 	}
-	return count, rows.Err()
+	return count, nil
 }
 
 func (r *PostgresRepository) ExpireAuthorizationWindow(ctx context.Context, window time.Duration) (int64, error) {

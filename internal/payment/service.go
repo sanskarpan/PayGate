@@ -41,6 +41,9 @@ type AuthorizeInput struct {
 }
 
 func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResult, error) {
+	if in.Amount <= 0 {
+		return CaptureResult{}, ErrInvalidPaymentAmount
+	}
 	result, err := s.gateway.Authorize(ctx, in.Amount, in.Currency, in.Method)
 	if err != nil {
 		_ = s.repo.CreateFailedAttempt(ctx, CreateAuthorizedInput{MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, IdempotencyKey: in.IdempotencyKey}, "GATEWAY_ERROR", err.Error())
@@ -48,7 +51,7 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 	}
 	if !result.Success {
 		_ = s.repo.CreateFailedAttempt(ctx, CreateAuthorizedInput{MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, IdempotencyKey: in.IdempotencyKey}, result.ErrorCode, result.ErrorDescription)
-		return CaptureResult{}, errors.New("authorization failed")
+		return CaptureResult{}, ErrAuthorizationDeclined
 	}
 
 	var autoCaptureAt *time.Time

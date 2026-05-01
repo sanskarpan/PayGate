@@ -85,17 +85,39 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", httpx.Healthz)
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		checks := map[string]string{}
+		ready := true
+
 		if err := db.Ping(r.Context()); err != nil {
+			checks["postgres"] = "unavailable"
+			ready = false
+		} else {
+			checks["postgres"] = "ok"
+		}
+
+		if redisClient != nil {
+			if err := redisClient.Ping(r.Context()).Err(); err != nil {
+				checks["redis"] = "unavailable"
+				// Redis is optional (idempotency falls back to Postgres) — not fatal.
+			} else {
+				checks["redis"] = "ok"
+			}
+		} else {
+			checks["redis"] = "not_configured"
+		}
+
+		if !ready {
 			httpx.WriteError(w, http.StatusServiceUnavailable, httpx.APIError{
 				Code:        "SERVER_ERROR",
-				Description: "database is not ready",
+				Description: "one or more dependencies are not ready",
 				Source:      "internal",
 				Step:        "readiness_check",
 				Reason:      "dependency_unavailable",
+				Metadata:    map[string]any{"checks": checks},
 			})
 			return
 		}
-		httpx.Readyz(w, r)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "checks": checks})
 	})
 
 	merchantHandler.RegisterRoutes(mux)

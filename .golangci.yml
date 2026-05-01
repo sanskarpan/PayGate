@@ -13,5 +13,3 @@ linters:
     - gocritic
     - gosec
     - misspell
-issues:
-  exclude-use-default: false

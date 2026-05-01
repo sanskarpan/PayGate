@@ -22,11 +22,13 @@ const (
 )
 
 var (
-	ErrInvalidTransition = errors.New("invalid payment transition")
-	ErrOrderNotFound     = errors.New("order not found")
-	ErrOrderExpired      = errors.New("order is expired")
-	ErrCurrencyMismatch  = errors.New("payment currency must match order currency")
-	ErrAmountMismatch    = errors.New("payment amount does not match order constraints")
+	ErrInvalidTransition      = errors.New("invalid payment transition")
+	ErrOrderNotFound          = errors.New("order not found")
+	ErrOrderExpired           = errors.New("order is expired")
+	ErrCurrencyMismatch       = errors.New("payment currency must match order currency")
+	ErrAmountMismatch         = errors.New("payment amount does not match order constraints")
+	ErrAuthorizationDeclined  = errors.New("payment authorization declined by gateway")
+	ErrInvalidPaymentAmount   = errors.New("payment amount must be greater than zero")
 )
 
 func Transition(from PaymentState, ev PaymentEvent) (PaymentState, error) {
