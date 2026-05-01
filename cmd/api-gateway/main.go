@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/sanskarpan/PayGate/internal/audit"
 	"github.com/sanskarpan/PayGate/internal/auth"
+	"github.com/sanskarpan/PayGate/internal/risk"
 	"github.com/sanskarpan/PayGate/internal/common/config"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/common/logger"
@@ -85,10 +86,14 @@ func run() error {
 	ledgerRepo := ledger.NewRepository(db)
 	ledgerSvc := ledger.NewService(ledgerRepo)
 
+	riskRepo := risk.NewPostgresRepository(db)
+	riskSvc := risk.NewService(riskRepo, l)
+	riskHandler := risk.NewHandler(riskSvc)
+
 	gatewayClient := gateway.NewSimulator()
 	paymentRepo := payment.NewPostgresRepository(db, ledgerSvc, orderSvc)
 	paymentSvc := payment.NewService(paymentRepo, gatewayClient)
-	paymentHandler := payment.NewHandler(paymentSvc)
+	paymentHandler := payment.NewHandler(paymentSvc, payment.WithRiskEvaluator(&riskAdapter{svc: riskSvc}))
 	checkoutHandler := gateway.NewCheckoutHandler(paymentSvc, orderSvc)
 
 	refundRepo := refund.NewPostgresRepository(db, ledgerSvc)
@@ -170,6 +175,10 @@ func run() error {
 	auditHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
 		return authMw.RequireScope(merchant.APIKeyScopeRead, next)
 	})
+	riskHandler.RegisterRoutesWithAuth(mux, func(scope string, next http.Handler) http.Handler {
+		s := merchant.APIKeyScope(scope)
+		return authMw.RequireScope(s, next)
+	})
 
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := httpx.PrincipalFromContext(r.Context())
@@ -224,4 +233,23 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return server.Shutdown(shutdownCtx)
+}
+
+// riskAdapter bridges the risk.Service to the payment.RiskEvaluator interface.
+type riskAdapter struct {
+	svc *risk.Service
+}
+
+func (a *riskAdapter) EvaluateAuthorize(ctx context.Context, merchantID, paymentID string, amount int64, ipAddress string) (string, error) {
+	ev, err := a.svc.EvaluatePayment(ctx, risk.EvalInput{
+		MerchantID: merchantID,
+		PaymentID:  paymentID,
+		Amount:     amount,
+		Currency:   "INR",
+		IPAddress:  ipAddress,
+	})
+	if err != nil {
+		return string(risk.RiskActionAllow), err
+	}
+	return string(ev.Action), nil
 }
