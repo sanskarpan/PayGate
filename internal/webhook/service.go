@@ -119,6 +119,44 @@ func (s *Service) DeliverEvent(ctx context.Context, eventID, merchantID, eventTy
 	return nil
 }
 
+// RotateSecret generates a new signing secret for the subscription.
+// The new secret is returned in the response. The previous secret is immediately
+// invalidated — callers must update their verification logic before rotating.
+func (s *Service) RotateSecret(ctx context.Context, merchantID, id string) (WebhookSubscription, error) {
+	return s.repo.RotateSecret(ctx, merchantID, id)
+}
+
+// ReplayEvent re-delivers a previously recorded event to its matching subscriptions.
+// It looks up all delivery attempts for the event, picks the request body from the
+// most recent one, and re-calls DeliverEvent (which handles idempotency by checking
+// for succeeded deliveries — so ReplayEvent explicitly clears that gate by using a
+// new synthetic event ID derived from the original).
+func (s *Service) ReplayEvent(ctx context.Context, merchantID, eventID string) (int, error) {
+	attempts, err := s.repo.FindDeliveryByEvent(ctx, merchantID, eventID)
+	if err != nil {
+		return 0, fmt.Errorf("find event deliveries: %w", err)
+	}
+	if len(attempts) == 0 {
+		return 0, ErrDeliveryAttemptNotFound
+	}
+
+	// Use the first attempt's request body (most recent by DESC ordering).
+	body := attempts[0].RequestBody
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0, fmt.Errorf("unmarshal replay payload: %w", err)
+	}
+
+	// Use a replay-prefixed event ID so idempotency guard allows re-delivery.
+	replayID := "replay_" + eventID
+	eventType, _ := payload["event_type"].(string)
+
+	if err := s.DeliverEvent(ctx, replayID, merchantID, eventType, payload); err != nil {
+		return 0, err
+	}
+	return 1, nil
+}
+
 // RetryPendingDeliveries polls for failed delivery attempts with due next_retry_at
 // and re-delivers them. Returns the number of attempts processed.
 func (s *Service) RetryPendingDeliveries(ctx context.Context, limit int) (int, error) {
