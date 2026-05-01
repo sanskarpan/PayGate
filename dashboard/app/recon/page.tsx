@@ -29,11 +29,11 @@ export default async function ReconPage() {
 
       {open.length > 0 && (
         <div className="list-card">
-          <h2 style={{ padding: "16px 20px", margin: 0, borderBottom: "1px solid var(--border)" }}>
+          <h2 className="section-heading">
             Open Mismatches ({open.length})
           </h2>
           {open.map((mm) => (
-            <div className="list-row" key={mm.id} style={{ borderLeft: "3px solid var(--error)" }}>
+            <div className="list-row list-row-error" key={mm.id}>
               <div>
                 <div className="row-title">
                   {mismatchTypeLabel[mm.mismatch_type] ?? mm.mismatch_type}
@@ -52,14 +52,14 @@ export default async function ReconPage() {
       )}
 
       {open.length === 0 && (
-        <div className="hero-card" style={{ background: "var(--success-bg)" }}>
+        <div className="hero-card-success">
           <p className="lede">All reconciliation checks passed. No open mismatches.</p>
         </div>
       )}
 
       {resolved.length > 0 && (
         <div className="list-card">
-          <h2 style={{ padding: "16px 20px", margin: 0, borderBottom: "1px solid var(--border)" }}>
+          <h2 className="section-heading">
             Resolved ({resolved.length})
           </h2>
           {resolved.map((mm) => (
