@@ -23,17 +23,17 @@ CREATE INDEX IF NOT EXISTS idx_risk_events_unresolved
 
 -- Velocity counters: rolling window counters keyed by dimension.
 -- dimension: merchant_id, ip_address, card_token
--- window: 1h, 24h
+-- window_type: 1h, 24h
 CREATE TABLE IF NOT EXISTS paygate_risk.velocity_counters (
     id          TEXT PRIMARY KEY,
     dimension   TEXT        NOT NULL,
     dim_value   TEXT        NOT NULL,
-    window      TEXT        NOT NULL CHECK (window IN ('1h','24h')),
+    window_type TEXT        NOT NULL CHECK (window_type IN ('1h','24h')),
     count       INT         NOT NULL DEFAULT 1,
     amount      BIGINT      NOT NULL DEFAULT 0,
     window_end  TIMESTAMPTZ NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (dimension, dim_value, window, window_end)
+    UNIQUE (dimension, dim_value, window_type, window_end)
 );
 
 CREATE INDEX IF NOT EXISTS idx_velocity_dimension
