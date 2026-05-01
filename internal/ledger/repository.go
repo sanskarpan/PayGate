@@ -23,26 +23,35 @@ func (r *Repository) BeginTx(ctx context.Context) (pgx.Tx, error) {
 
 func (r *Repository) InsertTransactionWithEntriesTx(ctx context.Context, tx pgx.Tx, txnID, merchantID, sourceType, sourceID, description string, entries []Entry) error {
 	var totalDebit, totalCredit int64
+	// Derive currency from first entry (all entries in one transaction must share currency).
+	txnCurrency := "INR"
 	for _, e := range entries {
 		totalDebit += e.DebitAmount
 		totalCredit += e.CreditAmount
+		if e.Currency != "" {
+			txnCurrency = e.Currency
+		}
 	}
 
 	_, err := tx.Exec(ctx, `
 INSERT INTO paygate_ledger.ledger_transactions
 (id, merchant_id, source_type, source_id, currency, total_debit, total_credit, description)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-`, txnID, merchantID, sourceType, sourceID, "INR", totalDebit, totalCredit, description)
+`, txnID, merchantID, sourceType, sourceID, txnCurrency, totalDebit, totalCredit, description)
 	if err != nil {
 		return fmt.Errorf("insert ledger transaction: %w", err)
 	}
 
 	for _, e := range entries {
+		entryCurrency := e.Currency
+		if entryCurrency == "" {
+			entryCurrency = txnCurrency
+		}
 		_, err := tx.Exec(ctx, `
 INSERT INTO paygate_ledger.ledger_entries
 (id, transaction_id, merchant_id, account_code, debit_amount, credit_amount, currency, source_type, source_id, description)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-`, idgen.New("le"), txnID, merchantID, e.AccountCode, e.DebitAmount, e.CreditAmount, "INR", sourceType, sourceID, e.Description)
+`, idgen.New("le"), txnID, merchantID, e.AccountCode, e.DebitAmount, e.CreditAmount, entryCurrency, sourceType, sourceID, e.Description)
 		if err != nil {
 			return fmt.Errorf("insert ledger entry: %w", err)
 		}

@@ -228,6 +228,12 @@ func TestIntegrationOutboxRelayPublishesAndMarksRows(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 
+	// Clear any unpublished outbox rows left by prior tests in this run so
+	// that the relay publish count assertion below is deterministic.
+	if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE published_at IS NULL`); err != nil {
+		t.Fatalf("clear unpublished outbox rows: %v", err)
+	}
+
 	tx, err := db.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin tx: %v", err)

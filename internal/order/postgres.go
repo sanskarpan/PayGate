@@ -243,10 +243,17 @@ WHERE merchant_id = $1`
 }
 
 func (r *PostgresRepository) ExpireDueOrders(ctx context.Context) (int64, error) {
+	// Use a CTE with SKIP LOCKED and a batch limit to be safe under concurrent sweepers.
 	cmd, err := r.db.Exec(ctx, `
+WITH to_expire AS (
+  SELECT id FROM paygate_orders.orders
+  WHERE status = 'created' AND expires_at <= NOW()
+  LIMIT 500
+  FOR UPDATE SKIP LOCKED
+)
 UPDATE paygate_orders.orders
 SET status = 'expired', updated_at = NOW()
-WHERE status = 'created' AND expires_at <= NOW()`)
+WHERE id IN (SELECT id FROM to_expire)`)
 	if err != nil {
 		return 0, fmt.Errorf("expire orders: %w", err)
 	}

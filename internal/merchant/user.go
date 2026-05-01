@@ -26,7 +26,7 @@ var (
 	ErrMerchantUserNotFound   = errors.New("merchant user not found")
 	ErrMerchantUserNotActive  = errors.New("merchant user is not active")
 	ErrInvalidMerchantUser    = errors.New("merchant user email is required")
-	ErrInvalidMerchantPass    = errors.New("merchant user password must be at least 8 characters")
+	ErrInvalidMerchantPass    = errors.New("merchant user password must be between 8 and 72 characters")
 	ErrInvalidMerchantRole    = errors.New("invalid merchant user role")
 	ErrDashboardSession       = errors.New("invalid dashboard session")
 	ErrBootstrapAlreadyExists = errors.New("merchant already has dashboard users")
@@ -48,7 +48,10 @@ func (u MerchantUser) ValidateForBootstrap(password string) error {
 	if strings.TrimSpace(strings.ToLower(u.Email)) == "" {
 		return ErrInvalidMerchantUser
 	}
-	if len(strings.TrimSpace(password)) < 8 {
+	trimmed := strings.TrimSpace(password)
+	// bcrypt silently truncates at 72 bytes; reject longer passwords to prevent
+	// both the DoS vector and silent security downgrade.
+	if len(trimmed) < 8 || len(trimmed) > 72 {
 		return ErrInvalidMerchantPass
 	}
 	if err := ValidateMerchantUserRole(u.Role); err != nil {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
@@ -93,9 +94,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
 		return
 	}
+	count, _ := strconv.Atoi(r.URL.Query().Get("count"))
 	out, err := h.svc.List(r.Context(), ListFilter{
 		MerchantID: p.MerchantID,
 		OrderID:    r.URL.Query().Get("order_id"),
+		Count:      count,
 	})
 	if err != nil {
 		handleError(w, err)
@@ -142,10 +145,13 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
 	case errors.Is(err, ErrOrderExpired),
 		errors.Is(err, ErrCurrencyMismatch),
-		errors.Is(err, ErrAmountMismatch):
+		errors.Is(err, ErrAmountMismatch),
+		errors.Is(err, ErrInvalidPaymentAmount):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	case errors.Is(err, ErrInvalidTransition):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
+	case errors.Is(err, ErrAuthorizationDeclined):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "PAYMENT_FAILED", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error", Metadata: map[string]any{"at": time.Now().UTC().Unix()}})
 	}

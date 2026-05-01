@@ -26,6 +26,11 @@ services:
     volumes:
       - ./.redis:/data
     command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   kafka:
     image: bitnami/kafka:3.8
@@ -45,6 +50,12 @@ services:
       - ALLOW_PLAINTEXT_LISTENER=yes
     volumes:
       - ./.kafka:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   minio:
     image: minio/minio:latest

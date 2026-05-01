@@ -2,6 +2,7 @@ package merchant
 
 import (
 	"errors"
+	"net/mail"
 	"strings"
 	"time"
 )
@@ -37,8 +38,8 @@ const (
 )
 
 var (
-	ErrInvalidMerchantName  = errors.New("merchant name is required")
-	ErrInvalidMerchantEmail = errors.New("merchant email is required")
+	ErrInvalidMerchantName  = errors.New("merchant name is required and must be under 255 characters")
+	ErrInvalidMerchantEmail = errors.New("merchant email must be a valid email address")
 	ErrInvalidBusinessType  = errors.New("merchant business_type is required")
 	ErrMerchantSuspended    = errors.New("merchant is suspended")
 	ErrMerchantDeactivated  = errors.New("merchant is deactivated")
@@ -71,10 +72,15 @@ type APIKey struct {
 }
 
 func (m Merchant) ValidateForCreate() error {
-	if strings.TrimSpace(m.Name) == "" {
+	name := strings.TrimSpace(m.Name)
+	if name == "" || len(name) > 255 {
 		return ErrInvalidMerchantName
 	}
-	if strings.TrimSpace(m.Email) == "" {
+	email := strings.TrimSpace(m.Email)
+	if email == "" {
+		return ErrInvalidMerchantEmail
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
 		return ErrInvalidMerchantEmail
 	}
 	if strings.TrimSpace(m.BusinessType) == "" {
