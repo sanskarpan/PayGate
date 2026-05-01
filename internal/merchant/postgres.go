@@ -93,7 +93,7 @@ RETURNING created_at`
 
 func (r *PostgresRepository) ListAPIKeysByMerchant(ctx context.Context, merchantID string) ([]APIKey, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, secret_hash, mode, scope, status, last_used_at, revoked_at, created_at
+SELECT id, merchant_id, secret_hash, mode, scope, status, allowed_ips, last_used_at, revoked_at, created_at
 FROM paygate_merchants.api_keys
 WHERE merchant_id = $1
 ORDER BY created_at DESC
@@ -113,6 +113,7 @@ ORDER BY created_at DESC
 			&key.Mode,
 			&key.Scope,
 			&key.Status,
+			&key.AllowedIPs,
 			&key.LastUsedAt,
 			&key.RevokedAt,
 			&key.CreatedAt,
@@ -129,7 +130,7 @@ ORDER BY created_at DESC
 
 func (r *PostgresRepository) GetAPIKeyByID(ctx context.Context, keyID string) (APIKey, error) {
 	q := `
-SELECT id, merchant_id, secret_hash, mode, scope, status, last_used_at, revoked_at, created_at
+SELECT id, merchant_id, secret_hash, mode, scope, status, allowed_ips, last_used_at, revoked_at, created_at
 FROM paygate_merchants.api_keys
 WHERE id = $1`
 
@@ -141,6 +142,7 @@ WHERE id = $1`
 		&key.Mode,
 		&key.Scope,
 		&key.Status,
+		&key.AllowedIPs,
 		&key.LastUsedAt,
 		&key.RevokedAt,
 		&key.CreatedAt,
