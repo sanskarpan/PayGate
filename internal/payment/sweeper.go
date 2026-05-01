@@ -3,6 +3,7 @@ package payment
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 )
 
@@ -20,6 +21,15 @@ func NewSweeper(svc *Service, interval time.Duration, logger *slog.Logger) *Swee
 }
 
 func (s *Sweeper) Start(ctx context.Context) {
+	// Random jitter up to one full interval so multiple sweeper instances
+	// started simultaneously do not all tick at the same wall-clock time.
+	jitter := time.Duration(rand.Int64N(int64(s.interval)))
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(jitter):
+	}
+
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -30,15 +40,15 @@ func (s *Sweeper) Start(ctx context.Context) {
 			captured, err := s.svc.repo.AutoCaptureDue(ctx)
 			if err != nil {
 				s.logger.Error("auto-capture sweep failed", "error", err)
-			} else if captured > 0 {
-				s.logger.Info("auto-captured payments", "count", captured)
+			} else {
+				s.logger.Info("auto-capture sweep done", "count", captured)
 			}
 
 			expired, err := s.svc.repo.ExpireAuthorizationWindow(ctx, 5*24*time.Hour)
 			if err != nil {
 				s.logger.Error("auth-expiry sweep failed", "error", err)
-			} else if expired > 0 {
-				s.logger.Info("auto-refunded authorizations", "count", expired)
+			} else {
+				s.logger.Info("auth-expiry sweep done", "count", expired)
 			}
 		}
 	}
