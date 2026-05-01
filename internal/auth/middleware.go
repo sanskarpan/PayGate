@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 
@@ -31,6 +32,17 @@ func (m *Middleware) RequireScope(required merchant.APIKeyScope, next http.Handl
 			key, err := m.verifier.AuthenticateAPIKey(r.Context(), keyID, keySecret, required)
 			if err != nil {
 				writeAuthError(w, err)
+				return
+			}
+
+			if !ipAllowed(r, key.AllowedIPs) {
+				httpx.WriteError(w, http.StatusForbidden, httpx.APIError{
+					Code:        "FORBIDDEN",
+					Description: "request IP is not in the allowlist for this API key",
+					Source:      "auth",
+					Step:        "authentication",
+					Reason:      "ip_not_allowed",
+				})
 				return
 			}
 
@@ -90,6 +102,35 @@ func writeAuthError(w http.ResponseWriter, err error) {
 		Step:        "authentication",
 		Reason:      reason,
 	})
+}
+
+// ipAllowed returns true when allowedIPs is empty (no restriction) or contains
+// the request's remote IP (plain address or CIDR).
+func ipAllowed(r *http.Request, allowedIPs []string) bool {
+	if len(allowedIPs) == 0 {
+		return true
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	// Prefer X-Forwarded-For when set (running behind a proxy).
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		host = strings.TrimSpace(strings.SplitN(fwd, ",", 2)[0])
+	}
+	reqIP := net.ParseIP(host)
+	for _, allowed := range allowedIPs {
+		if _, cidr, err := net.ParseCIDR(allowed); err == nil {
+			if reqIP != nil && cidr.Contains(reqIP) {
+				return true
+			}
+			continue
+		}
+		if allowed == host {
+			return true
+		}
+	}
+	return false
 }
 
 func parseBasicAuth(header string) (string, string, bool) {

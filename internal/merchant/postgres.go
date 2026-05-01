@@ -93,7 +93,7 @@ RETURNING created_at`
 
 func (r *PostgresRepository) ListAPIKeysByMerchant(ctx context.Context, merchantID string) ([]APIKey, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, secret_hash, mode, scope, status, last_used_at, revoked_at, created_at
+SELECT id, merchant_id, secret_hash, mode, scope, status, allowed_ips, last_used_at, revoked_at, created_at
 FROM paygate_merchants.api_keys
 WHERE merchant_id = $1
 ORDER BY created_at DESC
@@ -113,6 +113,7 @@ ORDER BY created_at DESC
 			&key.Mode,
 			&key.Scope,
 			&key.Status,
+			&key.AllowedIPs,
 			&key.LastUsedAt,
 			&key.RevokedAt,
 			&key.CreatedAt,
@@ -129,7 +130,7 @@ ORDER BY created_at DESC
 
 func (r *PostgresRepository) GetAPIKeyByID(ctx context.Context, keyID string) (APIKey, error) {
 	q := `
-SELECT id, merchant_id, secret_hash, mode, scope, status, last_used_at, revoked_at, created_at
+SELECT id, merchant_id, secret_hash, mode, scope, status, allowed_ips, last_used_at, revoked_at, created_at
 FROM paygate_merchants.api_keys
 WHERE id = $1`
 
@@ -141,6 +142,7 @@ WHERE id = $1`
 		&key.Mode,
 		&key.Scope,
 		&key.Status,
+		&key.AllowedIPs,
 		&key.LastUsedAt,
 		&key.RevokedAt,
 		&key.CreatedAt,
@@ -272,6 +274,111 @@ SET last_login_at = NOW(), updated_at = NOW()
 WHERE id = $1
 `, userID); err != nil {
 		return fmt.Errorf("update merchant user last login: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) CreateInvitation(ctx context.Context, inv Invitation) (Invitation, error) {
+	q := `
+INSERT INTO paygate_merchants.merchant_invitations
+    (id, merchant_id, email, role, token_hash, status, invited_by, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING created_at, updated_at`
+
+	if err := r.db.QueryRow(ctx, q,
+		inv.ID, inv.MerchantID, inv.Email, inv.Role,
+		inv.TokenHash, inv.Status, inv.InvitedBy, inv.ExpiresAt,
+	).Scan(&inv.CreatedAt, &inv.UpdatedAt); err != nil {
+		return Invitation{}, fmt.Errorf("insert invitation: %w", err)
+	}
+	return inv, nil
+}
+
+func (r *PostgresRepository) GetInvitationByTokenHash(ctx context.Context, tokenHash string) (Invitation, error) {
+	q := `
+SELECT id, merchant_id, email, role, token_hash, status, invited_by,
+       expires_at, accepted_at, created_at, updated_at
+FROM paygate_merchants.merchant_invitations
+WHERE token_hash = $1`
+
+	var inv Invitation
+	err := r.db.QueryRow(ctx, q, tokenHash).Scan(
+		&inv.ID, &inv.MerchantID, &inv.Email, &inv.Role, &inv.TokenHash,
+		&inv.Status, &inv.InvitedBy, &inv.ExpiresAt, &inv.AcceptedAt,
+		&inv.CreatedAt, &inv.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Invitation{}, ErrInvitationNotFound
+		}
+		return Invitation{}, fmt.Errorf("get invitation by token hash: %w", err)
+	}
+	return inv, nil
+}
+
+func (r *PostgresRepository) ListInvitationsByMerchant(ctx context.Context, merchantID string) ([]Invitation, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT id, merchant_id, email, role, token_hash, status, invited_by,
+       expires_at, accepted_at, created_at, updated_at
+FROM paygate_merchants.merchant_invitations
+WHERE merchant_id = $1
+ORDER BY created_at DESC
+`, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("list invitations: %w", err)
+	}
+	defer rows.Close()
+
+	var invs []Invitation
+	for rows.Next() {
+		var inv Invitation
+		if err := rows.Scan(
+			&inv.ID, &inv.MerchantID, &inv.Email, &inv.Role, &inv.TokenHash,
+			&inv.Status, &inv.InvitedBy, &inv.ExpiresAt, &inv.AcceptedAt,
+			&inv.CreatedAt, &inv.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan invitation: %w", err)
+		}
+		invs = append(invs, inv)
+	}
+	return invs, rows.Err()
+}
+
+func (r *PostgresRepository) MarkInvitationAccepted(ctx context.Context, invitationID string) error {
+	_, err := r.db.Exec(ctx, `
+UPDATE paygate_merchants.merchant_invitations
+SET status = 'accepted', accepted_at = NOW(), updated_at = NOW()
+WHERE id = $1`, invitationID)
+	if err != nil {
+		return fmt.Errorf("mark invitation accepted: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) RevokeInvitation(ctx context.Context, merchantID, invitationID string) error {
+	cmd, err := r.db.Exec(ctx, `
+UPDATE paygate_merchants.merchant_invitations
+SET status = 'revoked', updated_at = NOW()
+WHERE merchant_id = $1 AND id = $2 AND status = 'pending'`, merchantID, invitationID)
+	if err != nil {
+		return fmt.Errorf("revoke invitation: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return ErrInvitationNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) UpdateAPIKeyAllowedIPs(ctx context.Context, merchantID, keyID string, ips []string) error {
+	cmd, err := r.db.Exec(ctx, `
+UPDATE paygate_merchants.api_keys
+SET allowed_ips = $3
+WHERE merchant_id = $1 AND id = $2 AND status = 'active'`, merchantID, keyID, ips)
+	if err != nil {
+		return fmt.Errorf("update api key allowed ips: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return ErrAPIKeyNotFound
 	}
 	return nil
 }

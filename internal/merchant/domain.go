@@ -66,6 +66,7 @@ type APIKey struct {
 	Mode       APIKeyMode
 	Scope      APIKeyScope
 	Status     APIKeyStatus
+	AllowedIPs []string
 	LastUsedAt *time.Time
 	RevokedAt  *time.Time
 	CreatedAt  time.Time
