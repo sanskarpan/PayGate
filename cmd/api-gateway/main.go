@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -128,6 +129,12 @@ func run() error {
 			}
 		} else {
 			checks["redis"] = "not_configured"
+		}
+
+		// Outbox lag metric: count of unpublished entries.
+		var unpublished int64
+		if err := db.QueryRow(r.Context(), `SELECT COUNT(*) FROM public.outbox WHERE published_at IS NULL`).Scan(&unpublished); err == nil {
+			checks["outbox_unpublished"] = fmt.Sprintf("%d", unpublished)
 		}
 
 		if !ready {
