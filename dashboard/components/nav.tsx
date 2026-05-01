@@ -9,6 +9,9 @@ const links = [
   ["/settlements", "Settlements"],
   ["/recon", "Reconciliation"],
   ["/api-keys", "API Keys"],
+  ["/risk", "Risk"],
+  ["/audit", "Audit Log"],
+  ["/team", "Team"],
 ];
 
 export default function Nav({ viewer }: { viewer: DashboardViewer | null }) {
