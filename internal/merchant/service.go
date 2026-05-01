@@ -141,6 +141,38 @@ func (s *Service) RevokeAPIKey(ctx context.Context, merchantID, keyID string) er
 	return s.repo.RevokeAPIKey(ctx, merchantID, keyID)
 }
 
+// RotateAPIKey revokes the existing key and issues a replacement with the same
+// mode and scope. The new secret is returned once; it cannot be retrieved again.
+func (s *Service) RotateAPIKey(ctx context.Context, merchantID, keyID string) (GeneratedAPIKey, error) {
+	if strings.TrimSpace(merchantID) == "" || strings.TrimSpace(keyID) == "" {
+		return GeneratedAPIKey{}, ErrAPIKeyNotFound
+	}
+	existing, err := s.repo.GetAPIKeyByID(ctx, keyID)
+	if err != nil {
+		return GeneratedAPIKey{}, err
+	}
+	if existing.MerchantID != merchantID {
+		return GeneratedAPIKey{}, ErrAPIKeyNotFound
+	}
+	if existing.Status != APIKeyStatusActive {
+		return GeneratedAPIKey{}, ErrAPIKeyNotActive
+	}
+
+	created, err := s.CreateAPIKey(ctx, merchantID, CreateAPIKeyInput{
+		Mode:  existing.Mode,
+		Scope: existing.Scope,
+	})
+	if err != nil {
+		return GeneratedAPIKey{}, err
+	}
+
+	if err := s.repo.RevokeAPIKey(ctx, merchantID, keyID); err != nil {
+		return GeneratedAPIKey{}, err
+	}
+
+	return created, nil
+}
+
 func (s *Service) AuthenticateAPIKey(ctx context.Context, keyID, keySecret string, requiredScope APIKeyScope) (APIKey, error) {
 	key, err := s.repo.GetAPIKeyByID(ctx, keyID)
 	if err != nil {
