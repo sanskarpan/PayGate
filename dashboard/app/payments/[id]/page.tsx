@@ -22,6 +22,11 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
         <Link className="ghost-button" href={`/orders/${payment.order_id}`}>
           View Parent Order
         </Link>
+        {payment.captured && (
+          <Link className="ghost-button" href={`/refunds?payment_id=${payment.id}`}>
+            View Refunds
+          </Link>
+        )}
       </div>
       <div className="detail-grid">
         <div className="detail-card">
