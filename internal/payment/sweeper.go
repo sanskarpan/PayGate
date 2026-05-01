@@ -23,7 +23,7 @@ func NewSweeper(svc *Service, interval time.Duration, logger *slog.Logger) *Swee
 func (s *Sweeper) Start(ctx context.Context) {
 	// Random jitter up to one full interval so multiple sweeper instances
 	// started simultaneously do not all tick at the same wall-clock time.
-	jitter := time.Duration(rand.Int64N(int64(s.interval)))
+	jitter := time.Duration(rand.Int64N(int64(s.interval))) //nolint:gosec // jitter is non-security, weak RNG is fine
 	select {
 	case <-ctx.Done():
 		return
