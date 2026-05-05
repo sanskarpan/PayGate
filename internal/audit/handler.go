@@ -52,6 +52,7 @@ func (h *Handler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 	for _, l := range logs {
 		items = append(items, map[string]any{
 			"id":             l.ID,
+			"merchant_id":    l.MerchantID,
 			"actor_id":       l.ActorID,
 			"actor_email":    l.ActorEmail,
 			"actor_type":     l.ActorType,
