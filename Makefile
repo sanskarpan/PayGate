@@ -2,7 +2,7 @@
 
 GO ?= go
 MIGRATIONS_DIR := migrations
-DB_URL ?= postgres://paygate:paygate@localhost:5432/paygate?sslmode=disable
+DB_URL ?= postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable
 GOCACHE ?= $(CURDIR)/.gocache
 GOMODCACHE ?= $(CURDIR)/.gomodcache
 GOLANGCI_LINT_CACHE ?= $(CURDIR)/.golangci-cache
