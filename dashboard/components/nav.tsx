@@ -35,11 +35,13 @@ export default function Nav({ viewer }: { viewer: DashboardViewer | null }) {
       <div className="nav-user">
         {viewer ? (
           <>
-            <div>
-              <div className="row-title">{viewer.email}</div>
+            <div style={{ minWidth: 0 }}>
+              <div className="row-title" style={{ whiteSpace: "nowrap" }}>
+                {viewer.email.length > 22 ? viewer.email.slice(0, 20) + "…" : viewer.email}
+              </div>
               <div className="row-meta">
                 <span>{viewer.role}</span>
-                <span>{viewer.merchant_id}</span>
+                <span>{viewer.merchant_id.slice(-8)}</span>
               </div>
             </div>
             <form action={logoutAction} method="POST">
