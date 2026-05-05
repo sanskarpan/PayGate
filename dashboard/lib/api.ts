@@ -25,11 +25,11 @@ type CollectionResponse<T> = {
 };
 
 export function getApiBaseUrl() {
-  return process.env.API_BASE_URL || "http://localhost:8080";
+  return process.env.API_BASE_URL || "http://localhost:8090";
 }
 
 export function getAppBaseUrl() {
-  return process.env.APP_BASE_URL || "http://localhost:3000";
+  return process.env.APP_BASE_URL || "http://localhost:3001";
 }
 
 function cookieHeader() {
