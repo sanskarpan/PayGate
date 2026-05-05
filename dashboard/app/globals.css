@@ -72,12 +72,21 @@ code {
   display: flex;
   gap: 16px;
   flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav-links::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-user {
   display: flex;
   align-items: center;
   gap: 14px;
+  flex-shrink: 0;
+  min-width: 0;
 }
 
 .auth-shell,
