@@ -31,7 +31,7 @@ export default async function RiskEventsPage() {
                 <div className="row-meta">
                   <span className={actionBadge(ev.action)}>{ev.action}</span>
                   <span>score: {ev.score}</span>
-                  {ev.triggered_rules.length > 0 && (
+                  {ev.triggered_rules?.length > 0 && (
                     <span>{ev.triggered_rules.join(", ")}</span>
                   )}
                   {ev.resolved && (
