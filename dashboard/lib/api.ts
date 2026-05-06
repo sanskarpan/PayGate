@@ -74,9 +74,10 @@ export async function requireViewer() {
   return viewer;
 }
 
-export async function getOrders() {
+export async function getOrders(cursor?: string) {
   await requireViewer();
-  const response = await apiFetch("/v1/orders?count=25");
+  const qs = cursor ? `?count=25&cursor=${encodeURIComponent(cursor)}` : "?count=25";
+  const response = await apiFetch(`/v1/orders${qs}`);
   if (!response.ok) {
     throw new Error(`orders fetch failed: ${response.status}`);
   }
@@ -183,7 +184,7 @@ export async function getSettlement(id: string) {
   if (!response.ok) {
     throw new Error(`settlement fetch failed: ${response.status}`);
   }
-  return (await response.json()) as SettlementItem & { items: SettlementLineItem[] };
+  return (await response.json()) as SettlementItem & { items?: SettlementLineItem[] };
 }
 
 export async function getReconMismatches() {

@@ -11,7 +11,8 @@ export default async function OrderDetailPage({ params }: { params: { id: string
     <section className="stack">
       <div className="hero-card">
         <div className="eyebrow">Order Detail</div>
-        <h1>{order.id}</h1>
+        <h1>Order Detail</h1>
+        <p className="muted" style={{ fontFamily: "monospace", fontSize: "0.9rem", margin: "4px 0 8px" }}>{order.id}</p>
         <p className="lede">
           {order.status} · {formatMoney(order.amount, order.currency)} · Receipt {order.receipt || "not set"}.
         </p>

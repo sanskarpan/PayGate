@@ -1,5 +1,13 @@
-import { requireViewer } from "../../lib/api";
+import { getRefunds, requireViewer } from "../../lib/api";
 import { formatMoney, formatTime } from "../../lib/types";
+
+function statusBadge(status: string) {
+  if (status === "processed") return "badge-success";
+  if (status === "processing") return "badge-info";
+  if (status === "created") return "badge-warning";
+  if (status === "failed") return "badge-error";
+  return "badge-warning";
+}
 
 // The refund console is accessed via a query param: /refunds?payment_id=pay_xxx
 // This page calls the API directly with the payment_id from the query string.
@@ -25,63 +33,50 @@ export default async function RefundsPage({
     );
   }
 
-  // Fetch refunds server-side.
-  const { cookies } = await import("next/headers");
-  const { getApiBaseUrl } = await import("../../lib/api");
-  const cookieHeader = cookies()
-    .getAll()
-    .map(({ name, value }) => `${name}=${value}`)
-    .join("; ");
+  let data: { items: Array<{ id: string; amount: number; currency: string; status: string; reason: string; created_at: number }>; count: number };
+  let fetchError: string | null = null;
 
-  const res = await fetch(`${getApiBaseUrl()}/v1/payments/${paymentID}/refunds`, {
-    headers: { cookie: cookieHeader },
-    cache: "no-store",
-  });
-  const data = res.ok ? await res.json() : { items: [], count: 0 };
+  try {
+    data = await getRefunds(paymentID);
+  } catch (err) {
+    fetchError = err instanceof Error ? err.message : "Failed to load refunds";
+    data = { items: [], count: 0 };
+  }
 
   return (
     <section className="stack">
       <div className="hero-card">
         <div className="eyebrow">Refund Console</div>
         <h1>Refunds for {paymentID}</h1>
-        <p className="lede">
-          {data.count} refund{data.count !== 1 ? "s" : ""} for this payment.
-        </p>
+        {!fetchError && (
+          <p className="lede">
+            {data.count} refund{data.count !== 1 ? "s" : ""} for this payment.
+          </p>
+        )}
       </div>
-      <div className="list-card">
-        {data.items.length === 0 ? (
-          <p className="muted">No refunds have been issued for this payment.</p>
-        ) : (
-          data.items.map(
-            (ref: {
-              id: string;
-              amount: number;
-              currency: string;
-              status: string;
-              reason: string;
-              created_at: number;
-            }) => (
+      {fetchError ? (
+        <div className="notice error">{fetchError}</div>
+      ) : (
+        <div className="list-card">
+          {data.items.length === 0 ? (
+            <p className="muted">No refunds have been issued for this payment.</p>
+          ) : (
+            data.items.map((ref) => (
               <div className="list-row" key={ref.id}>
                 <div>
                   <div className="row-title">{ref.id}</div>
                   <div className="row-meta">
-                    <span
-                      className={
-                        ref.status === "processed" ? "badge-success" : "badge-warning"
-                      }
-                    >
-                      {ref.status}
-                    </span>
+                    <span className={statusBadge(ref.status)}>{ref.status}</span>
                     {ref.reason && <span>{ref.reason}</span>}
                     <span>{formatTime(ref.created_at)}</span>
                   </div>
                 </div>
                 <div className="amount-pill">{formatMoney(ref.amount, ref.currency)}</div>
               </div>
-            ),
-          )
-        )}
-      </div>
+            ))
+          )}
+        </div>
+      )}
     </section>
   );
 }

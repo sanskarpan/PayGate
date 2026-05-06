@@ -34,7 +34,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		}
 
 		actorType := ActorTypeAPIKey
-		if p.AuthType == "dashboard_user" {
+		if p.AuthType == "dashboard_session" {
 			actorType = ActorTypeDashboardUser
 		}
 

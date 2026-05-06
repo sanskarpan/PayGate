@@ -33,7 +33,9 @@ export default async function WebhooksPage() {
                   >
                     {wh.status}
                   </span>
-                  <span>{wh.events.join(", ")}</span>
+                  {wh.events.map((event) => (
+                    <span className="badge-info" key={event}>{event}</span>
+                  ))}
                   <span>{formatTime(wh.created_at)}</span>
                 </div>
               </div>

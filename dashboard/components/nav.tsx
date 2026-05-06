@@ -26,7 +26,7 @@ export default function Nav({ viewer }: { viewer: DashboardViewer | null }) {
       <div className="nav-links">
         {viewer
           ? links.map(([href, label]) => (
-              <Link key={href} href={href}>
+              <Link key={href} href={href} style={{ whiteSpace: "nowrap" }}>
                 {label}
               </Link>
             ))
