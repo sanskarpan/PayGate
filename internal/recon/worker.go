@@ -227,6 +227,41 @@ WHERE p.status = 'captured'
 	return w.persistBatch(ctx, batchID, "", BatchTypeThreeWay, start, end, checkedCount, len(mismatches), mismatches)
 }
 
+// ListMismatches returns recon mismatches for a merchant, newest first.
+func (w *Worker) ListMismatches(ctx context.Context, merchantID string, limit int, unresolvedOnly bool) ([]ReconMismatch, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `
+SELECT id, batch_id, merchant_id, mismatch_type, entity_type, entity_id,
+       expected_value, actual_value, description, resolved, created_at
+FROM paygate_recon.recon_mismatches
+WHERE merchant_id = $1
+  AND ($2 = FALSE OR resolved = FALSE)
+ORDER BY created_at DESC
+LIMIT $3`
+
+	rows, err := w.db.Query(ctx, q, merchantID, unresolvedOnly, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recon mismatches: %w", err)
+	}
+	defer rows.Close()
+
+	var mismatches []ReconMismatch
+	for rows.Next() {
+		var mm ReconMismatch
+		if err := rows.Scan(
+			&mm.ID, &mm.BatchID, &mm.MerchantID, &mm.MismatchType,
+			&mm.EntityType, &mm.EntityID, &mm.ExpectedValue, &mm.ActualValue,
+			&mm.Description, &mm.Resolved, &mm.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan recon mismatch: %w", err)
+		}
+		mismatches = append(mismatches, mm)
+	}
+	return mismatches, rows.Err()
+}
+
 func (w *Worker) persistBatch(ctx context.Context, batchID, merchantID string, batchType BatchType, start, end time.Time, checked, mismatchCount int, mismatches []ReconMismatch) (int, error) {
 	tx, err := w.db.Begin(ctx)
 	if err != nil {
