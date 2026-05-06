@@ -218,7 +218,14 @@ func run() error {
 	})))
 
 	rateLimiter := middleware.NewRateLimiter(25, 25)
-	handler := telemetry.WrapHTTP(httpx.NewRouter(middleware.Logging(l, rateLimiter.Middleware(mux))), "api-gateway")
+	dashboardOrigin := cfg.DashboardOrigin
+	if dashboardOrigin == "" {
+		dashboardOrigin = "http://localhost:3001"
+	}
+	handler := telemetry.WrapHTTP(
+		httpx.NewRouter(middleware.CORS(dashboardOrigin)(middleware.Logging(l, rateLimiter.Middleware(mux)))),
+		"api-gateway",
+	)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
