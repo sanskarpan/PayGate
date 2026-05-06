@@ -115,7 +115,9 @@ func run() error {
 	go order.NewExpirySweeper(orderSvc, time.Minute, l).Start(ctx)
 	go webhook.NewRetryWorker(webhookSvc, 30*time.Second, l).Start(ctx)
 	go payment.NewSweeper(paymentSvc, 30*time.Second, l).Start(ctx)
-	go recon.NewWorker(db, l).Start(ctx)
+	reconWorker := recon.NewWorker(db, l)
+	go reconWorker.Start(ctx)
+	reconHandler := recon.NewHandler(reconWorker)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", httpx.Healthz)
@@ -178,6 +180,9 @@ func run() error {
 	riskHandler.RegisterRoutesWithAuth(mux, func(scope string, next http.Handler) http.Handler {
 		s := merchant.APIKeyScope(scope)
 		return authMw.RequireScope(s, next)
+	})
+	reconHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
+		return authMw.RequireScope(merchant.APIKeyScopeRead, next)
 	})
 
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
