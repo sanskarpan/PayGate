@@ -13,6 +13,7 @@ type Config struct {
 	RedisAddr              string
 	KafkaBrokers           []string
 	DashboardSessionSecret string
+	DashboardOrigin        string
 }
 
 func FromEnv() Config {
@@ -38,12 +39,17 @@ func FromEnv() Config {
 		// #nosec G101 -- development-only fallback secret for local dashboard sessions
 		sessionSecret = "paygate-dev-dashboard-session-secret"
 	}
+	dashboardOrigin := os.Getenv("DASHBOARD_ORIGIN")
+	if dashboardOrigin == "" {
+		dashboardOrigin = "http://localhost:3001"
+	}
 	return Config{
 		Port:                   port,
 		DatabaseURL:            dbURL,
 		RedisAddr:              redisAddr,
 		KafkaBrokers:           splitCSV(kafkaBrokers),
 		DashboardSessionSecret: sessionSecret,
+		DashboardOrigin:        dashboardOrigin,
 	}
 }
 
