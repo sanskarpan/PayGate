@@ -24,8 +24,44 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("GET /v1/settlements", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.list)))
 	mux.Handle("GET /v1/settlements/{settlementID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.get)))
+	mux.Handle("POST /v1/settlements/batch", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.runBatch)))
 	mux.Handle("POST /v1/settlements/{settlementID}/hold", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.hold)))
 	mux.Handle("POST /v1/settlements/{settlementID}/release", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.release)))
+}
+
+func (h *Handler) runBatch(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+
+	var body struct {
+		PeriodStart *int64 `json:"period_start"`
+		PeriodEnd   *int64 `json:"period_end"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+			return
+		}
+	}
+
+	periodStart := time.Unix(0, 0)
+	periodEnd := time.Now().UTC()
+	if body.PeriodStart != nil {
+		periodStart = time.Unix(*body.PeriodStart, 0)
+	}
+	if body.PeriodEnd != nil {
+		periodEnd = time.Unix(*body.PeriodEnd, 0)
+	}
+
+	sttl, err := h.svc.RunBatch(r.Context(), p.MerchantID, periodStart, periodEnd)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, present(sttl))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
