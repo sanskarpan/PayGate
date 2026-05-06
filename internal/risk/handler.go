@@ -103,6 +103,7 @@ func (h *Handler) resolveRiskEvent(w http.ResponseWriter, r *http.Request) {
 func riskEventToMap(ev RiskEvent) map[string]any {
 	m := map[string]any{
 		"id":              ev.ID,
+		"merchant_id":     ev.MerchantID,
 		"payment_id":      ev.PaymentID,
 		"score":           ev.Score,
 		"action":          ev.Action,
