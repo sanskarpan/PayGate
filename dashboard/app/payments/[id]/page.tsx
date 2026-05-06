@@ -15,7 +15,8 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
     <section className="stack">
       <div className="hero-card">
         <div className="eyebrow">Payment Trace</div>
-        <h1>{payment.id}</h1>
+        <h1>Payment Detail</h1>
+        <p style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", margin: "0 0 8px" }}>{payment.id}</p>
         <p className="lede">
           {payment.status} · {formatMoney(payment.amount, payment.currency)} via {payment.method}.
         </p>

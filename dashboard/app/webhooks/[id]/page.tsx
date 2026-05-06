@@ -11,7 +11,8 @@ export default async function WebhookDetailPage({ params }: { params: { id: stri
     <section className="stack">
       <div className="hero-card">
         <div className="eyebrow">Webhook Subscription</div>
-        <h1>{wh.id}</h1>
+        <h1>Webhook Detail</h1>
+        <p style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", margin: "0 0 8px" }}>{wh.id}</p>
         <p className="lede">
           Delivering to <code>{wh.url}</code> · status: {wh.status}
         </p>

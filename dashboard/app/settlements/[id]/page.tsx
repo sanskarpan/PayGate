@@ -8,7 +8,8 @@ export default async function SettlementDetailPage({ params }: { params: { id: s
     <section className="stack">
       <div className="hero-card">
         <div className="eyebrow">Settlement Batch</div>
-        <h1>{settlement.id}</h1>
+        <h1>Settlement Detail</h1>
+        <p style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", margin: "0 0 8px" }}>{settlement.id}</p>
         <p className="lede">
           Net payout: {formatMoney(settlement.net_amount, settlement.currency)} ·{" "}
           {settlement.payment_count} payment{settlement.payment_count !== 1 ? "s" : ""}

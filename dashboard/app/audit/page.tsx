@@ -32,7 +32,7 @@ export default async function AuditLogPage() {
                   <span>{formatTime(log.created_at)}</span>
                 </div>
               </div>
-              <div className="amount-pill">{log.id}</div>
+              <div style={{ fontSize: "0.78rem", color: "var(--muted)", fontFamily: "monospace" }}>{log.id.slice(0, 8)}</div>
             </div>
           ))
         )}
