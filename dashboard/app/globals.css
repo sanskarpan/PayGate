@@ -2,6 +2,7 @@
   --bg: #f4efe6;
   --card: rgba(255, 250, 241, 0.82);
   --panel: #fffaf1;
+  --surface: rgba(255, 255, 255, 0.55);
   --ink: #1e1a16;
   --muted: #6d6258;
   --accent: #0c6c57;
@@ -313,7 +314,8 @@ select {
 .badge-success,
 .badge-warning,
 .badge-error,
-.badge-info {
+.badge-info,
+.badge-neutral {
   display: inline-block;
   padding: 2px 10px;
   border-radius: 999px;
@@ -339,6 +341,11 @@ select {
 .badge-info {
   background: rgba(14, 100, 160, 0.12);
   color: #0a4f7a;
+}
+
+.badge-neutral {
+  background: rgba(109, 98, 88, 0.1);
+  color: var(--muted);
 }
 
 .action-button {

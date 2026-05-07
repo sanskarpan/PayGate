@@ -1,5 +1,5 @@
 import { getRefunds, requireViewer } from "../../lib/api";
-import { formatMoney, formatTime } from "../../lib/types";
+import { type RefundItem, formatMoney, formatTime } from "../../lib/types";
 
 function statusBadge(status: string) {
   if (status === "processed") return "badge-success";
@@ -33,7 +33,7 @@ export default async function RefundsPage({
     );
   }
 
-  let data: { items: Array<{ id: string; amount: number; currency: string; status: string; reason: string; created_at: number }>; count: number };
+  let data: { items: RefundItem[]; count: number };
   let fetchError: string | null = null;
 
   try {

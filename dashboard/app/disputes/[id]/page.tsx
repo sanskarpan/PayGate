@@ -28,47 +28,27 @@ export default async function DisputeDetailPage({ params }: { params: { id: stri
       </div>
 
       <div className="detail-card">
-        <dl className="detail-grid">
-          <dt>Payment ID</dt>
-          <dd>{dispute.payment_id}</dd>
-          <dt>Amount</dt>
-          <dd>{formatMoney(dispute.amount, dispute.currency)}</dd>
-          <dt>Reason</dt>
-          <dd>{dispute.reason}</dd>
-          <dt>Status</dt>
-          <dd><span className={statusBadge(dispute.status)}>{dispute.status}</span></dd>
+        <dl className="detail-list">
+          <div><dt>Payment ID</dt><dd>{dispute.payment_id}</dd></div>
+          <div><dt>Amount</dt><dd>{formatMoney(dispute.amount, dispute.currency)}</dd></div>
+          <div><dt>Reason</dt><dd>{dispute.reason}</dd></div>
+          <div><dt>Status</dt><dd><span className={statusBadge(dispute.status)}>{dispute.status}</span></dd></div>
           {dispute.due_by && (
-            <>
-              <dt>Evidence Due By</dt>
-              <dd>{formatTime(dispute.due_by)}</dd>
-            </>
+            <div><dt>Evidence Due By</dt><dd>{formatTime(dispute.due_by)}</dd></div>
           )}
           {dispute.evidence_submitted_at && (
-            <>
-              <dt>Evidence Submitted</dt>
-              <dd>{formatTime(dispute.evidence_submitted_at)}</dd>
-            </>
+            <div><dt>Evidence Submitted</dt><dd>{formatTime(dispute.evidence_submitted_at)}</dd></div>
           )}
           {dispute.resolved_at && (
-            <>
-              <dt>Resolved At</dt>
-              <dd>{formatTime(dispute.resolved_at)}</dd>
-            </>
+            <div><dt>Resolved At</dt><dd>{formatTime(dispute.resolved_at)}</dd></div>
           )}
           {dispute.settlement_id && (
-            <>
-              <dt>Settlement ID</dt>
-              <dd>{dispute.settlement_id}</dd>
-            </>
+            <div><dt>Settlement ID</dt><dd>{dispute.settlement_id}</dd></div>
           )}
           {dispute.notes && (
-            <>
-              <dt>Notes</dt>
-              <dd>{dispute.notes}</dd>
-            </>
+            <div><dt>Notes</dt><dd>{dispute.notes}</dd></div>
           )}
-          <dt>Created At</dt>
-          <dd>{formatTime(dispute.created_at)}</dd>
+          <div><dt>Created At</dt><dd>{formatTime(dispute.created_at)}</dd></div>
         </dl>
 
         {dispute.evidence && Object.keys(dispute.evidence).length > 0 && (

@@ -1,6 +1,12 @@
+import type { Metadata } from "next";
 import "./globals.css";
 import Nav from "../components/nav";
 import { getViewerOptional } from "../lib/api";
+
+export const metadata: Metadata = {
+  title: "PayGate",
+  description: "Payment gateway dashboard",
+};
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const viewer = await getViewerOptional();
