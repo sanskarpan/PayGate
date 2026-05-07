@@ -26,4 +26,7 @@ type Repository interface {
 
 	// ReleaseSettlement releases a settlement from hold.
 	ReleaseSettlement(ctx context.Context, merchantID, settlementID string) error
+
+	// RunPartialBatch settles only the specific paymentIDs provided, rather than all eligible payments.
+	RunPartialBatch(ctx context.Context, merchantID string, paymentIDs []string) (Settlement, error)
 }
