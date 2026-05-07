@@ -25,6 +25,7 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 	mux.Handle("GET /v1/settlements", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.list)))
 	mux.Handle("GET /v1/settlements/{settlementID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.get)))
 	mux.Handle("POST /v1/settlements/batch", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.runBatch)))
+	mux.Handle("POST /v1/settlements/partial", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.runPartialBatch)))
 	mux.Handle("POST /v1/settlements/{settlementID}/hold", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.hold)))
 	mux.Handle("POST /v1/settlements/{settlementID}/release", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.release)))
 }
@@ -57,6 +58,29 @@ func (h *Handler) runBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sttl, err := h.svc.RunBatch(r.Context(), p.MerchantID, periodStart, periodEnd)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, present(sttl))
+}
+
+func (h *Handler) runPartialBatch(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+
+	var body struct {
+		PaymentIDs []string `json:"payment_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.PaymentIDs) == 0 {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "payment_ids is required and must be non-empty"})
+		return
+	}
+
+	sttl, err := h.svc.RunPartialBatch(r.Context(), p.MerchantID, body.PaymentIDs)
 	if err != nil {
 		handleError(w, err)
 		return
