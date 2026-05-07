@@ -318,3 +318,41 @@ export async function getActiveGatewayScenario() {
   }
   return (await response.json()) as GatewayScenario;
 }
+
+/**
+ * Fetches Prometheus metrics from the API gateway and parses a specific
+ * metric's instantaneous value (sum across all labels).
+ * Returns null if the metric is not found or the endpoint is unreachable.
+ */
+export async function getPrometheusMetricSum(metricName: string): Promise<number | null> {
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/metrics`, {
+      cache: 'no-store',
+      next: { revalidate: 0 },
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    const lines = text.split('\n');
+    let sum = 0;
+    let found = false;
+    for (const line of lines) {
+      if (line.startsWith('#') || line.trim() === '') continue;
+      const parts = line.split(' ');
+      if (parts.length < 2) continue;
+      const nameWithLabels = parts[0];
+      const value = parseFloat(parts[1]);
+      if (isNaN(value)) continue;
+      // Match metric name (with or without labels)
+      const name = nameWithLabels.includes('{')
+        ? nameWithLabels.slice(0, nameWithLabels.indexOf('{'))
+        : nameWithLabels;
+      if (name === metricName) {
+        sum += value;
+        found = true;
+      }
+    }
+    return found ? sum : null;
+  } catch {
+    return null;
+  }
+}
