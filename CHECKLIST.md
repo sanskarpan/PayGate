@@ -296,52 +296,52 @@ paygate/
 ## Phase 4 — Enterprise-grade operations
 
 ### Dispute management
-- [ ] Dispute domain model (chargeback lifecycle)
-- [ ] Dispute creation (from simulated bank notification)
-- [ ] Dispute states: `open → under_review → won | lost | accepted`
-- [ ] Evidence submission mechanism
-- [ ] Dispute affects settlement holds
+- [x] Dispute domain model (chargeback lifecycle)
+- [x] Dispute creation (from simulated bank notification)
+- [x] Dispute states: `open → under_review → won | lost | accepted`
+- [x] Evidence submission mechanism
+- [x] Dispute affects settlement holds
 
 ### Advanced settlement
-- [ ] Partial settlements
-- [ ] Configurable settlement cycles per merchant
-- [ ] Settlement holds dashboard
-- [ ] Payout workflow (settlement → bank transfer simulation)
+- [x] Partial settlements
+- [x] Configurable settlement cycles per merchant
+- [x] Settlement holds dashboard
+- [x] Payout workflow (settlement → bank transfer simulation)
 
 ### Gateway simulator enhancements
-- [ ] Configurable scenarios via API (slow, flaky, timeout, duplicate, late)
-- [ ] Per-merchant gateway configuration
+- [x] Configurable scenarios via API (slow, flaky, timeout, duplicate, late)
+- [x] Per-merchant gateway configuration
 - [ ] Payment method simulator (card, UPI, netbanking, wallet)
 
 ### Observability
 - [ ] Grafana dashboards: payment funnel, webhook delivery, settlement
-- [ ] OpenTelemetry: full distributed tracing across all services
-- [ ] Prometheus metrics: custom business metrics (capture rate, refund rate, etc.)
+- [x] OpenTelemetry: full distributed tracing across all services
+- [x] Prometheus metrics: custom business metrics (capture rate, refund rate, etc.)
 - [ ] Alerting rules for all P1/P2 conditions
-- [ ] Correlation ID search across services
+- [x] Correlation ID search across services
 
 ### Chaos testing
-- [ ] Toxiproxy setup for inter-service fault injection
-- [ ] Chaos test: DB failure during capture
+- [x] Toxiproxy setup for inter-service fault injection
+- [x] Chaos test: DB failure during capture
 - [ ] Chaos test: Kafka broker failure
-- [ ] Chaos test: Redis failure (DB-backed idempotency for money writes, fail-open only for low-risk cache paths)
-- [ ] Chaos test: webhook endpoint slow/down
-- [ ] Chaos test: outbox relay crash and recovery
-- [ ] Document results in runbook
+- [x] Chaos test: Redis failure (DB-backed idempotency for money writes, fail-open only for low-risk cache paths)
+- [x] Chaos test: webhook endpoint slow/down
+- [x] Chaos test: outbox relay crash and recovery
+- [x] Document results in runbook
 
 ### Load testing
-- [ ] k6 scripts for all critical endpoints
+- [x] k6 scripts for all critical endpoints
 - [ ] Baseline performance: 1000 orders/sec
-- [ ] Spike test: 5x normal load for 5 minutes
+- [x] Spike test: 5x normal load for 5 minutes
 - [ ] Soak test: sustained load for 1 hour
-- [ ] Performance regression check in CI (smoke load test)
+- [x] Performance regression check in CI (smoke load test)
 
 ### Dashboard (Phase 4)
-- [ ] Dispute management console
-- [ ] Settlement holds/release UI
+- [x] Dispute management console
+- [x] Settlement holds/release UI
 - [ ] Observability dashboards (embedded Grafana or custom)
-- [ ] Gateway simulator control panel
-- [ ] Reconciliation drill-down with mismatch details
+- [x] Gateway simulator control panel
+- [x] Reconciliation drill-down with mismatch details
 
 ---
 
