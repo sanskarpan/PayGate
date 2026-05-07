@@ -41,8 +41,9 @@ func (s *Service) InitiatePayout(ctx context.Context, merchantID, settlementID s
 		return Payout{}, err
 	}
 
-	// Simulate bank transfer asynchronously using a detached context.
-	go s.simulateBankTransfer(p.MerchantID, p.ID)
+	// Detach from request context so HTTP cancellation doesn't abort the transfer.
+	detached := context.WithoutCancel(ctx)
+	go s.simulateBankTransfer(detached, p.MerchantID, p.ID)
 
 	return p, nil
 }
@@ -73,18 +74,19 @@ func (s *Service) InitiatePayoutForSettlement(ctx context.Context, merchantID, s
 		return Payout{}, fmt.Errorf("initiate payout: %w", err)
 	}
 
-	// Simulate bank transfer asynchronously using a detached context.
-	go s.simulateBankTransfer(p.MerchantID, p.ID)
+	// Detach from request context so HTTP cancellation doesn't abort the transfer.
+	detached := context.WithoutCancel(ctx)
+	go s.simulateBankTransfer(detached, p.MerchantID, p.ID)
 
 	return p, nil
 }
 
 // simulateBankTransfer sleeps 2s then completes (or fails) the payout.
-func (s *Service) simulateBankTransfer(merchantID, payoutID string) {
+func (s *Service) simulateBankTransfer(ctx context.Context, merchantID, payoutID string) {
 	time.Sleep(2 * time.Second)
 
 	bankRef := fmt.Sprintf("BNK_%d", time.Now().UnixNano())
-	detached := context.Background()
+	detached := ctx
 
 	if _, err := s.repo.Complete(detached, merchantID, payoutID, bankRef); err != nil {
 		s.logger.Error("simulate bank transfer: complete failed",
