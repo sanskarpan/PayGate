@@ -154,6 +154,48 @@ export type InvitationItem = {
   created_at: number;
 };
 
+export type DisputeItem = {
+  id: string;
+  merchant_id: string;
+  payment_id: string;
+  settlement_id: string | null;
+  status: string;
+  reason: string;
+  amount: number;
+  currency: string;
+  evidence: Record<string, unknown> | null;
+  evidence_submitted_at: number | null;
+  due_by: number | null;
+  resolved_at: number | null;
+  notes: string;
+  created_at: number;
+};
+
+export type PayoutItem = {
+  id: string;
+  merchant_id: string;
+  settlement_id: string;
+  status: string;
+  amount: number;
+  currency: string;
+  bank_reference: string;
+  failure_reason: string;
+  initiated_at: number | null;
+  completed_at: number | null;
+  created_at: number;
+};
+
+export type GatewayScenario = {
+  id: string;
+  merchant_id: string;
+  mode: string;
+  failure_rate: number;
+  delay_ms: number;
+  decline_code: string;
+  active: boolean;
+  created_at: number;
+};
+
 export function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
