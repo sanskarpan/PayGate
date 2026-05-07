@@ -13,6 +13,7 @@ const links = [
   ["/risk", "Risk"],
   ["/disputes", "Disputes"],
   ["/gateway", "Gateway"],
+  ["/observability", "Observability"],
   ["/audit", "Audit Log"],
   ["/team", "Team"],
 ];
