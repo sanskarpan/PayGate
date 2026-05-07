@@ -10,7 +10,7 @@ import (
 var ErrPaymentNotFound = errors.New("payment not found")
 
 type GatewayClient interface {
-	Authorize(ctx context.Context, amount int64, currency, method string) (GatewayAuthResult, error)
+	Authorize(ctx context.Context, amount int64, currency, merchantID, method string) (GatewayAuthResult, error)
 }
 
 type GatewayAuthResult struct {
@@ -44,7 +44,7 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 	if in.Amount <= 0 {
 		return CaptureResult{}, ErrInvalidPaymentAmount
 	}
-	result, err := s.gateway.Authorize(ctx, in.Amount, in.Currency, in.Method)
+	result, err := s.gateway.Authorize(ctx, in.Amount, in.Currency, in.MerchantID, in.Method)
 	if err != nil {
 		_ = s.repo.CreateFailedAttempt(ctx, CreateAuthorizedInput{MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, IdempotencyKey: in.IdempotencyKey}, "GATEWAY_ERROR", err.Error())
 		return CaptureResult{}, fmt.Errorf("gateway authorize: %w", err)
