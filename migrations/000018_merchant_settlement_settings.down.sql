@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS paygate_merchants.idx_merchants_settings_gin;
