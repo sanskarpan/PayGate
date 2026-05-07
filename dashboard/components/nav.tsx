@@ -10,6 +10,8 @@ const links = [
   ["/recon", "Reconciliation"],
   ["/api-keys", "API Keys"],
   ["/risk", "Risk"],
+  ["/disputes", "Disputes"],
+  ["/gateway", "Gateway"],
   ["/audit", "Audit Log"],
   ["/team", "Team"],
 ];
