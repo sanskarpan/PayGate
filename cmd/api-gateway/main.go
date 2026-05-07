@@ -95,8 +95,10 @@ func run() error {
 	riskHandler := risk.NewHandler(riskSvc)
 
 	scenarioStore := gateway.NewScenarioStore(db)
-	gatewayClient := gateway.NewSimulatorWithStore(scenarioStore)
+	methodStore := gateway.NewMethodConfigStore(db)
+	gatewayClient := gateway.NewSimulatorWithStores(scenarioStore, methodStore)
 	gatewayAdminHandler := gateway.NewAdminHandler(scenarioStore)
+	methodHandler := gateway.NewMethodHandler(methodStore)
 	paymentRepo := payment.NewPostgresRepository(db, ledgerSvc, orderSvc)
 	paymentSvc := payment.NewService(paymentRepo, gatewayClient)
 	paymentHandler := payment.NewHandler(paymentSvc, payment.WithRiskEvaluator(&riskAdapter{svc: riskSvc}))
@@ -209,6 +211,7 @@ func run() error {
 
 	// Gateway simulator control panel (no merchant auth - admin endpoint)
 	gatewayAdminHandler.RegisterRoutes(mux)
+	methodHandler.RegisterRoutes(mux)
 
 	// Prometheus metrics
 	mux.Handle("GET /metrics", promhttp.Handler())

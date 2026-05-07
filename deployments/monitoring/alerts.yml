@@ -1,0 +1,107 @@
+groups:
+  - name: paygate_p1
+    interval: 30s
+    rules:
+      - alert: HighPaymentFailureRate
+        expr: |
+          (
+            rate(paygate_payments_total{status="failed"}[5m])
+            /
+            (rate(paygate_payments_total{status="authorized"}[5m]) + rate(paygate_payments_total{status="failed"}[5m]) + 1e-9)
+          ) > 0.10
+        for: 2m
+        labels:
+          severity: p1
+        annotations:
+          summary: "Payment failure rate above 10% ({{ $value | humanizePercentage }})"
+          description: "More than 10% of authorization attempts are failing over the last 5 minutes."
+
+      - alert: APIHighErrorRate
+        expr: |
+          (
+            rate(paygate_http_requests_total{status_code=~"5.."}[5m])
+            /
+            (rate(paygate_http_requests_total[5m]) + 1e-9)
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: p1
+        annotations:
+          summary: "API 5xx error rate above 5% ({{ $value | humanizePercentage }})"
+          description: "API server is returning more than 5% HTTP 5xx errors."
+
+      - alert: OutboxLag
+        expr: paygate_outbox_unpublished_total > 500
+        for: 5m
+        labels:
+          severity: p1
+        annotations:
+          summary: "Outbox has {{ $value }} unpublished events"
+          description: "The outbox relay may be down or Kafka is unreachable."
+
+      - alert: DatabaseUnreachable
+        expr: up{job="paygate-api"} == 0
+        for: 1m
+        labels:
+          severity: p1
+        annotations:
+          summary: "PayGate API is down"
+          description: "Prometheus cannot scrape the PayGate API metrics endpoint."
+
+  - name: paygate_p2
+    interval: 60s
+    rules:
+      - alert: WebhookHighFailureRate
+        expr: |
+          (
+            rate(paygate_webhook_deliveries_total{status="failed"}[10m])
+            /
+            (rate(paygate_webhook_deliveries_total[10m]) + 1e-9)
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: p2
+        annotations:
+          summary: "Webhook delivery failure rate above 20%"
+          description: "More than 20% of webhook deliveries are failing over the last 10 minutes."
+
+      - alert: WebhookDeadLetterQueueGrowing
+        expr: rate(paygate_webhook_deliveries_total{status="dead_lettered"}[15m]) > 0
+        for: 10m
+        labels:
+          severity: p2
+        annotations:
+          summary: "Webhooks are being dead-lettered"
+          description: "Webhook events are exhausting all retry attempts and being dead-lettered."
+
+      - alert: HighRefundRate
+        expr: |
+          (
+            rate(paygate_refunds_total{status="processed"}[1h])
+            /
+            (rate(paygate_payments_total{status="captured"}[1h]) + 1e-9)
+          ) > 0.15
+        for: 30m
+        labels:
+          severity: p2
+        annotations:
+          summary: "Refund rate above 15% of captures"
+          description: "Unusually high refund rate may indicate fraud or product issues."
+
+      - alert: HighP99PaymentLatency
+        expr: histogram_quantile(0.99, rate(paygate_payment_duration_seconds_bucket[5m])) > 2.0
+        for: 5m
+        labels:
+          severity: p2
+        annotations:
+          summary: "Payment p99 latency is {{ $value | humanizeDuration }}"
+          description: "99th percentile payment authorization latency exceeds 2 seconds."
+
+      - alert: ActiveDisputes
+        expr: paygate_disputes_total > 10
+        for: 0m
+        labels:
+          severity: p2
+        annotations:
+          summary: "{{ $value }} active disputes"
+          description: "High number of open disputes may require immediate attention."
