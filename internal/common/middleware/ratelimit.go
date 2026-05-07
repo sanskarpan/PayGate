@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -52,8 +53,14 @@ func (rl *RateLimiter) rateLimitKey(r *http.Request) string {
 			}
 		}
 	}
-	// Fallback for non-Basic-auth requests (e.g. dashboard session cookie)
-	return r.RemoteAddr + ":" + r.URL.Path
+	// Fallback for non-Basic-auth requests (e.g. dashboard session cookie).
+	// Strip the ephemeral TCP port from RemoteAddr so all connections from the
+	// same IP share a single token bucket rather than getting one each.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return host + ":" + r.URL.Path
 }
 
 func (rl *RateLimiter) getLimiter(key string) *rate.Limiter {
