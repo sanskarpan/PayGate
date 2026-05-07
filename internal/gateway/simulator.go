@@ -95,7 +95,7 @@ func (s *Simulator) applyScenario(ctx context.Context, sc Scenario) (payment.Gat
 
 	case ModeFlaky:
 		time.Sleep(50 * time.Millisecond)
-		if rand.Float64() < sc.FailureRate {
+		if rand.Float64() < sc.FailureRate { //nolint:gosec // simulator uses non-crypto RNG intentionally
 			return payment.GatewayAuthResult{
 				Success:          false,
 				ErrorCode:        sc.DeclineCode,
