@@ -20,6 +20,14 @@ func (s *Service) RunBatch(ctx context.Context, merchantID string, periodStart, 
 	return s.repo.RunBatch(ctx, merchantID, periodStart, periodEnd)
 }
 
+// RunPartialBatch settles only the given payment IDs.
+func (s *Service) RunPartialBatch(ctx context.Context, merchantID string, paymentIDs []string) (Settlement, error) {
+	if len(paymentIDs) == 0 {
+		return Settlement{}, ErrNoEligiblePayments
+	}
+	return s.repo.RunPartialBatch(ctx, merchantID, paymentIDs)
+}
+
 // Get returns a settlement by ID, scoped to the merchant.
 func (s *Service) Get(ctx context.Context, merchantID, id string) (Settlement, error) {
 	return s.repo.GetSettlement(ctx, merchantID, id)
