@@ -311,19 +311,19 @@ paygate/
 ### Gateway simulator enhancements
 - [x] Configurable scenarios via API (slow, flaky, timeout, duplicate, late)
 - [x] Per-merchant gateway configuration
-- [ ] Payment method simulator (card, UPI, netbanking, wallet)
+- [x] Payment method simulator (card, UPI, netbanking, wallet)
 
 ### Observability
-- [ ] Grafana dashboards: payment funnel, webhook delivery, settlement
+- [x] Grafana dashboards: payment funnel, webhook delivery, settlement
 - [x] OpenTelemetry: full distributed tracing across all services
 - [x] Prometheus metrics: custom business metrics (capture rate, refund rate, etc.)
-- [ ] Alerting rules for all P1/P2 conditions
+- [x] Alerting rules for all P1/P2 conditions
 - [x] Correlation ID search across services
 
 ### Chaos testing
 - [x] Toxiproxy setup for inter-service fault injection
 - [x] Chaos test: DB failure during capture
-- [ ] Chaos test: Kafka broker failure
+- [x] Chaos test: Kafka broker failure
 - [x] Chaos test: Redis failure (DB-backed idempotency for money writes, fail-open only for low-risk cache paths)
 - [x] Chaos test: webhook endpoint slow/down
 - [x] Chaos test: outbox relay crash and recovery
@@ -331,15 +331,15 @@ paygate/
 
 ### Load testing
 - [x] k6 scripts for all critical endpoints
-- [ ] Baseline performance: 1000 orders/sec
+- [x] Baseline performance: 1000 orders/sec
 - [x] Spike test: 5x normal load for 5 minutes
-- [ ] Soak test: sustained load for 1 hour
+- [x] Soak test: sustained load for 1 hour
 - [x] Performance regression check in CI (smoke load test)
 
 ### Dashboard (Phase 4)
 - [x] Dispute management console
 - [x] Settlement holds/release UI
-- [ ] Observability dashboards (embedded Grafana or custom)
+- [x] Observability dashboards (embedded Grafana or custom)
 - [x] Gateway simulator control panel
 - [x] Reconciliation drill-down with mismatch details
 
