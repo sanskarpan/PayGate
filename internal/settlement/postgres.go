@@ -148,6 +148,141 @@ WHERE id = ANY($2)
 	return r.GetSettlement(ctx, merchantID, sttlID)
 }
 
+// RunPartialBatch collects only the specified captured, non-settled payments for the merchant,
+// creates a settlement + items, writes ledger entries, marks payments settled, and writes outbox events.
+// The settlement period is derived from the min/max captured_at of the selected payments.
+func (r *PostgresRepository) RunPartialBatch(ctx context.Context, merchantID string, paymentIDs []string) (Settlement, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Settlement{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Collect eligible payments matching the provided IDs.
+	rows, err := tx.Query(ctx, `
+SELECT id, amount, fee, amount_refunded, currency
+FROM paygate_payments.payments
+WHERE merchant_id = $1
+  AND status = 'captured'
+  AND settled = false
+  AND id = ANY($2)
+FOR UPDATE SKIP LOCKED
+`, merchantID, paymentIDs)
+	if err != nil {
+		return Settlement{}, fmt.Errorf("query partial payments: %w", err)
+	}
+	defer rows.Close()
+
+	var payments []EligiblePayment
+	for rows.Next() {
+		var p EligiblePayment
+		if err := rows.Scan(&p.PaymentID, &p.Amount, &p.Fee, &p.AmountRefunded, &p.Currency); err != nil {
+			return Settlement{}, fmt.Errorf("scan payment: %w", err)
+		}
+		payments = append(payments, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return Settlement{}, err
+	}
+	if len(payments) == 0 {
+		return Settlement{}, ErrNoEligiblePayments
+	}
+
+	// Aggregate totals.
+	var totalAmount, totalFees, totalRefunds int64
+	currency := payments[0].Currency
+	for _, p := range payments {
+		totalAmount += p.Amount
+		totalFees += p.Fee
+		totalRefunds += p.AmountRefunded
+	}
+	netAmount := CalculateNet(totalAmount, totalFees, totalRefunds)
+
+	// Derive period from the min/max captured_at of selected payments.
+	var periodStart, periodEnd time.Time
+	err = tx.QueryRow(ctx, `
+SELECT MIN(captured_at), MAX(captured_at)
+FROM paygate_payments.payments
+WHERE id = ANY($1)
+`, paymentIDs).Scan(&periodStart, &periodEnd)
+	if err != nil {
+		return Settlement{}, fmt.Errorf("query period bounds: %w", err)
+	}
+
+	// Create settlement record.
+	sttlID := idgen.New("sttl")
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_settlements.settlements
+    (id, merchant_id, status, period_start, period_end, total_amount, total_fees,
+     total_refunds, net_amount, payment_count, currency, processed_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+`, sttlID, merchantID, StateProcessed, periodStart, periodEnd,
+		totalAmount, totalFees, totalRefunds, netAmount, len(payments), currency, now,
+	); err != nil {
+		return Settlement{}, fmt.Errorf("insert settlement: %w", err)
+	}
+
+	// Create settlement items and collect payment IDs.
+	selectedIDs := make([]string, 0, len(payments))
+	for _, p := range payments {
+		net := CalculateNet(p.Amount, p.Fee, p.AmountRefunded)
+		if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_settlements.settlement_items
+    (id, settlement_id, payment_id, merchant_id, amount, fee, refunds, net, currency)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+`, idgen.New("si"), sttlID, p.PaymentID, merchantID, p.Amount, p.Fee, p.AmountRefunded, net, p.Currency,
+		); err != nil {
+			return Settlement{}, fmt.Errorf("insert settlement item: %w", err)
+		}
+		selectedIDs = append(selectedIDs, p.PaymentID)
+	}
+
+	// Write double-entry ledger: Dr. MERCHANT_PAYABLE / Cr. SETTLEMENT_CLEARING
+	if _, err := r.ledger.CreateEntriesTx(ctx, tx, merchantID, "settlement", sttlID,
+		fmt.Sprintf("partial settlement batch %s", sttlID),
+		[]ledger.Entry{
+			{AccountCode: "MERCHANT_PAYABLE", DebitAmount: netAmount, Description: "merchant payout on partial settlement"},
+			{AccountCode: "SETTLEMENT_CLEARING", CreditAmount: netAmount, Description: "partial settlement clearing"},
+		},
+	); err != nil {
+		return Settlement{}, fmt.Errorf("write settlement ledger entries: %w", err)
+	}
+
+	// Mark payments as settled.
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET settled = true, settlement_id = $1, updated_at = NOW()
+WHERE id = ANY($2)
+`, sttlID, selectedIDs); err != nil {
+		return Settlement{}, fmt.Errorf("mark payments settled: %w", err)
+	}
+
+	// Write outbox events.
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{
+		AggregateType: "settlement",
+		AggregateID:   sttlID,
+		EventType:     "settlement.processed",
+		MerchantID:    merchantID,
+		Payload: map[string]any{
+			"settlement_id": sttlID,
+			"net_amount":    netAmount,
+			"payment_count": len(payments),
+			"currency":      currency,
+			"partial":       true,
+		},
+	}); err != nil {
+		return Settlement{}, fmt.Errorf("write settlement outbox event: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Settlement{}, err
+	}
+
+	return r.GetSettlement(ctx, merchantID, sttlID)
+}
+
 func (r *PostgresRepository) GetSettlement(ctx context.Context, merchantID, id string) (Settlement, error) {
 	var s Settlement
 	var holdReason *string
