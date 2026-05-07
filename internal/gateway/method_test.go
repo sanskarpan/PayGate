@@ -71,17 +71,7 @@ func TestProfileForMethod(t *testing.T) {
 	}
 }
 
-// stubScenarioStore is an in-memory ScenarioStore stand-in for unit tests.
-type stubScenarioStore struct {
-	scenario Scenario
-	err      error
-}
-
-func (s *stubScenarioStore) get(_ context.Context, _ string) (Scenario, error) {
-	return s.scenario, s.err
-}
-
-// simulatorWithStub wires a Simulator directly with a known scenario (bypasses DB).
+// methodBehaviorHarness wires a Simulator directly with a known scenario (bypasses DB).
 // It calls applyScenario directly so we can test method behavior deterministically.
 type methodBehaviorHarness struct {
 	sim      *Simulator
