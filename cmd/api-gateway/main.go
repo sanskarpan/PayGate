@@ -11,23 +11,27 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"github.com/sanskarpan/PayGate/internal/audit"
 	"github.com/sanskarpan/PayGate/internal/auth"
-	"github.com/sanskarpan/PayGate/internal/risk"
 	"github.com/sanskarpan/PayGate/internal/common/config"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/common/logger"
+	_ "github.com/sanskarpan/PayGate/internal/common/metrics"
 	"github.com/sanskarpan/PayGate/internal/common/middleware"
 	"github.com/sanskarpan/PayGate/internal/common/telemetry"
+	"github.com/sanskarpan/PayGate/internal/dispute"
 	"github.com/sanskarpan/PayGate/internal/gateway"
 	"github.com/sanskarpan/PayGate/internal/idempotency"
 	"github.com/sanskarpan/PayGate/internal/ledger"
 	"github.com/sanskarpan/PayGate/internal/merchant"
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
+	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/recon"
 	"github.com/sanskarpan/PayGate/internal/refund"
+	"github.com/sanskarpan/PayGate/internal/risk"
 	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
@@ -90,7 +94,9 @@ func run() error {
 	riskSvc := risk.NewService(riskRepo, l)
 	riskHandler := risk.NewHandler(riskSvc)
 
-	gatewayClient := gateway.NewSimulator()
+	scenarioStore := gateway.NewScenarioStore(db)
+	gatewayClient := gateway.NewSimulatorWithStore(scenarioStore)
+	gatewayAdminHandler := gateway.NewAdminHandler(scenarioStore)
 	paymentRepo := payment.NewPostgresRepository(db, ledgerSvc, orderSvc)
 	paymentSvc := payment.NewService(paymentRepo, gatewayClient)
 	paymentHandler := payment.NewHandler(paymentSvc, payment.WithRiskEvaluator(&riskAdapter{svc: riskSvc}))
@@ -118,6 +124,16 @@ func run() error {
 	reconWorker := recon.NewWorker(db, l)
 	go reconWorker.Start(ctx)
 	reconHandler := recon.NewHandler(reconWorker)
+
+	// Dispute management
+	disputeRepo := dispute.NewPostgresRepository(db)
+	disputeSvc := dispute.NewService(disputeRepo)
+	disputeHandler := dispute.NewHandler(disputeSvc)
+
+	// Payout workflow
+	payoutRepo := payout.NewPostgresRepository(db, ledgerSvc)
+	payoutSvc := payout.NewService(payoutRepo, l)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", httpx.Healthz)
@@ -184,6 +200,18 @@ func run() error {
 	reconHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
 		return authMw.RequireScope(merchant.APIKeyScopeRead, next)
 	})
+
+	// Disputes
+	disputeHandler.RegisterRoutesWithAuth(mux, protected)
+
+	// Payouts
+	payoutHandler.RegisterRoutesWithAuth(mux, protected)
+
+	// Gateway simulator control panel (no merchant auth - admin endpoint)
+	gatewayAdminHandler.RegisterRoutes(mux)
+
+	// Prometheus metrics
+	mux.Handle("GET /metrics", promhttp.Handler())
 
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := httpx.PrincipalFromContext(r.Context())
