@@ -22,7 +22,12 @@ func NewService(repo Repository, logger *slog.Logger) *Service {
 
 // Record creates an audit log entry asynchronously.
 // It must be called after the primary state change succeeds.
+// A detached context is used so that HTTP request cancellation does not
+// prevent the audit entry from being persisted.
 func (s *Service) Record(ctx context.Context, in RecordInput) {
+	// Detach from the request context: the HTTP handler may return (and thus
+	// cancel ctx) before this goroutine runs its INSERT.
+	detached := context.WithoutCancel(ctx)
 	go func() {
 		l := Log{
 			MerchantID:    in.MerchantID,
@@ -36,7 +41,7 @@ func (s *Service) Record(ctx context.Context, in RecordInput) {
 			IPAddress:     in.IPAddress,
 			CorrelationID: in.CorrelationID,
 		}
-		if _, err := s.repo.Create(ctx, l); err != nil {
+		if _, err := s.repo.Create(detached, l); err != nil {
 			s.logger.Error("audit record failed",
 				"action", in.Action,
 				"resource_type", in.ResourceType,
