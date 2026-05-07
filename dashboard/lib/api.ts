@@ -6,9 +6,12 @@ import type {
   AuditLogItem,
   DeliveryAttemptItem,
   DashboardViewer,
+  DisputeItem,
+  GatewayScenario,
   InvitationItem,
   OrderItem,
   PaymentItem,
+  PayoutItem,
   ReconMismatch,
   RefundItem,
   RiskEventItem,
@@ -268,4 +271,50 @@ export async function revokeInvitation(id: string) {
   if (!response.ok) {
     throw new Error(`revoke invitation failed: ${response.status}`);
   }
+}
+
+export async function getDisputes() {
+  await requireViewer();
+  const response = await apiFetch("/v1/disputes");
+  if (!response.ok) {
+    return { items: [] as DisputeItem[], count: 0 };
+  }
+  return (await response.json()) as CollectionResponse<DisputeItem>;
+}
+
+export async function getDispute(id: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/disputes/${id}`);
+  if (response.status === 404) {
+    notFound();
+  }
+  if (!response.ok) {
+    throw new Error(`dispute fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as DisputeItem;
+}
+
+export async function getPayouts() {
+  await requireViewer();
+  const response = await apiFetch("/v1/payouts");
+  if (!response.ok) {
+    return { items: [] as PayoutItem[], count: 0 };
+  }
+  return (await response.json()) as CollectionResponse<PayoutItem>;
+}
+
+export async function getGatewayScenarios() {
+  const response = await apiFetch("/v1/gateway/scenarios");
+  if (!response.ok) {
+    return { items: [] as GatewayScenario[], count: 0 };
+  }
+  return (await response.json()) as CollectionResponse<GatewayScenario>;
+}
+
+export async function getActiveGatewayScenario() {
+  const response = await apiFetch("/v1/gateway/scenarios/active");
+  if (!response.ok) {
+    return null;
+  }
+  return (await response.json()) as GatewayScenario;
 }
