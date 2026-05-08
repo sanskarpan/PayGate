@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -75,6 +76,8 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		ip := r.RemoteAddr
 		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 			ip = strings.TrimSpace(strings.SplitN(fwd, ",", 2)[0])
+		} else if host, _, err := net.SplitHostPort(ip); err == nil {
+			ip = host
 		}
 		action, riskErr := h.risk.EvaluateAuthorize(r.Context(), p.MerchantID, out.PaymentID, req.Amount, ip)
 		if riskErr == nil && action == "block" {

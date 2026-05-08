@@ -84,7 +84,10 @@ func (s *Service) EvaluatePayment(ctx context.Context, in EvalInput) (RiskEvent,
 			"rules", result.TriggeredRules,
 		)
 		if s.alertFn != nil {
-			go s.alertFn(ctx, ev)
+			// Use a context that carries trace/values from ctx but is not
+			// cancelled when the HTTP request completes, so the alert can
+			// finish its own I/O independently.
+			go s.alertFn(context.WithoutCancel(ctx), ev)
 		}
 	}
 

@@ -126,6 +126,7 @@ func (s *Service) DeliverEvent(ctx context.Context, eventID, merchantID, eventTy
 
 		attempt := WebhookDeliveryAttempt{
 			EventID:        eventID,
+			EventType:      eventType,
 			SubscriptionID: sub.ID,
 			MerchantID:     merchantID,
 			Status:         status,
@@ -210,7 +211,7 @@ func (s *Service) RetryPendingDeliveries(ctx context.Context, limit int) (int, e
 			continue
 		}
 
-		result := s.deliverer.Deliver(ctx, sub.URL, sub.Secret, "", attempt.RequestBody)
+		result := s.deliverer.Deliver(ctx, sub.URL, sub.Secret, attempt.EventType, attempt.RequestBody)
 
 		nextAttempt := attempt.AttemptNumber + 1
 		var (

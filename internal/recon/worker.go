@@ -167,7 +167,7 @@ HAVING COALESCE(SUM(le.credit_amount), 0) = 0
 		return 0, err
 	}
 
-	return w.persistBatch(ctx, batchID, "", BatchTypePaymentLedger, start, end, checkedCount+len(mismatches), len(mismatches), mismatches)
+	return w.persistBatch(ctx, batchID, "", BatchTypePaymentLedger, start, end, checkedCount, len(mismatches), mismatches)
 }
 
 // RunThreeWayCheck verifies settled payments have matching settlement_items.

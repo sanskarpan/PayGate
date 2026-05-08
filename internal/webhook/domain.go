@@ -95,6 +95,7 @@ type WebhookSubscription struct {
 type WebhookDeliveryAttempt struct {
 	ID             string
 	EventID        string
+	EventType      string // populated so retries can set the correct X-PayGate-Event header
 	SubscriptionID string
 	MerchantID     string
 	Status         DeliveryStatus

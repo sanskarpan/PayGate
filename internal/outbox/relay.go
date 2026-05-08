@@ -46,6 +46,7 @@ func NewRelay(db *pgxpool.Pool, publisher Publisher, interval time.Duration, log
 func (r *Relay) Start(ctx context.Context) {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
+	defer func() { _ = r.publisher.Close() }()
 	for {
 		select {
 		case <-ctx.Done():
