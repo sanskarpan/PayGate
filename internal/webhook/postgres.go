@@ -178,11 +178,11 @@ func (r *PostgresRepository) CreateDeliveryAttempt(ctx context.Context, attempt 
 	}
 	_, err := r.db.Exec(ctx, `
 INSERT INTO paygate_webhooks.webhook_delivery_attempts
-    (id, event_id, subscription_id, merchant_id, status, request_url, request_body,
+    (id, event_id, event_type, subscription_id, merchant_id, status, request_url, request_body,
      response_code, response_body, error_message, attempt_number, next_retry_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 `,
-		attempt.ID, attempt.EventID, attempt.SubscriptionID, attempt.MerchantID,
+		attempt.ID, attempt.EventID, attempt.EventType, attempt.SubscriptionID, attempt.MerchantID,
 		attempt.Status, attempt.RequestURL, attempt.RequestBody,
 		attempt.ResponseCode, attempt.ResponseBody, attempt.ErrorMessage,
 		attempt.AttemptNumber, attempt.NextRetryAt,
@@ -217,12 +217,12 @@ WHERE id = $6
 func (r *PostgresRepository) GetDeliveryAttempt(ctx context.Context, id string) (WebhookDeliveryAttempt, error) {
 	var a WebhookDeliveryAttempt
 	err := r.db.QueryRow(ctx, `
-SELECT id, event_id, subscription_id, merchant_id, status, request_url, request_body,
+SELECT id, event_id, event_type, subscription_id, merchant_id, status, request_url, request_body,
        response_code, response_body, error_message, attempt_number, next_retry_at, created_at
 FROM paygate_webhooks.webhook_delivery_attempts
 WHERE id = $1
 `, id).Scan(
-		&a.ID, &a.EventID, &a.SubscriptionID, &a.MerchantID, &a.Status,
+		&a.ID, &a.EventID, &a.EventType, &a.SubscriptionID, &a.MerchantID, &a.Status,
 		&a.RequestURL, &a.RequestBody, &a.ResponseCode, &a.ResponseBody, &a.ErrorMessage,
 		&a.AttemptNumber, &a.NextRetryAt, &a.CreatedAt,
 	)
@@ -234,7 +234,7 @@ WHERE id = $1
 
 func (r *PostgresRepository) ListDeliveryAttempts(ctx context.Context, merchantID, subscriptionID string) ([]WebhookDeliveryAttempt, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, event_id, subscription_id, merchant_id, status, request_url, request_body,
+SELECT id, event_id, event_type, subscription_id, merchant_id, status, request_url, request_body,
        response_code, response_body, error_message, attempt_number, next_retry_at, created_at
 FROM paygate_webhooks.webhook_delivery_attempts
 WHERE merchant_id = $1 AND subscription_id = $2
@@ -249,7 +249,7 @@ LIMIT 100
 	var attempts []WebhookDeliveryAttempt
 	for rows.Next() {
 		var a WebhookDeliveryAttempt
-		if err := rows.Scan(&a.ID, &a.EventID, &a.SubscriptionID, &a.MerchantID, &a.Status,
+		if err := rows.Scan(&a.ID, &a.EventID, &a.EventType, &a.SubscriptionID, &a.MerchantID, &a.Status,
 			&a.RequestURL, &a.RequestBody, &a.ResponseCode, &a.ResponseBody, &a.ErrorMessage,
 			&a.AttemptNumber, &a.NextRetryAt, &a.CreatedAt); err != nil {
 			return nil, err
@@ -261,7 +261,7 @@ LIMIT 100
 
 func (r *PostgresRepository) PendingRetries(ctx context.Context, limit int) ([]WebhookDeliveryAttempt, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, event_id, subscription_id, merchant_id, status, request_url, request_body,
+SELECT id, event_id, event_type, subscription_id, merchant_id, status, request_url, request_body,
        response_code, response_body, error_message, attempt_number, next_retry_at, created_at
 FROM paygate_webhooks.webhook_delivery_attempts
 WHERE status = 'failed' AND next_retry_at IS NOT NULL AND next_retry_at <= NOW()
@@ -277,7 +277,7 @@ FOR UPDATE SKIP LOCKED
 	var attempts []WebhookDeliveryAttempt
 	for rows.Next() {
 		var a WebhookDeliveryAttempt
-		if err := rows.Scan(&a.ID, &a.EventID, &a.SubscriptionID, &a.MerchantID, &a.Status,
+		if err := rows.Scan(&a.ID, &a.EventID, &a.EventType, &a.SubscriptionID, &a.MerchantID, &a.Status,
 			&a.RequestURL, &a.RequestBody, &a.ResponseCode, &a.ResponseBody, &a.ErrorMessage,
 			&a.AttemptNumber, &a.NextRetryAt, &a.CreatedAt); err != nil {
 			return nil, err
@@ -298,7 +298,7 @@ WHERE event_id = $1 AND subscription_id = $2 AND status = 'succeeded'
 
 func (r *PostgresRepository) FindDeliveryByEvent(ctx context.Context, merchantID, eventID string) ([]WebhookDeliveryAttempt, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, event_id, subscription_id, merchant_id, status, request_url, request_body,
+SELECT id, event_id, event_type, subscription_id, merchant_id, status, request_url, request_body,
        response_code, response_body, error_message, attempt_number, next_retry_at, created_at
 FROM paygate_webhooks.webhook_delivery_attempts
 WHERE merchant_id = $1 AND event_id = $2
@@ -313,7 +313,7 @@ LIMIT 100
 	var attempts []WebhookDeliveryAttempt
 	for rows.Next() {
 		var a WebhookDeliveryAttempt
-		if err := rows.Scan(&a.ID, &a.EventID, &a.SubscriptionID, &a.MerchantID, &a.Status,
+		if err := rows.Scan(&a.ID, &a.EventID, &a.EventType, &a.SubscriptionID, &a.MerchantID, &a.Status,
 			&a.RequestURL, &a.RequestBody, &a.ResponseCode, &a.ResponseBody, &a.ErrorMessage,
 			&a.AttemptNumber, &a.NextRetryAt, &a.CreatedAt); err != nil {
 			return nil, err
