@@ -6,9 +6,11 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
+	"github.com/sanskarpan/PayGate/internal/common/middleware"
 	"github.com/sanskarpan/PayGate/internal/merchant"
 )
 
@@ -18,11 +20,19 @@ type Verifier interface {
 }
 
 type Middleware struct {
-	verifier Verifier
+	verifier          Verifier
+	trustedProxyCIDRs []netip.Prefix
 }
 
 func NewMiddleware(verifier Verifier) *Middleware {
-	return &Middleware{verifier: verifier}
+	return NewMiddlewareWithTrustedProxyCIDRs(verifier, nil)
+}
+
+func NewMiddlewareWithTrustedProxyCIDRs(verifier Verifier, trustedProxyCIDRs []string) *Middleware {
+	return &Middleware{
+		verifier:          verifier,
+		trustedProxyCIDRs: parseTrustedProxyCIDRs(trustedProxyCIDRs),
+	}
 }
 
 func (m *Middleware) RequireScope(required merchant.APIKeyScope, next http.Handler) http.Handler {
@@ -35,7 +45,7 @@ func (m *Middleware) RequireScope(required merchant.APIKeyScope, next http.Handl
 				return
 			}
 
-			if !ipAllowed(r, key.AllowedIPs) {
+			if !ipAllowed(r, key.AllowedIPs, m.trustedProxyCIDRs) {
 				httpx.WriteError(w, http.StatusForbidden, httpx.APIError{
 					Code:        "FORBIDDEN",
 					Description: "request IP is not in the allowlist for this API key",
@@ -106,18 +116,11 @@ func writeAuthError(w http.ResponseWriter, err error) {
 
 // ipAllowed returns true when allowedIPs is empty (no restriction) or contains
 // the request's remote IP (plain address or CIDR).
-func ipAllowed(r *http.Request, allowedIPs []string) bool {
+func ipAllowed(r *http.Request, allowedIPs []string, trustedProxyCIDRs []netip.Prefix) bool {
 	if len(allowedIPs) == 0 {
 		return true
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	// Prefer X-Forwarded-For when set (running behind a proxy).
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		host = strings.TrimSpace(strings.SplitN(fwd, ",", 2)[0])
-	}
+	host := middleware.ClientIPWithTrustedProxies(r, trustedProxyCIDRs)
 	reqIP := net.ParseIP(host)
 	for _, allowed := range allowedIPs {
 		if _, cidr, err := net.ParseCIDR(allowed); err == nil {
@@ -131,6 +134,17 @@ func ipAllowed(r *http.Request, allowedIPs []string) bool {
 		}
 	}
 	return false
+}
+
+func parseTrustedProxyCIDRs(raw []string) []netip.Prefix {
+	prefixes := make([]netip.Prefix, 0, len(raw))
+	for _, value := range raw {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
+		if err == nil {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return prefixes
 }
 
 func parseBasicAuth(header string) (string, string, bool) {

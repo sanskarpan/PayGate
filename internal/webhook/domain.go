@@ -86,9 +86,9 @@ type WebhookSubscription struct {
 	// Nil when no rotation has occurred yet.
 	PreviousSecret          *string
 	PreviousSecretExpiresAt *time.Time
-	Status                   SubscriptionStatus
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	Status                  SubscriptionStatus
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 // WebhookDeliveryAttempt records one HTTP delivery attempt to a subscription.
@@ -109,32 +109,31 @@ type WebhookDeliveryAttempt struct {
 	CreatedAt      time.Time
 }
 
-// RetryDelay returns the delay before the next attempt for a given attempt number.
-// Attempt 1 is immediate (0 delay). This function is called for attempt N to get
-// the delay before attempt N+1.
+// RetryDelay returns the delay before executing the given attempt number.
+// The schedule matches the public retry contract: 18 attempts over roughly 24
+// hours before moving the delivery to dead-letter.
 func RetryDelay(attemptNumber int) time.Duration {
 	delays := []time.Duration{
-		0,             // attempt 1: immediate (no delay before first try)
+		0, // attempt 1: immediate (no delay before first try)
 		5 * time.Second,
-		10 * time.Second,
 		30 * time.Second,
-		1 * time.Minute,
-		5 * time.Minute,
+		2 * time.Minute,
 		10 * time.Minute,
 		30 * time.Minute,
 		1 * time.Hour,
-		1 * time.Hour,
-		1 * time.Hour,
-		1 * time.Hour,
-		1 * time.Hour,
-		1 * time.Hour,
-		1 * time.Hour,
-		1 * time.Hour,
-		1 * time.Hour,
-		1 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
+		2 * time.Hour,
 	}
 	if attemptNumber <= 0 || attemptNumber > len(delays) {
-		return 1 * time.Hour
+		return 2 * time.Hour
 	}
 	return delays[attemptNumber-1] //nolint:gosec // bounds are checked on the line above
 }

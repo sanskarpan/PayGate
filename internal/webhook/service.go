@@ -139,7 +139,7 @@ func (s *Service) DeliverEvent(ctx context.Context, eventID, merchantID, eventTy
 		}
 
 		if status == DeliveryFailed {
-			delay := RetryDelay(1)
+			delay := RetryDelay(2)
 			nextRetry := time.Now().Add(delay)
 			attempt.NextRetryAt = &nextRetry
 		}
@@ -199,7 +199,7 @@ func (s *Service) ReplayEvent(ctx context.Context, merchantID, eventID string) (
 // RetryPendingDeliveries polls for failed delivery attempts with due next_retry_at
 // and re-delivers them. Returns the number of attempts processed.
 func (s *Service) RetryPendingDeliveries(ctx context.Context, limit int) (int, error) {
-	attempts, err := s.repo.PendingRetries(ctx, limit)
+	attempts, err := s.repo.LeasePendingRetries(ctx, limit)
 	if err != nil {
 		return 0, fmt.Errorf("poll pending retries: %w", err)
 	}
@@ -226,14 +226,14 @@ func (s *Service) RetryPendingDeliveries(ctx context.Context, limit int) (int, e
 			status = DeliveryDeadLettered
 		default:
 			status = DeliveryFailed
-			delay := RetryDelay(nextAttempt)
+			delay := RetryDelay(nextAttempt + 1)
 			t := time.Now().Add(delay).Format(time.RFC3339)
 			nextRetryAt = &t
 		}
 
 		if _, err := s.repo.UpdateDeliveryAttempt(
 			ctx, attempt.ID, status,
-			result.StatusCode, result.ResponseBody, result.Error, nextRetryAt,
+			result.StatusCode, result.ResponseBody, result.Error, nextRetryAt, nextAttempt,
 		); err != nil {
 			return 0, err
 		}
