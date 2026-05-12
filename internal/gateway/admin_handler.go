@@ -19,9 +19,13 @@ func NewAdminHandler(store *ScenarioStore) *AdminHandler {
 
 // RegisterRoutes wires gateway admin endpoints into mux.
 func (h *AdminHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/gateway/scenarios", h.list)
-	mux.HandleFunc("POST /v1/gateway/scenarios", h.upsert)
-	mux.HandleFunc("GET /v1/gateway/scenarios/active", h.getActive)
+	h.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler { return next })
+}
+
+func (h *AdminHandler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(http.Handler) http.Handler) {
+	mux.Handle("GET /v1/gateway/scenarios", wrap(http.HandlerFunc(h.list)))
+	mux.Handle("POST /v1/gateway/scenarios", wrap(http.HandlerFunc(h.upsert)))
+	mux.Handle("GET /v1/gateway/scenarios/active", wrap(http.HandlerFunc(h.getActive)))
 }
 
 func (h *AdminHandler) list(w http.ResponseWriter, r *http.Request) {
