@@ -19,4 +19,10 @@ type Repository interface {
 
 	// SubmitEvidence stores the evidence payload and stamps evidence_submitted_at.
 	SubmitEvidence(ctx context.Context, merchantID, id string, evidence map[string]any) (Dispute, error)
+
+	// GetPaymentReference returns the backing payment details used to validate a dispute.
+	GetPaymentReference(ctx context.Context, merchantID, paymentID string) (PaymentReference, error)
+
+	// SettlementExists reports whether the settlement belongs to the merchant.
+	SettlementExists(ctx context.Context, merchantID, settlementID string) (bool, error)
 }
