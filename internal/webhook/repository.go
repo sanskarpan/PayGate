@@ -17,12 +17,12 @@ type Repository interface {
 
 	// Delivery attempt recording
 	CreateDeliveryAttempt(ctx context.Context, attempt WebhookDeliveryAttempt) (WebhookDeliveryAttempt, error)
-	UpdateDeliveryAttempt(ctx context.Context, id string, status DeliveryStatus, responseCode int, responseBody, errMsg string, nextRetryAt *string) (WebhookDeliveryAttempt, error)
+	UpdateDeliveryAttempt(ctx context.Context, id string, status DeliveryStatus, responseCode int, responseBody, errMsg string, nextRetryAt *string, attemptNumber int) (WebhookDeliveryAttempt, error)
 	ListDeliveryAttempts(ctx context.Context, merchantID, subscriptionID string) ([]WebhookDeliveryAttempt, error)
 	GetDeliveryAttempt(ctx context.Context, id string) (WebhookDeliveryAttempt, error)
 
 	// Pending retries: delivery attempts that have failed and have a next_retry_at in the past
-	PendingRetries(ctx context.Context, limit int) ([]WebhookDeliveryAttempt, error)
+	LeasePendingRetries(ctx context.Context, limit int) ([]WebhookDeliveryAttempt, error)
 
 	// Event deduplication: returns true if the (event_id, subscription_id) pair was already delivered
 	IsDelivered(ctx context.Context, eventID, subscriptionID string) (bool, error)
