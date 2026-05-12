@@ -19,16 +19,50 @@ func NewService(repo Repository) *Service {
 }
 
 // Create opens a new dispute for the given merchant and payment.
-func (s *Service) Create(ctx context.Context, merchantID, paymentID, reason string, amount int64, currency string, dueBy *time.Time) (Dispute, error) {
+func (s *Service) Create(ctx context.Context, merchantID, paymentID, settlementID, reason string, amount int64, currency string, dueBy *time.Time) (Dispute, error) {
+	if paymentID == "" {
+		return Dispute{}, ErrPaymentNotFound
+	}
+	if !isValidReason(reason) {
+		return Dispute{}, ErrInvalidReason
+	}
+	if amount <= 0 {
+		return Dispute{}, ErrInvalidAmount
+	}
+
+	paymentRef, err := s.repo.GetPaymentReference(ctx, merchantID, paymentID)
+	if err != nil {
+		return Dispute{}, err
+	}
+	if amount > paymentRef.Amount {
+		return Dispute{}, ErrInvalidAmount
+	}
+	if currency == "" {
+		currency = paymentRef.Currency
+	}
+	if currency != paymentRef.Currency {
+		return Dispute{}, ErrInvalidCurrency
+	}
+	if settlementID != "" {
+		exists, err := s.repo.SettlementExists(ctx, merchantID, settlementID)
+		if err != nil {
+			return Dispute{}, err
+		}
+		if !exists {
+			return Dispute{}, ErrSettlementNotFound
+		}
+	}
+
 	d := Dispute{
-		ID:         idgen.New("disp"),
-		MerchantID: merchantID,
-		PaymentID:  paymentID,
-		Status:     StateOpen,
-		Reason:     reason,
-		Amount:     amount,
-		Currency:   currency,
-		DueBy:      dueBy,
+		ID:           idgen.New("disp"),
+		MerchantID:   merchantID,
+		PaymentID:    paymentID,
+		SettlementID: settlementID,
+		Status:       StateOpen,
+		Reason:       reason,
+		Amount:       amount,
+		Currency:     currency,
+		DueBy:        dueBy,
 	}
 	return s.repo.Create(ctx, d)
 }
@@ -61,6 +95,9 @@ func (s *Service) SubmitEvidence(ctx context.Context, merchantID, id string, evi
 	d, err := s.repo.GetByID(ctx, merchantID, id)
 	if err != nil {
 		return Dispute{}, err
+	}
+	if d.Status != StateOpen {
+		return Dispute{}, ErrEvidenceNotAllowed
 	}
 	if d.EvidenceSubmittedAt != nil {
 		return Dispute{}, ErrEvidenceAlreadySubmitted
