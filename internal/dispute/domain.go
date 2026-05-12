@@ -29,8 +29,14 @@ const (
 
 var (
 	ErrDisputeNotFound          = errors.New("dispute not found")
+	ErrPaymentNotFound          = errors.New("payment not found")
+	ErrSettlementNotFound       = errors.New("settlement not found")
 	ErrInvalidTransition        = errors.New("invalid dispute state transition")
+	ErrInvalidReason            = errors.New("invalid dispute reason")
+	ErrInvalidAmount            = errors.New("invalid dispute amount")
+	ErrInvalidCurrency          = errors.New("dispute currency does not match payment currency")
 	ErrEvidenceAlreadySubmitted = errors.New("evidence already submitted for this dispute")
+	ErrEvidenceNotAllowed       = errors.New("evidence can only be submitted while dispute is open")
 	ErrDisputeTerminal          = errors.New("dispute is in a terminal state and cannot be transitioned")
 )
 
@@ -91,4 +97,21 @@ type Dispute struct {
 	Notes               string
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+}
+
+// PaymentReference is the subset of payment data needed to validate dispute creation.
+type PaymentReference struct {
+	ID         string
+	MerchantID string
+	Amount     int64
+	Currency   string
+}
+
+func isValidReason(reason string) bool {
+	for _, valid := range ValidReasons {
+		if reason == valid {
+			return true
+		}
+	}
+	return false
 }

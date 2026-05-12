@@ -16,6 +16,9 @@ type Service struct {
 
 // NewService creates a new Service.
 func NewService(repo Repository, logger *slog.Logger) *Service {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Service{repo: repo, logger: logger}
 }
 
