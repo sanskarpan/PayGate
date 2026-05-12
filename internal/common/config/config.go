@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 )
@@ -14,12 +15,13 @@ type Config struct {
 	KafkaBrokers           []string
 	DashboardSessionSecret string
 	DashboardOrigin        string
+	TrustedProxyCIDRs      []string
 }
 
 func FromEnv() Config {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8090"
 	}
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -43,6 +45,10 @@ func FromEnv() Config {
 	if dashboardOrigin == "" {
 		dashboardOrigin = "http://localhost:3001"
 	}
+	trustedProxyCIDRs := strings.TrimSpace(os.Getenv("TRUSTED_PROXY_CIDRS"))
+	if trustedProxyCIDRs == "" {
+		trustedProxyCIDRs = "127.0.0.1/32,::1/128"
+	}
 	return Config{
 		Port:                   port,
 		DatabaseURL:            dbURL,
@@ -50,6 +56,7 @@ func FromEnv() Config {
 		KafkaBrokers:           splitCSV(kafkaBrokers),
 		DashboardSessionSecret: sessionSecret,
 		DashboardOrigin:        dashboardOrigin,
+		TrustedProxyCIDRs:      splitCSV(trustedProxyCIDRs),
 	}
 }
 
@@ -66,6 +73,11 @@ func (c Config) Validate() error {
 	}
 	if len(c.DashboardSessionSecret) < 32 {
 		errs = append(errs, fmt.Errorf("DASHBOARD_SESSION_SECRET must be at least 32 characters"))
+	}
+	for _, raw := range c.TrustedProxyCIDRs {
+		if _, err := netip.ParsePrefix(raw); err != nil {
+			errs = append(errs, fmt.Errorf("TRUSTED_PROXY_CIDRS contains invalid CIDR %q", raw))
+		}
 	}
 	return errors.Join(errs...)
 }
