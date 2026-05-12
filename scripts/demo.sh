@@ -2,16 +2,16 @@
 # demo.sh — end-to-end PayGate API walkthrough
 #
 # Prerequisites:
-#   - API gateway running at BASE_URL (default: http://localhost:8080)
+#   - API gateway running at BASE_URL (default: http://localhost:8090)
 #   - curl + jq installed
 #
 # Usage:
 #   ./scripts/demo.sh
-#   BASE_URL=http://localhost:8080 ./scripts/demo.sh
+#   BASE_URL=http://localhost:8090 ./scripts/demo.sh
 
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost:8080}"
+BASE_URL="${BASE_URL:-http://localhost:8090}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

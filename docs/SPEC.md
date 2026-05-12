@@ -549,11 +549,9 @@ Since this is a portfolio project, the "bank/PSP" is simulated. The gateway serv
 |----------|--------|----------|
 | Happy path | `mode: success` | Auth succeeds in 100ms |
 | Slow auth | `mode: slow` | Auth succeeds after 3-5s delay |
-| Late auth | `mode: late_callback` | Auth returns pending, callback arrives 30s later |
+| Late auth | `mode: late_callback` | Auth succeeds only after a delayed gateway response |
 | Intermittent failure | `mode: flaky, failure_rate: 0.3` | 30% of auths fail randomly |
 | Gateway timeout | `mode: timeout` | No response for 30s |
-| Duplicate callback | `mode: duplicate` | Success callback sent twice |
-| Partial auth | `mode: partial` | Auth for less than requested amount |
 
 This lets you demonstrate and test every failure recovery path.
 

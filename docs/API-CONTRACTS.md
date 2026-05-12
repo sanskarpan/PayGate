@@ -446,6 +446,7 @@ Returns `200 OK`. Key immediately becomes invalid.
 | `dispute.created` | Chargeback received | dispute, payment |
 | `dispute.won` | Dispute resolved in merchant's favor | dispute |
 | `dispute.lost` | Dispute resolved against merchant | dispute |
+| `dispute.accepted` | Merchant conceded the dispute | dispute |
 
 ---
 

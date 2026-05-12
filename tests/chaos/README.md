@@ -83,6 +83,7 @@ The gateway simulator already supports `timeout` and `slow` modes.
 ```bash
 # Switch gateway to timeout mode
 curl -X POST http://localhost:8090/v1/gateway/scenarios \
+  -H "Authorization: Basic $CREDS" \
   -d '{"mode":"timeout"}'
 
 # Create payment — should be marked failed after timeout
@@ -91,6 +92,7 @@ curl -X POST http://localhost:8090/v1/gateway/scenarios \
 
 # Reset
 curl -X POST http://localhost:8090/v1/gateway/scenarios \
+  -H "Authorization: Basic $CREDS" \
   -d '{"mode":"success"}'
 ```
 
@@ -127,3 +129,6 @@ See `tests/chaos/chaos_test.go` for a Go-based automated chaos test that:
 2. Injects failures during payment capture
 3. Verifies idempotency prevents double charges
 4. Verifies the DB remains consistent
+
+Export either `CHAOS_AUTH_HEADER` or `CHAOS_API_KEY_ID` plus `CHAOS_API_KEY_SECRET`
+before running the automated suite so the chaos client can authenticate.

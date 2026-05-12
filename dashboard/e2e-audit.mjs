@@ -12,11 +12,15 @@ const PAGES = [
   { path: '/api-keys', name: 'api-keys' },
   { path: '/webhooks', name: 'webhooks' },
   { path: '/settlements', name: 'settlements' },
+  { path: '/payouts', name: 'payouts' },
   { path: '/recon', name: 'recon' },
   { path: '/risk', name: 'risk' },
+  { path: '/gateway', name: 'gateway' },
+  { path: '/observability', name: 'observability' },
   { path: '/audit', name: 'audit' },
   { path: '/team', name: 'team' },
   { path: '/refunds', name: 'refunds' },
+  { path: '/disputes', name: 'disputes' },
 ];
 
 const results = {};
@@ -41,6 +45,9 @@ page.on('response', resp => {
 });
 page.on('requestfailed', req => {
   const failure = req.failure()?.errorText || '';
+  if (failure === 'net::ERR_ABORTED' && req.url().includes('_rsc=')) {
+    return;
+  }
   if (!req.url().includes('_next')) {
     allErrors.push({ type: 'request_failed', url: req.url(), failure });
   }
@@ -146,8 +153,12 @@ for (const { path, name } of PAGES) {
     if (msg.type() === 'error') pageErrors.push({ type: 'console', text: msg.text() });
   };
   const failListener = req => {
+    const failure = req.failure()?.errorText || '';
+    if (failure === 'net::ERR_ABORTED' && req.url().includes('_rsc=')) {
+      return;
+    }
     if (!req.url().includes('_next') && !req.url().includes('favicon')) {
-      networkFails.push({ url: req.url(), failure: req.failure()?.errorText });
+      networkFails.push({ url: req.url(), failure });
     }
   };
   const respListener = resp => {
