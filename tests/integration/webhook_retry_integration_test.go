@@ -226,3 +226,79 @@ func TestIntegrationWebhookRetryWorker(t *testing.T) {
 		}())
 	}
 }
+
+func TestIntegrationWebhookDeadLettersAfterRetryBudget(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	createdMerchant, err := merchant.NewService(
+		merchant.NewPostgresRepository(db),
+	).CreateMerchant(ctx, merchant.CreateMerchantInput{
+		Name: "Dead Letter Merchant", Email: "dead-letter@test.com", BusinessType: "company",
+	})
+	if err != nil {
+		t.Fatalf("create merchant: %v", err)
+	}
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer mockServer.Close()
+
+	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
+	sub, err := webhookSvc.CreateSubscription(ctx, webhook.CreateInput{
+		MerchantID: createdMerchant.ID,
+		URL:        mockServer.URL,
+		Events:     []string{"payment.captured"},
+	})
+	if err != nil {
+		t.Fatalf("create subscription: %v", err)
+	}
+
+	payload := map[string]any{"event_type": "payment.captured"}
+	if err := webhookSvc.DeliverEvent(ctx, "evt_retry_budget_test", createdMerchant.ID, "payment.captured", payload); err != nil {
+		t.Fatalf("deliver event: %v", err)
+	}
+
+	attempts, err := webhookSvc.ListDeliveryAttempts(ctx, createdMerchant.ID, sub.ID)
+	if err != nil {
+		t.Fatalf("list attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	}
+
+	if _, err := db.Exec(ctx, `
+UPDATE paygate_webhooks.webhook_delivery_attempts
+SET attempt_number = $2, next_retry_at = NOW() - INTERVAL '1 minute', status = 'failed'
+WHERE id = $1
+`, attempts[0].ID, webhook.MaxDeliveryAttempts); err != nil {
+		t.Fatalf("seed final retry state: %v", err)
+	}
+
+	n, err := webhookSvc.RetryPendingDeliveries(ctx, 10)
+	if err != nil {
+		t.Fatalf("retry pending: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 retried delivery, got %d", n)
+	}
+
+	attempts, err = webhookSvc.ListDeliveryAttempts(ctx, createdMerchant.ID, sub.ID)
+	if err != nil {
+		t.Fatalf("re-list attempts: %v", err)
+	}
+	if len(attempts) == 0 {
+		t.Fatal("expected at least one attempt after retry")
+	}
+	if attempts[0].Status != webhook.DeliveryDeadLettered {
+		t.Fatalf("expected dead-lettered status, got %s", attempts[0].Status)
+	}
+	if attempts[0].AttemptNumber != webhook.MaxDeliveryAttempts+1 {
+		t.Fatalf("expected attempt number %d, got %d", webhook.MaxDeliveryAttempts+1, attempts[0].AttemptNumber)
+	}
+	if attempts[0].NextRetryAt != nil {
+		t.Fatalf("expected no next_retry_at after dead-letter, got %v", attempts[0].NextRetryAt)
+	}
+}
