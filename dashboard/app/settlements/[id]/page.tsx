@@ -1,19 +1,33 @@
 import { getSettlement } from "../../../lib/api";
-import { formatMoney, formatTime } from "../../../lib/types";
+import { formatMoney, formatTime, truncateMiddle } from "../../../lib/types";
 
 export default async function SettlementDetailPage({ params }: { params: { id: string } }) {
   const settlement = await getSettlement(params.id);
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Settlement Batch</div>
-        <h1>Settlement Detail</h1>
-        <p style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", margin: "0 0 8px" }}>{settlement.id}</p>
+        <h1>{truncateMiddle(settlement.id, 14, 8)}</h1>
+        <p className="mono" style={{ margin: "0 0 8px" }}>{settlement.id}</p>
         <p className="lede">
           Net payout: {formatMoney(settlement.net_amount, settlement.currency)} ·{" "}
           {settlement.payment_count} payment{settlement.payment_count !== 1 ? "s" : ""}
         </p>
+      </div>
+      <div className="key-facts">
+        <div className="key-fact">
+          <span className="eyebrow">Status</span>
+          <strong>{settlement.status}</strong>
+        </div>
+        <div className="key-fact">
+          <span className="eyebrow">Gross</span>
+          <strong>{formatMoney(settlement.total_amount, settlement.currency)}</strong>
+        </div>
+        <div className="key-fact">
+          <span className="eyebrow">Refunds</span>
+          <strong>{formatMoney(settlement.total_refunds, settlement.currency)}</strong>
+        </div>
       </div>
       <div className="detail-grid">
         <div className="detail-card">
@@ -55,23 +69,30 @@ export default async function SettlementDetailPage({ params }: { params: { id: s
         </div>
         <div className="detail-card">
           <h2>Payment Items ({settlement.items?.length ?? 0})</h2>
-          <div className="list-card">
-            {(settlement.items ?? []).map((item) => (
-              <div className="list-row" key={item.id}>
-                <div>
-                  <div className="row-title">{item.payment_id}</div>
-                  <div className="row-meta">
-                    <span>Gross: {formatMoney(item.amount, item.currency)}</span>
-                    <span>Fee: {formatMoney(item.fee, item.currency)}</span>
-                    {item.refunds > 0 && (
-                      <span>Refunds: {formatMoney(item.refunds, item.currency)}</span>
-                    )}
+          {settlement.items?.length ? (
+            <div className="list-card">
+              {(settlement.items ?? []).map((item) => (
+                <div className="list-row" key={item.id}>
+                  <div className="entity-primary">
+                    <div className="row-title">{truncateMiddle(item.payment_id)}</div>
+                    <div className="row-meta">
+                      <span>Gross: {formatMoney(item.amount, item.currency)}</span>
+                      <span>Fee: {formatMoney(item.fee, item.currency)}</span>
+                      {item.refunds > 0 && (
+                        <span>Refunds: {formatMoney(item.refunds, item.currency)}</span>
+                      )}
+                    </div>
                   </div>
+                  <div className="amount-pill">{formatMoney(item.net, item.currency)}</div>
                 </div>
-                <div className="amount-pill">{formatMoney(item.net, item.currency)}</div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <strong>No line items recorded</strong>
+              <span className="muted">This batch exists, but no individual settlement items were attached.</span>
+            </div>
+          )}
         </div>
       </div>
     </section>
