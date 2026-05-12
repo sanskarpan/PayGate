@@ -1,5 +1,5 @@
 import { getWebhook, getWebhookDeliveries } from "../../../lib/api";
-import { formatTime } from "../../../lib/types";
+import { formatTime, truncateMiddle } from "../../../lib/types";
 
 export default async function WebhookDetailPage({ params }: { params: { id: string } }) {
   const [wh, deliveries] = await Promise.all([
@@ -8,14 +8,28 @@ export default async function WebhookDetailPage({ params }: { params: { id: stri
   ]);
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Webhook Subscription</div>
-        <h1>Webhook Detail</h1>
-        <p style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", margin: "0 0 8px" }}>{wh.id}</p>
+        <h1>{truncateMiddle(wh.id, 14, 8)}</h1>
+        <p className="mono" style={{ margin: "0 0 8px" }}>{wh.id}</p>
         <p className="lede">
           Delivering to <code>{wh.url}</code> · status: {wh.status}
         </p>
+      </div>
+      <div className="key-facts">
+        <div className="key-fact">
+          <span className="eyebrow">Status</span>
+          <strong>{wh.status}</strong>
+        </div>
+        <div className="key-fact">
+          <span className="eyebrow">Events</span>
+          <strong>{wh.events.length}</strong>
+        </div>
+        <div className="key-fact">
+          <span className="eyebrow">Deliveries</span>
+          <strong>{deliveries.count}</strong>
+        </div>
       </div>
       <div className="detail-grid">
         <div className="detail-card">
@@ -42,7 +56,10 @@ export default async function WebhookDetailPage({ params }: { params: { id: stri
         <div className="detail-card">
           <h2>Delivery Log</h2>
           {deliveries.items.length === 0 ? (
-            <p className="muted">No delivery attempts recorded yet.</p>
+            <div className="empty-state">
+              <strong>No delivery attempts</strong>
+              <span className="muted">The endpoint exists, but no event delivery attempts have been recorded yet.</span>
+            </div>
           ) : (
             <div className="timeline">
               {deliveries.items.map((attempt) => (
