@@ -28,6 +28,8 @@ const (
 	MismatchSettlementPaymentMismatch MismatchType = "settlement_payment_mismatch"
 	// PaymentSettledNotInBatch: payment.settled=true but no settlement_item found.
 	MismatchPaymentSettledNotInBatch MismatchType = "payment_settled_not_in_batch"
+	// OrphanSettlementItem: a settlement item points to a missing payment.
+	MismatchOrphanSettlementItem MismatchType = "orphan_settlement_item"
 )
 
 var ErrBatchNotFound = errors.New("recon batch not found")
