@@ -23,7 +23,10 @@ func NewKafkaPublisher(brokers []string) *KafkaPublisher {
 
 func (p *KafkaPublisher) Publish(ctx context.Context, topic string, key string, payload []byte) error {
 	writer := p.writer(topic)
-	return writer.WriteMessages(ctx, kafka.Message{
+	writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	return writer.WriteMessages(writeCtx, kafka.Message{
 		Key:   []byte(key),
 		Value: payload,
 		Time:  time.Now().UTC(),
@@ -55,6 +58,13 @@ func (p *KafkaPublisher) writer(topic string) *kafka.Writer {
 		Balancer:     &kafka.Hash{},
 		RequiredAcks: kafka.RequireOne,
 		Async:        false,
+		MaxAttempts:  3,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		Transport: &kafka.Transport{
+			DialTimeout: 5 * time.Second,
+			MetadataTTL: 30 * time.Second,
+		},
 	}
 	p.writers[topic] = writer
 	return writer
