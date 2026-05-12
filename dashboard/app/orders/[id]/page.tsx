@@ -1,21 +1,36 @@
 import Link from "next/link";
 
 import { getOrder, getPayments } from "../../../lib/api";
-import { formatMoney, formatTime } from "../../../lib/types";
+import { formatMoney, formatTime, truncateMiddle } from "../../../lib/types";
 
 export default async function OrderDetailPage({ params }: { params: { id: string } }) {
   const order = await getOrder(params.id);
   const payments = await getPayments(params.id);
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Order Detail</div>
-        <h1>Order Detail</h1>
-        <p className="muted" style={{ fontFamily: "monospace", fontSize: "0.9rem", margin: "4px 0 8px" }}>{order.id}</p>
+        <h1>{truncateMiddle(order.id, 14, 8)}</h1>
+        <p className="mono" style={{ margin: "4px 0 8px" }}>{order.id}</p>
         <p className="lede">
-          {order.status} · {formatMoney(order.amount, order.currency)} · Receipt {order.receipt || "not set"}.
+          {order.status} order for {formatMoney(order.amount, order.currency)}.
+          Receipt {order.receipt || "not set"}.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Amount due</span>
+            <strong>{formatMoney(order.amount_due, order.currency)}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Amount paid</span>
+            <strong>{formatMoney(order.amount_paid, order.currency)}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Payment attempts</span>
+            <strong>{payments.count}</strong>
+          </div>
+        </div>
       </div>
       <div className="detail-grid">
         <div className="detail-card">
@@ -42,21 +57,27 @@ export default async function OrderDetailPage({ params }: { params: { id: string
         <div className="detail-card">
           <h2>Linked Payments</h2>
           {payments.items.length === 0 ? (
-            <p className="muted">No payment attempts recorded for this order.</p>
+            <div className="empty-state">
+              <strong>No payment attempts</strong>
+              <span className="muted">This order exists, but no payment authorization attempts were recorded.</span>
+            </div>
           ) : (
-            payments.items.map((payment) => (
-              <Link className="list-row" href={`/payments/${payment.id}`} key={payment.id}>
-                <div>
-                  <div className="row-title">{payment.id}</div>
-                  <div className="row-meta">
-                    <span>{payment.status}</span>
-                    <span>{payment.method}</span>
-                    <span>{formatTime(payment.created_at)}</span>
+            <div className="stack">
+              {payments.items.map((payment) => (
+                <Link className="list-row" href={`/payments/${payment.id}`} key={payment.id}>
+                  <div className="entity-primary">
+                    <div className="row-title">{truncateMiddle(payment.id)}</div>
+                    <div className="row-meta">
+                      <span className="badge-neutral">{payment.status}</span>
+                      <span>{payment.method}</span>
+                      <span>{payment.captured ? "Captured" : "Awaiting capture"}</span>
+                      <span>{formatTime(payment.created_at)}</span>
+                    </div>
                   </div>
-                </div>
-                <div className="amount-pill">{formatMoney(payment.amount, payment.currency)}</div>
-              </Link>
-            ))
+                  <div className="amount-pill">{formatMoney(payment.amount, payment.currency)}</div>
+                </Link>
+              ))}
+            </div>
           )}
         </div>
       </div>
