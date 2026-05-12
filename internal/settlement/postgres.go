@@ -72,7 +72,7 @@ FOR UPDATE SKIP LOCKED
 	for _, p := range payments {
 		totalAmount += p.Amount
 		totalFees += p.Fee
-		totalRefunds += p.AmountRefunded
+		totalRefunds += CalculateRefundNetImpact(p.Amount, p.Fee, p.AmountRefunded)
 	}
 	netAmount := CalculateNet(totalAmount, totalFees, totalRefunds)
 
@@ -93,7 +93,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	// Create settlement items and collect payment IDs.
 	paymentIDs := make([]string, 0, len(payments))
 	for _, p := range payments {
-		net := CalculateNet(p.Amount, p.Fee, p.AmountRefunded)
+		net := CalculateNet(p.Amount, p.Fee, CalculateRefundNetImpact(p.Amount, p.Fee, p.AmountRefunded))
 		if _, err := tx.Exec(ctx, `
 INSERT INTO paygate_settlements.settlement_items
     (id, settlement_id, payment_id, merchant_id, amount, fee, refunds, net, currency)
@@ -195,7 +195,7 @@ FOR UPDATE SKIP LOCKED
 	for _, p := range payments {
 		totalAmount += p.Amount
 		totalFees += p.Fee
-		totalRefunds += p.AmountRefunded
+		totalRefunds += CalculateRefundNetImpact(p.Amount, p.Fee, p.AmountRefunded)
 	}
 	netAmount := CalculateNet(totalAmount, totalFees, totalRefunds)
 
@@ -227,7 +227,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	// Create settlement items and collect payment IDs.
 	selectedIDs := make([]string, 0, len(payments))
 	for _, p := range payments {
-		net := CalculateNet(p.Amount, p.Fee, p.AmountRefunded)
+		net := CalculateNet(p.Amount, p.Fee, CalculateRefundNetImpact(p.Amount, p.Fee, p.AmountRefunded))
 		if _, err := tx.Exec(ctx, `
 INSERT INTO paygate_settlements.settlement_items
     (id, settlement_id, payment_id, merchant_id, amount, fee, refunds, net, currency)
