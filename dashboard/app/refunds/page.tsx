@@ -21,7 +21,7 @@ export default async function RefundsPage({
 
   if (!paymentID) {
     return (
-      <section className="stack">
+      <section className="stack fade-up">
         <div className="hero-card">
           <div className="eyebrow">Refund Console</div>
           <h1>Refunds</h1>
@@ -44,7 +44,7 @@ export default async function RefundsPage({
   }
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Refund Console</div>
         <h1>Refunds for {paymentID}</h1>
@@ -59,7 +59,10 @@ export default async function RefundsPage({
       ) : (
         <div className="list-card">
           {data.items.length === 0 ? (
-            <p className="muted">No refunds have been issued for this payment.</p>
+            <div className="empty-state">
+              <strong>No refunds issued</strong>
+              <span className="muted">This payment has not been partially or fully refunded.</span>
+            </div>
           ) : (
             data.items.map((ref) => (
               <div className="list-row" key={ref.id}>
