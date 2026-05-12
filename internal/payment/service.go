@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/sanskarpan/PayGate/internal/common/idgen"
 )
 
 var ErrPaymentNotFound = errors.New("payment not found")
@@ -31,6 +33,7 @@ func NewService(repo Repository, gw GatewayClient) *Service {
 }
 
 type AuthorizeInput struct {
+	PaymentID      string `json:"-"`
 	MerchantID     string `json:"-"`
 	OrderID        string `json:"order_id"`
 	Amount         int64  `json:"amount"`
@@ -44,13 +47,33 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 	if in.Amount <= 0 {
 		return CaptureResult{}, ErrInvalidPaymentAmount
 	}
+	if in.PaymentID == "" {
+		in.PaymentID = idgen.New("pay")
+	}
+
+	pending, err := s.repo.StartAuthorization(ctx, CreateAuthorizedInput{
+		PaymentID:      in.PaymentID,
+		MerchantID:     in.MerchantID,
+		OrderID:        in.OrderID,
+		Amount:         in.Amount,
+		Currency:       in.Currency,
+		Method:         in.Method,
+		IdempotencyKey: in.IdempotencyKey,
+	})
+	if err != nil {
+		return CaptureResult{}, err
+	}
+	if pending.Status != StateCreated {
+		return pending, nil
+	}
+
 	result, err := s.gateway.Authorize(ctx, in.Amount, in.Currency, in.MerchantID, in.Method)
 	if err != nil {
-		_ = s.repo.CreateFailedAttempt(ctx, CreateAuthorizedInput{MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, IdempotencyKey: in.IdempotencyKey}, "GATEWAY_ERROR", err.Error())
+		_ = s.repo.MarkAuthorizationFailed(ctx, in.MerchantID, pending.PaymentID, "GATEWAY_ERROR", err.Error())
 		return CaptureResult{}, fmt.Errorf("gateway authorize: %w", err)
 	}
 	if !result.Success {
-		_ = s.repo.CreateFailedAttempt(ctx, CreateAuthorizedInput{MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, IdempotencyKey: in.IdempotencyKey}, result.ErrorCode, result.ErrorDescription)
+		_ = s.repo.MarkAuthorizationFailed(ctx, in.MerchantID, pending.PaymentID, result.ErrorCode, result.ErrorDescription)
 		return CaptureResult{}, ErrAuthorizationDeclined
 	}
 
@@ -60,7 +83,25 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 		autoCaptureAt = &t
 	}
 
-	return s.repo.CreateAuthorizedPayment(ctx, CreateAuthorizedInput{MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, IdempotencyKey: in.IdempotencyKey, GatewayReference: result.GatewayReference, AuthCode: result.AuthCode, AutoCaptureAt: autoCaptureAt})
+	return s.repo.MarkAuthorizationAuthorized(ctx, in.MerchantID, pending.PaymentID, result.GatewayReference, result.AuthCode, autoCaptureAt)
+}
+
+func (s *Service) RecordFailedAttempt(ctx context.Context, in AuthorizeInput, errorCode, errorDescription string) error {
+	if in.Amount <= 0 {
+		return ErrInvalidPaymentAmount
+	}
+	if in.PaymentID == "" {
+		in.PaymentID = idgen.New("pay")
+	}
+	return s.repo.CreateFailedAttempt(ctx, CreateAuthorizedInput{
+		PaymentID:      in.PaymentID,
+		MerchantID:     in.MerchantID,
+		OrderID:        in.OrderID,
+		Amount:         in.Amount,
+		Currency:       in.Currency,
+		Method:         in.Method,
+		IdempotencyKey: in.IdempotencyKey,
+	}, errorCode, errorDescription)
 }
 
 func (s *Service) CaptureForMerchant(ctx context.Context, merchantID, paymentID string, amount int64) (CaptureResult, error) {
