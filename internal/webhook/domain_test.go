@@ -77,16 +77,16 @@ func TestRetryDelay(t *testing.T) {
 	}{
 		{1, 0},
 		{2, 5 * time.Second},
-		{3, 10 * time.Second},
-		{4, 30 * time.Second},
-		{5, 1 * time.Minute},
-		{6, 5 * time.Minute},
-		{7, 10 * time.Minute},
-		{8, 30 * time.Minute},
-		{9, 1 * time.Hour},
-		{18, 1 * time.Hour},
-		{19, 1 * time.Hour}, // beyond table → clamp to 1h
-		{0, 1 * time.Hour},  // invalid → clamp
+		{3, 30 * time.Second},
+		{4, 2 * time.Minute},
+		{5, 10 * time.Minute},
+		{6, 30 * time.Minute},
+		{7, 1 * time.Hour},
+		{8, 2 * time.Hour},
+		{9, 2 * time.Hour},
+		{18, 2 * time.Hour},
+		{19, 2 * time.Hour}, // beyond table → clamp to 2h
+		{0, 2 * time.Hour},  // invalid → clamp
 	}
 
 	for _, tc := range tests {
