@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
+	"github.com/sanskarpan/PayGate/internal/settlement"
 )
 
 // Worker runs periodic reconciliation checks against the Postgres DB.
@@ -118,6 +119,10 @@ HAVING SUM(debit_amount) != SUM(credit_amount)
 // RunPaymentLedgerCheck verifies each captured payment in [start, end) has ledger entries.
 func (w *Worker) RunPaymentLedgerCheck(ctx context.Context, start, end time.Time) (int, error) {
 	batchID := idgen.New("recon")
+	checkedCount, err := w.countCapturedPayments(ctx, start, end)
+	if err != nil {
+		return 0, fmt.Errorf("count captured payments: %w", err)
+	}
 
 	rows, err := w.db.Query(ctx, `
 SELECT p.id, p.merchant_id, p.amount,
@@ -137,9 +142,7 @@ HAVING COALESCE(SUM(le.credit_amount), 0) = 0
 	defer rows.Close()
 
 	var mismatches []ReconMismatch
-	var checkedCount int
 	for rows.Next() {
-		checkedCount++
 		var paymentID, merchantID string
 		var paymentAmount, ledgerCredits int64
 		if err := rows.Scan(&paymentID, &merchantID, &paymentAmount, &ledgerCredits); err != nil {
@@ -173,9 +176,13 @@ HAVING COALESCE(SUM(le.credit_amount), 0) = 0
 // RunThreeWayCheck verifies settled payments have matching settlement_items.
 func (w *Worker) RunThreeWayCheck(ctx context.Context, start, end time.Time) (int, error) {
 	batchID := idgen.New("recon")
+	checkedCount, err := w.countCapturedPayments(ctx, start, end)
+	if err != nil {
+		return 0, fmt.Errorf("count captured payments: %w", err)
+	}
 
 	rows, err := w.db.Query(ctx, `
-SELECT p.id, p.merchant_id, p.amount, p.settled, p.settlement_id,
+SELECT p.id, p.merchant_id, p.amount, p.fee, p.amount_refunded, p.settled, p.settlement_id,
        si.id   AS si_id,
        si.net  AS si_net
 FROM paygate_payments.payments p
@@ -190,21 +197,22 @@ WHERE p.status = 'captured'
 	defer rows.Close()
 
 	var mismatches []ReconMismatch
-	var checkedCount int
 	for rows.Next() {
-		checkedCount++
 		var (
 			paymentID, merchantID string
 			amount                int64
+			fee                   int64
+			amountRefunded        int64
 			settled               bool
 			settlementID          *string
 			siID                  *string
 			siNet                 *int64
 		)
-		if err := rows.Scan(&paymentID, &merchantID, &amount, &settled, &settlementID, &siID, &siNet); err != nil {
+		if err := rows.Scan(&paymentID, &merchantID, &amount, &fee, &amountRefunded, &settled, &settlementID, &siID, &siNet); err != nil {
 			return 0, err
 		}
 
+		expectedNet := settlement.CalculateNet(amount, fee, settlement.CalculateRefundNetImpact(amount, fee, amountRefunded))
 		if settled && siID == nil {
 			mismatches = append(mismatches, ReconMismatch{
 				ID:            idgen.New("mm"),
@@ -217,6 +225,33 @@ WHERE p.status = 'captured'
 				ActualValue:   "no settlement_item found",
 				Description:   fmt.Sprintf("payment %s marked settled but no settlement_item", paymentID),
 			})
+			continue
+		}
+		if siID != nil && siNet != nil && *siNet != expectedNet {
+			mismatches = append(mismatches, ReconMismatch{
+				ID:            idgen.New("mm"),
+				BatchID:       batchID,
+				MerchantID:    merchantID,
+				MismatchType:  MismatchSettlementPaymentMismatch,
+				EntityType:    "payment",
+				EntityID:      paymentID,
+				ExpectedValue: fmt.Sprintf("%d", expectedNet),
+				ActualValue:   fmt.Sprintf("%d", *siNet),
+				Description:   fmt.Sprintf("payment %s settlement net mismatch: expected=%d actual=%d", paymentID, expectedNet, *siNet),
+			})
+		}
+		if !settled && siID != nil {
+			mismatches = append(mismatches, ReconMismatch{
+				ID:            idgen.New("mm"),
+				BatchID:       batchID,
+				MerchantID:    merchantID,
+				MismatchType:  MismatchSettlementPaymentMismatch,
+				EntityType:    "payment",
+				EntityID:      paymentID,
+				ExpectedValue: "settled=true",
+				ActualValue:   "settled=false",
+				Description:   fmt.Sprintf("payment %s has settlement_item but is not marked settled", paymentID),
+			})
 		}
 	}
 	rows.Close()
@@ -224,7 +259,54 @@ WHERE p.status = 'captured'
 		return 0, err
 	}
 
+	orphanRows, err := w.db.Query(ctx, `
+SELECT si.id, si.merchant_id, si.payment_id
+FROM paygate_settlements.settlement_items si
+LEFT JOIN paygate_payments.payments p ON p.id = si.payment_id
+JOIN paygate_settlements.settlements s ON s.id = si.settlement_id
+WHERE s.processed_at >= $1 AND s.processed_at < $2
+  AND p.id IS NULL
+`, start, end)
+	if err != nil {
+		return 0, fmt.Errorf("query orphan settlement items: %w", err)
+	}
+	defer orphanRows.Close()
+
+	for orphanRows.Next() {
+		var settlementItemID, merchantID, paymentID string
+		if err := orphanRows.Scan(&settlementItemID, &merchantID, &paymentID); err != nil {
+			return 0, err
+		}
+		mismatches = append(mismatches, ReconMismatch{
+			ID:            idgen.New("mm"),
+			BatchID:       batchID,
+			MerchantID:    merchantID,
+			MismatchType:  MismatchOrphanSettlementItem,
+			EntityType:    "settlement_item",
+			EntityID:      settlementItemID,
+			ExpectedValue: "payment exists",
+			ActualValue:   fmt.Sprintf("missing payment %s", paymentID),
+			Description:   fmt.Sprintf("settlement item %s references missing payment %s", settlementItemID, paymentID),
+		})
+	}
+	if err := orphanRows.Err(); err != nil {
+		return 0, err
+	}
+
 	return w.persistBatch(ctx, batchID, "", BatchTypeThreeWay, start, end, checkedCount, len(mismatches), mismatches)
+}
+
+func (w *Worker) countCapturedPayments(ctx context.Context, start, end time.Time) (int, error) {
+	var count int
+	if err := w.db.QueryRow(ctx, `
+SELECT COUNT(*)
+FROM paygate_payments.payments
+WHERE status = 'captured'
+  AND captured_at >= $1 AND captured_at < $2
+`, start, end).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // ListMismatches returns recon mismatches for a merchant, newest first.
