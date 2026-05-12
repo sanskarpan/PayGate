@@ -45,13 +45,14 @@ func Logging(logger *slog.Logger, next http.Handler) http.Handler {
 		}
 
 		next.ServeHTTP(rec, r)
+		requestID, _ := RequestIDFromContext(r.Context())
 		logger.Info("http_request",
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
 			"duration_ms", time.Since(start).Milliseconds(),
+			"request_id", requestID,
 			"request_body", scrubbed,
 		)
 	})
 }
-

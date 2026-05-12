@@ -61,3 +61,53 @@ func TestRequireScopeSuccess(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 }
+
+func TestRequireScopeRejectsSpoofedForwardedForWhenProxyUntrusted(t *testing.T) {
+	m := NewMiddleware(fakeVerifier{ret: merchant.APIKey{
+		ID:         "rzp_test_x",
+		MerchantID: "merch_x",
+		Scope:      merchant.APIKeyScopeRead,
+		AllowedIPs: []string{"203.0.113.10"},
+	}})
+	h := m.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	token := base64.StdEncoding.EncodeToString([]byte("rzp_test_x:secret"))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Basic "+token)
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
+	req.RemoteAddr = "198.51.100.7:4321"
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestRequireScopeUsesForwardedForFromTrustedProxy(t *testing.T) {
+	m := NewMiddlewareWithTrustedProxyCIDRs(fakeVerifier{ret: merchant.APIKey{
+		ID:         "rzp_test_x",
+		MerchantID: "merch_x",
+		Scope:      merchant.APIKeyScopeRead,
+		AllowedIPs: []string{"203.0.113.10"},
+	}}, []string{"127.0.0.1/32"})
+	h := m.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	token := base64.StdEncoding.EncodeToString([]byte("rzp_test_x:secret"))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Basic "+token)
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
+	req.RemoteAddr = "127.0.0.1:4321"
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}

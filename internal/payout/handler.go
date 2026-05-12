@@ -43,6 +43,10 @@ func (h *Handler) initiate(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
+	if sttl.OnHold {
+		handleError(w, ErrSettlementOnHold)
+		return
+	}
 
 	pout, err := h.svc.InitiatePayoutForSettlement(r.Context(), p.MerchantID, settlementID, sttl.NetAmount, sttl.Currency)
 	if err != nil {
@@ -131,6 +135,8 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "INVALID_STATE", Description: err.Error()})
 	case errors.Is(err, ErrSettlementNotProcessed):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "SETTLEMENT_NOT_PROCESSED", Description: err.Error()})
+	case errors.Is(err, ErrSettlementOnHold):
+		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "SETTLEMENT_ON_HOLD", Description: err.Error()})
 	default:
 		// Check for settlement not found too.
 		var errBody struct{ Code string }

@@ -25,10 +25,11 @@ const (
 )
 
 var (
-	ErrPayoutNotFound          = errors.New("payout not found")
-	ErrInvalidTransition       = errors.New("invalid payout state transition")
-	ErrPayoutAlreadyExists     = errors.New("payout already exists for this settlement")
-	ErrSettlementNotProcessed  = errors.New("settlement must be processed before initiating payout")
+	ErrPayoutNotFound         = errors.New("payout not found")
+	ErrInvalidTransition      = errors.New("invalid payout state transition")
+	ErrPayoutAlreadyExists    = errors.New("payout already exists for this settlement")
+	ErrSettlementNotProcessed = errors.New("settlement must be processed before initiating payout")
+	ErrSettlementOnHold       = errors.New("settlement is on hold")
 )
 
 // Transition returns the next PayoutState for the given event,
