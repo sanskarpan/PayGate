@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { getOrders, requireViewer } from "../../lib/api";
-import { formatMoney, formatTime } from "../../lib/types";
+import { formatCompactNumber, formatMoney, formatTime, truncateMiddle } from "../../lib/types";
 
 export default async function OrdersPage({
   searchParams,
@@ -12,25 +12,48 @@ export default async function OrdersPage({
   const orders = await getOrders(searchParams.cursor);
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
-        <div className="eyebrow">Merchant Scope</div>
+        <div className="eyebrow">Money Intake</div>
         <h1>Orders</h1>
         <p className="lede">
-          Reviewing {orders.count} order records for {viewer.merchant_id}.
+          Reviewing {orders.count} order records for {viewer.merchant_id}. Use this view to
+          inspect checkout creation patterns and drill directly into payment attempts.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Visible orders</span>
+            <strong>{formatCompactNumber(orders.count)}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Pagination</span>
+            <strong>{orders.has_more ? "More available" : "Complete slice"}</strong>
+          </div>
+        </div>
       </div>
+
       <div className="list-card">
+        <div className="section-head">
+          <div>
+            <h2>Order feed</h2>
+            <div className="section-kicker">Status, receipt context, timestamp, and value</div>
+          </div>
+        </div>
         {orders.items.length === 0 ? (
-          <p className="muted">No orders exist for this merchant yet.</p>
+          <div className="empty-state">
+            <strong>No orders yet</strong>
+            <span className="muted">New merchant checkout sessions will appear here once created.</span>
+          </div>
         ) : (
           orders.items.map((order) => (
             <Link className="list-row" href={`/orders/${order.id}`} key={order.id}>
-              <div>
-                <div className="row-title">{order.id}</div>
+              <div className="entity-primary">
+                <div className="row-title">{truncateMiddle(order.id)}</div>
+                <div className="mono">{order.id}</div>
                 <div className="row-meta">
-                  <span>{order.status}</span>
-                  <span>{order.receipt || "No receipt"}</span>
+                  <span className="badge-neutral">{order.status}</span>
+                  <span>{order.receipt || "Receipt pending"}</span>
+                  <span>{order.partial_payment ? "Partial payment enabled" : "Single-shot payment"}</span>
                   <span>{formatTime(order.created_at)}</span>
                 </div>
               </div>

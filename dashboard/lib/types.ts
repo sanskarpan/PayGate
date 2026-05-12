@@ -38,6 +38,7 @@ export type APIKeyItem = {
   mode: string;
   scope: string;
   status: string;
+  allowed_ips?: string[];
   last_used_at: number;
   revoked_at: number;
   created_at: number;
@@ -203,6 +204,20 @@ export function formatMoney(amount: number, currency: string) {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
   }).format(amount / 100);
+}
+
+export function formatCompactNumber(value: number | null | undefined) {
+  if (value === null || value === undefined) return "0";
+  return new Intl.NumberFormat("en-IN", {
+    notation: "compact",
+    maximumFractionDigits: value >= 1000 ? 1 : 0,
+  }).format(value);
+}
+
+export function truncateMiddle(value: string, head = 8, tail = 6) {
+  if (!value) return "";
+  if (value.length <= head + tail + 3) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
 }
 
 export function formatTime(unixSeconds: number) {

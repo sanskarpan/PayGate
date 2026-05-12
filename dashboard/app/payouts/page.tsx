@@ -17,22 +17,36 @@ function statusBadge(status: string) {
 export default async function PayoutsPage() {
   const viewer = await requireViewer();
   const payouts = await getPayouts();
+  const completed = payouts.items.filter((item) => item.status === "completed").length;
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Bank Transfers</div>
         <h1>Payouts</h1>
         <p className="lede">
           {payouts.count} payout{payouts.count !== 1 ? "s" : ""} for {viewer.merchant_id}.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Completed</span>
+            <strong>{completed}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Pending / failed</span>
+            <strong>{payouts.count - completed}</strong>
+          </div>
+        </div>
       </div>
       <div className="list-card">
         {payouts.items.length === 0 ? (
-          <p className="muted">
-            No payouts initiated yet. Run a settlement batch and then initiate a payout via{" "}
-            <code>POST /v1/settlements/{"{id}"}/payout</code>.
-          </p>
+          <div className="empty-state">
+            <strong>No payouts initiated</strong>
+            <span className="muted">
+              Run a settlement batch and then initiate a payout through the settlement payout endpoint.
+            </span>
+            <code>POST /v1/settlements/{"{id}"}/payout</code>
+          </div>
         ) : (
           payouts.items.map((p) => (
             <div className="list-row" key={p.id}>

@@ -10,19 +10,39 @@ function actionBadge(action: string) {
 export default async function RiskEventsPage() {
   const viewer = await requireViewer();
   const events = await getRiskEvents();
+  const unresolved = events.items.filter((item) => !item.resolved).length;
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Risk Engine</div>
         <h1>Risk Events</h1>
         <p className="lede">
           {events.count} event{events.count !== 1 ? "s" : ""} recorded for {viewer.merchant_id}.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Unresolved</span>
+            <strong>{unresolved}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Resolved</span>
+            <strong>{events.count - unresolved}</strong>
+          </div>
+        </div>
       </div>
       <div className="list-card">
+        <div className="section-head">
+          <div>
+            <h2>Event queue</h2>
+            <div className="section-kicker">Action, score, triggered rules, and resolution state</div>
+          </div>
+        </div>
         {events.items.length === 0 ? (
-          <p className="muted">No risk events recorded yet.</p>
+          <div className="empty-state">
+            <strong>No risk events recorded</strong>
+            <span className="muted">The fraud and policy engine has not raised any merchant events yet.</span>
+          </div>
         ) : (
           events.items.map((ev) => (
             <div className="list-row" key={ev.id}>
