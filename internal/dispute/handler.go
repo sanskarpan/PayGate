@@ -40,21 +40,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		PaymentID    string  `json:"payment_id"`
-		Reason       string  `json:"reason"`
-		Amount       int64   `json:"amount"`
-		Currency     string  `json:"currency"`
-		DueBy        *int64  `json:"due_by"`
-		SettlementID string  `json:"settlement_id"`
+		PaymentID    string `json:"payment_id"`
+		Reason       string `json:"reason"`
+		Amount       int64  `json:"amount"`
+		Currency     string `json:"currency"`
+		DueBy        *int64 `json:"due_by"`
+		SettlementID string `json:"settlement_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
 		return
-	}
-
-	currency := body.Currency
-	if currency == "" {
-		currency = "INR"
 	}
 
 	var dueBy *time.Time
@@ -63,7 +58,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		dueBy = &t
 	}
 
-	d, err := h.svc.Create(r.Context(), p.MerchantID, body.PaymentID, body.Reason, body.Amount, currency, dueBy)
+	d, err := h.svc.Create(r.Context(), p.MerchantID, body.PaymentID, body.SettlementID, body.Reason, body.Amount, body.Currency, dueBy)
 	if err != nil {
 		handleError(w, err)
 		return
@@ -203,21 +198,21 @@ func present(d Dispute) map[string]any {
 		resolvedAt = &ts
 	}
 	return map[string]any{
-		"entity":               "dispute",
-		"id":                   d.ID,
-		"merchant_id":          d.MerchantID,
-		"payment_id":           d.PaymentID,
-		"settlement_id":        d.SettlementID,
-		"status":               d.Status,
-		"reason":               d.Reason,
-		"amount":               d.Amount,
-		"currency":             d.Currency,
-		"evidence":             d.Evidence,
+		"entity":                "dispute",
+		"id":                    d.ID,
+		"merchant_id":           d.MerchantID,
+		"payment_id":            d.PaymentID,
+		"settlement_id":         d.SettlementID,
+		"status":                d.Status,
+		"reason":                d.Reason,
+		"amount":                d.Amount,
+		"currency":              d.Currency,
+		"evidence":              d.Evidence,
 		"evidence_submitted_at": evidenceSubmittedAt,
-		"due_by":               dueBy,
-		"resolved_at":          resolvedAt,
-		"notes":                d.Notes,
-		"created_at":           d.CreatedAt.Unix(),
+		"due_by":                dueBy,
+		"resolved_at":           resolvedAt,
+		"notes":                 d.Notes,
+		"created_at":            d.CreatedAt.Unix(),
 	}
 }
 
@@ -225,10 +220,16 @@ func handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrDisputeNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
+	case errors.Is(err, ErrPaymentNotFound), errors.Is(err, ErrSettlementNotFound):
+		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
+	case errors.Is(err, ErrInvalidReason), errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrInvalidCurrency):
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	case errors.Is(err, ErrInvalidTransition):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "INVALID_STATE", Description: err.Error()})
 	case errors.Is(err, ErrDisputeTerminal):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "DISPUTE_TERMINAL", Description: err.Error()})
+	case errors.Is(err, ErrEvidenceNotAllowed):
+		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "INVALID_STATE", Description: err.Error()})
 	case errors.Is(err, ErrEvidenceAlreadySubmitted):
 		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "EVIDENCE_ALREADY_SUBMITTED", Description: err.Error()})
 	default:
