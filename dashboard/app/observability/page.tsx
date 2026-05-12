@@ -1,4 +1,5 @@
 import { requireViewer, getPrometheusMetricSum } from "../../lib/api";
+import { formatCompactNumber } from "../../lib/types";
 
 export default async function ObservabilityPage() {
   await requireViewer();
@@ -39,19 +40,69 @@ export default async function ObservabilityPage() {
     ? "badge-warning"
     : "badge-success";
 
+  const counters = [
+    { label: "Payments", value: paymentsTotal ?? 0, note: "attempts" },
+    { label: "Orders", value: ordersTotal ?? 0, note: "created" },
+    { label: "Refunds", value: refundsTotal ?? 0, note: "issued" },
+    { label: "Webhook Deliveries", value: webhookDeliveries ?? 0, note: "attempts" },
+    { label: "Disputes", value: disputesTotal ?? 0, note: "cases" },
+    { label: "Payouts", value: payoutsTotal ?? 0, note: "transfers" },
+  ];
+  const maxCounter = Math.max(...counters.map((item) => item.value), 1);
+
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">System Health</div>
         <h1>Observability</h1>
         <p className="lede">
-          Cumulative metrics since last restart. For time-series charts and
-          alerting, open Grafana on{" "}
+          Cumulative platform counters since last restart. Use this surface for rapid operator
+          orientation, then move into Grafana for time-series and alert detail on{" "}
           <a href="http://localhost:3100" target="_blank" rel="noreferrer">
             localhost:3100
-          </a>{" "}
-          (admin / paygate).
+          </a>.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Outbox</span>
+            <strong>{outboxUnpublished ?? 0}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Traffic</span>
+            <strong>{formatCompactNumber(httpRequests)}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Webhook attempts</span>
+            <strong>{formatCompactNumber(webhookDeliveries)}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="triple-grid">
+        <div className="spotlight-card">
+          <div className="eyebrow">Delivery Health</div>
+          <h2>Async pipeline</h2>
+          <div className={outboxBadge}>{outboxOk ? "Healthy" : outboxUnpublished === null ? "Unknown" : "Needs attention"}</div>
+          <p className="muted">
+            Outbox backlog is {outboxUnpublished ?? "unknown"} and webhook delivery attempts total {fmt(webhookDeliveries)}.
+          </p>
+        </div>
+        <div className="spotlight-card">
+          <div className="eyebrow">Traffic Posture</div>
+          <h2>Request volume</h2>
+          <div className="stat-value">{fmt(httpRequests)}</div>
+          <p className="muted">
+            Aggregate request count since process start across authenticated dashboard and API traffic.
+          </p>
+        </div>
+        <div className="spotlight-card">
+          <div className="eyebrow">Money Flow</div>
+          <h2>Commercial load</h2>
+          <div className="stat-value">{fmt(paymentsTotal)}</div>
+          <p className="muted">
+            Payment attempts remain the strongest leading indicator for downstream webhook, refund, and settlement activity.
+          </p>
+        </div>
       </div>
 
       <div className="detail-grid">
@@ -119,6 +170,34 @@ export default async function ObservabilityPage() {
       </div>
 
       <div className="detail-card">
+        <div className="section-head">
+          <div>
+            <h2>Counter distribution</h2>
+            <div className="section-kicker">Relative scale across major platform counters</div>
+          </div>
+        </div>
+        <div className="stack" style={{ marginTop: "16px" }}>
+          {counters.map((item) => (
+            <div className="signal-row" key={item.label}>
+              <div className="signal-head">
+                <div className="row-title">{item.label}</div>
+                <div className="row-meta">
+                  <span>{fmt(item.value)}</span>
+                  <span>{item.note}</span>
+                </div>
+              </div>
+              <div className="signal-track">
+                <div
+                  className="signal-fill"
+                  style={{ width: `${Math.max(8, (item.value / maxCounter) * 100)}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="detail-card">
         <h2>Grafana Dashboards</h2>
         <p className="muted" style={{ marginBottom: "1rem" }}>
           These pre-built dashboards are provisioned automatically when you start the monitoring stack.
@@ -162,7 +241,7 @@ export default async function ObservabilityPage() {
       </div>
 
       <div className="detail-card">
-        <h2>Start Monitoring Stack</h2>
+        <h2>Monitoring Stack</h2>
         <p className="muted">
           Prometheus, Grafana, and Alertmanager are defined in <code>docker-compose.yml</code>.
         </p>
