@@ -10,9 +10,10 @@ function statusBadge(status: string) {
 export default async function TeamPage() {
   const viewer = await requireViewer();
   const invitations = await getInvitations();
+  const pending = invitations.items.filter((item) => item.status === "pending").length;
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Team Management</div>
         <h1>Team</h1>
@@ -20,6 +21,16 @@ export default async function TeamPage() {
           {invitations.count} invitation{invitations.count !== 1 ? "s" : ""} for{" "}
           {viewer.merchant_id}.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Pending invites</span>
+            <strong>{pending}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Accepted</span>
+            <strong>{invitations.items.filter((item) => item.status === "accepted").length}</strong>
+          </div>
+        </div>
       </div>
 
       <div className="list-card">
@@ -46,7 +57,10 @@ export default async function TeamPage() {
 
       <div className="list-card">
         {invitations.items.length === 0 ? (
-          <p className="muted">No invitations sent yet.</p>
+          <div className="empty-state">
+            <strong>No invitations sent</strong>
+            <span className="muted">Invite developers, ops staff, or read-only reviewers here.</span>
+          </div>
         ) : (
           invitations.items.map((inv) => (
             <div className="list-row" key={inv.id}>
