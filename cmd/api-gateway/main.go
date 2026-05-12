@@ -18,7 +18,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/common/config"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/common/logger"
-	_ "github.com/sanskarpan/PayGate/internal/common/metrics"
+	appmetrics "github.com/sanskarpan/PayGate/internal/common/metrics"
 	"github.com/sanskarpan/PayGate/internal/common/middleware"
 	"github.com/sanskarpan/PayGate/internal/common/telemetry"
 	"github.com/sanskarpan/PayGate/internal/dispute"
@@ -27,6 +27,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/ledger"
 	"github.com/sanskarpan/PayGate/internal/merchant"
 	"github.com/sanskarpan/PayGate/internal/order"
+	"github.com/sanskarpan/PayGate/internal/outbox"
 	"github.com/sanskarpan/PayGate/internal/payment"
 	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/recon"
@@ -73,7 +74,7 @@ func run() error {
 	merchantRepo := merchant.NewPostgresRepository(db)
 	merchantSvc := merchant.NewService(merchantRepo, merchant.WithSessionSecret(cfg.DashboardSessionSecret))
 	merchantHandler := merchant.NewHandler(merchantSvc)
-	authMw := auth.NewMiddleware(merchantSvc)
+	authMw := auth.NewMiddlewareWithTrustedProxyCIDRs(merchantSvc, cfg.TrustedProxyCIDRs)
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		l.Warn("redis unavailable, falling back to db-only idempotency", "error", err)
@@ -115,6 +116,20 @@ func run() error {
 	webhookRepo := webhook.NewPostgresRepository(db)
 	webhookSvc := webhook.NewService(webhookRepo)
 	webhookHandler := webhook.NewHandler(webhookSvc)
+	webhookConsumer := webhook.NewConsumer(webhookSvc, webhook.NewKafkaReader(cfg.KafkaBrokers, "webhook-service", l))
+
+	var outboxPublisher outbox.Publisher = outbox.NewKafkaPublisher(cfg.KafkaBrokers)
+	if os.Getenv("APP_ENV") != "production" {
+		outboxPublisher = outbox.NewFallbackPublisher(outboxPublisher, outbox.NewLocalPublisher(func(topic, key string, payload []byte) error {
+			return webhookConsumer.HandleMessage(ctx, topic, key, payload)
+		}), l)
+	}
+	go outbox.NewRelay(db, outboxPublisher, time.Second, l).Start(ctx)
+	go func() {
+		if err := webhookConsumer.Start(ctx); err != nil && ctx.Err() == nil {
+			l.Error("webhook consumer stopped", "error", err)
+		}
+	}()
 
 	auditRepo := audit.NewPostgresRepository(db)
 	auditSvc := audit.NewService(auditRepo, l)
@@ -210,8 +225,12 @@ func run() error {
 	payoutHandler.RegisterRoutesWithAuth(mux, protected)
 
 	// Gateway simulator control panel (no merchant auth - admin endpoint)
-	gatewayAdminHandler.RegisterRoutes(mux)
-	methodHandler.RegisterRoutes(mux)
+	gatewayAdminHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
+		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
+	})
+	methodHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
+		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
+	})
 
 	// Prometheus metrics
 	mux.Handle("GET /metrics", promhttp.Handler())
@@ -254,7 +273,17 @@ func run() error {
 		dashboardOrigin = "http://localhost:3001"
 	}
 	handler := telemetry.WrapHTTP(
-		httpx.NewRouter(middleware.CORS(dashboardOrigin)(middleware.Logging(l, rateLimiter.Middleware(mux)))),
+		httpx.NewRouter(
+			middleware.CORS(dashboardOrigin)(
+				appmetrics.MetricsMiddleware(
+					middleware.Logging(l,
+						middleware.MaxBody(middleware.MaxBodyBytes,
+							rateLimiter.Middleware(mux),
+						),
+					),
+				),
+			),
+		),
 		"api-gateway",
 	)
 
