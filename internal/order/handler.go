@@ -97,13 +97,16 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		items = append(items, presentOrder(o))
 	}
 
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"entity":      "collection",
-		"count":       len(items),
-		"items":       items,
-		"has_more":    out.HasMore,
-		"next_cursor": out.NextCursor,
-	})
+	resp := map[string]any{
+		"entity":   "collection",
+		"count":    len(items),
+		"items":    items,
+		"has_more": out.HasMore,
+	}
+	if out.HasMore && out.NextCursor != "" {
+		resp["next_cursor"] = out.NextCursor
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 func presentOrder(o Order) map[string]any {
