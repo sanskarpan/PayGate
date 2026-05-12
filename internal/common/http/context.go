@@ -4,7 +4,9 @@ import "context"
 
 type ctxKey string
 
-const principalCtxKey ctxKey = "principal"
+const (
+	principalCtxKey ctxKey = "principal"
+)
 
 type Principal struct {
 	MerchantID string
