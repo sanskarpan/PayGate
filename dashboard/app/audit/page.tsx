@@ -6,7 +6,7 @@ export default async function AuditLogPage() {
   const logs = await getAuditLogs();
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Compliance</div>
         <h1>Audit Log</h1>
@@ -15,8 +15,17 @@ export default async function AuditLogPage() {
         </p>
       </div>
       <div className="list-card">
+        <div className="section-head">
+          <div>
+            <h2>Recorded actions</h2>
+            <div className="section-kicker">Actor, resource, source IP, and event timestamp</div>
+          </div>
+        </div>
         {logs.items.length === 0 ? (
-          <p className="muted">No audit events recorded yet.</p>
+          <div className="empty-state">
+            <strong>No audit events recorded</strong>
+            <span className="muted">Protected operations will start appearing here once they occur.</span>
+          </div>
         ) : (
           logs.items.map((log) => (
             <div className="list-row" key={log.id}>
