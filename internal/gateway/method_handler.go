@@ -19,8 +19,12 @@ func NewMethodHandler(store *MethodConfigStore) *MethodHandler {
 
 // RegisterRoutes wires method-config endpoints into mux.
 func (h *MethodHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/gateway/method-configs", h.list)
-	mux.HandleFunc("POST /v1/gateway/method-configs", h.upsert)
+	h.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler { return next })
+}
+
+func (h *MethodHandler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(http.Handler) http.Handler) {
+	mux.Handle("GET /v1/gateway/method-configs", wrap(http.HandlerFunc(h.list)))
+	mux.Handle("POST /v1/gateway/method-configs", wrap(http.HandlerFunc(h.upsert)))
 }
 
 func (h *MethodHandler) list(w http.ResponseWriter, r *http.Request) {
