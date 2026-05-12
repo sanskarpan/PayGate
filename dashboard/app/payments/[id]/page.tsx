@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { getPayment } from "../../../lib/api";
-import { formatMoney, formatTime } from "../../../lib/types";
+import { formatMoney, formatTime, truncateMiddle } from "../../../lib/types";
 
 export default async function PaymentDetailPage({ params }: { params: { id: string } }) {
   const payment = await getPayment(params.id);
@@ -12,20 +12,36 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
   ];
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Payment Trace</div>
-        <h1>Payment Detail</h1>
-        <p style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)", margin: "0 0 8px" }}>{payment.id}</p>
+        <h1>{truncateMiddle(payment.id, 14, 8)}</h1>
+        <p className="mono" style={{ margin: "0 0 8px" }}>{payment.id}</p>
         <p className="lede">
           {payment.status} · {formatMoney(payment.amount, payment.currency)} via {payment.method}.
         </p>
-        <Link className="ghost-button" href={`/orders/${payment.order_id}`}>
-          View Parent Order
-        </Link>
-        <Link className="ghost-button" href={`/refunds?payment_id=${payment.id}`}>
-          View Refunds
-        </Link>
+        <div className="hero-actions">
+          <Link className="ghost-button" href={`/orders/${payment.order_id}`}>
+            View Parent Order
+          </Link>
+          <Link className="ghost-button" href={`/refunds?payment_id=${payment.id}`}>
+            View Refunds
+          </Link>
+        </div>
+      </div>
+      <div className="key-facts">
+        <div className="key-fact">
+          <span className="eyebrow">Status</span>
+          <strong>{payment.status}</strong>
+        </div>
+        <div className="key-fact">
+          <span className="eyebrow">Captured</span>
+          <strong>{payment.captured ? "Yes" : "No"}</strong>
+        </div>
+        <div className="key-fact">
+          <span className="eyebrow">Method</span>
+          <strong>{payment.method}</strong>
+        </div>
       </div>
       <div className="detail-grid">
         <div className="detail-card">
@@ -47,7 +63,7 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
           <dl className="detail-list">
             <div>
               <dt>Order ID</dt>
-              <dd>{payment.order_id}</dd>
+              <dd>{truncateMiddle(payment.order_id)}</dd>
             </div>
             <div>
               <dt>Captured</dt>
