@@ -328,7 +328,6 @@ export async function getPrometheusMetricSum(metricName: string): Promise<number
   try {
     const res = await fetch(`${getApiBaseUrl()}/metrics`, {
       cache: 'no-store',
-      next: { revalidate: 0 },
     });
     if (!res.ok) return null;
     const text = await res.text();
