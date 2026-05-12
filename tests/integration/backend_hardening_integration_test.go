@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/auth"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
+	"github.com/sanskarpan/PayGate/internal/dispute"
 	"github.com/sanskarpan/PayGate/internal/gateway"
 	"github.com/sanskarpan/PayGate/internal/idempotency"
 	"github.com/sanskarpan/PayGate/internal/ledger"
@@ -22,6 +23,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/outbox"
 	"github.com/sanskarpan/PayGate/internal/payment"
+	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/refund"
 	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/webhook"
@@ -289,6 +291,8 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	refundSvc := refund.NewService(refund.NewPostgresRepository(db, ledgerSvc))
 	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
 	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledgerSvc))
+	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
+	disputeSvc := dispute.NewService(dispute.NewPostgresRepository(db))
 
 	merchantHandler := merchant.NewHandler(merchantSvc)
 	orderHandler := order.NewHandler(orderSvc)
@@ -296,6 +300,8 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	refundHandler := refund.NewHandler(refundSvc)
 	webhookHandler := webhook.NewHandler(webhookSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
+	disputeHandler := dispute.NewHandler(disputeSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
@@ -308,7 +314,9 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
 	refundHandler.RegisterRoutesWithAuth(mux, protected)
 	settlementHandler.RegisterRoutesWithAuth(mux, protected)
+	payoutHandler.RegisterRoutesWithAuth(mux, protected)
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
+	disputeHandler.RegisterRoutesWithAuth(mux, protected)
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := httpx.PrincipalFromContext(r.Context())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})
