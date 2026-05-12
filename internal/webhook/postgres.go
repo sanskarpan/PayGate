@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"net"
+	neturl "net/url"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -23,8 +25,8 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 }
 
 func (r *PostgresRepository) CreateSubscription(ctx context.Context, in CreateInput) (WebhookSubscription, error) {
-	if in.URL == "" {
-		return WebhookSubscription{}, ErrInvalidURL
+	if err := validateSubscriptionURL(in.URL); err != nil {
+		return WebhookSubscription{}, err
 	}
 	if len(in.Events) == 0 {
 		return WebhookSubscription{}, ErrNoEvents
@@ -102,11 +104,19 @@ ORDER BY created_at DESC
 
 func (r *PostgresRepository) UpdateSubscription(ctx context.Context, merchantID, id string, in UpdateInput) (WebhookSubscription, error) {
 	// Verify it exists and is accessible.
-	if _, err := r.GetSubscription(ctx, merchantID, id); err != nil {
+	current, err := r.GetSubscription(ctx, merchantID, id)
+	if err != nil {
 		return WebhookSubscription{}, err
 	}
+	if in.URL != "" {
+		if err := validateSubscriptionURL(in.URL); err != nil {
+			return WebhookSubscription{}, err
+		}
+	} else {
+		in.URL = current.URL
+	}
 
-	_, err := r.db.Exec(ctx, `
+	_, err = r.db.Exec(ctx, `
 UPDATE paygate_webhooks.webhook_subscriptions
 SET url = COALESCE(NULLIF($1, ''), url),
     events = CASE WHEN $2::text[] IS NOT NULL AND array_length($2::text[], 1) > 0 THEN $2 ELSE events END,
@@ -193,7 +203,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	return attempt, nil
 }
 
-func (r *PostgresRepository) UpdateDeliveryAttempt(ctx context.Context, id string, status DeliveryStatus, responseCode int, responseBody, errMsg string, nextRetryAt *string) (WebhookDeliveryAttempt, error) {
+func (r *PostgresRepository) UpdateDeliveryAttempt(ctx context.Context, id string, status DeliveryStatus, responseCode int, responseBody, errMsg string, nextRetryAt *string, attemptNumber int) (WebhookDeliveryAttempt, error) {
 	var nextRetry *time.Time
 	if nextRetryAt != nil {
 		t, err := time.Parse(time.RFC3339, *nextRetryAt)
@@ -205,9 +215,9 @@ func (r *PostgresRepository) UpdateDeliveryAttempt(ctx context.Context, id strin
 	_, err := r.db.Exec(ctx, `
 UPDATE paygate_webhooks.webhook_delivery_attempts
 SET status = $1, response_code = $2, response_body = $3,
-    error_message = $4, next_retry_at = $5
-WHERE id = $6
-`, status, responseCode, responseBody, errMsg, nextRetry, id)
+    error_message = $4, next_retry_at = $5, attempt_number = $6
+WHERE id = $7
+`, status, responseCode, responseBody, errMsg, nextRetry, attemptNumber, id)
 	if err != nil {
 		return WebhookDeliveryAttempt{}, err
 	}
@@ -259,8 +269,14 @@ LIMIT 100
 	return attempts, rows.Err()
 }
 
-func (r *PostgresRepository) PendingRetries(ctx context.Context, limit int) ([]WebhookDeliveryAttempt, error) {
-	rows, err := r.db.Query(ctx, `
+func (r *PostgresRepository) LeasePendingRetries(ctx context.Context, limit int) ([]WebhookDeliveryAttempt, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	rows, err := tx.Query(ctx, `
 SELECT id, event_id, event_type, subscription_id, merchant_id, status, request_url, request_body,
        response_code, response_body, error_message, attempt_number, next_retry_at, created_at
 FROM paygate_webhooks.webhook_delivery_attempts
@@ -284,7 +300,31 @@ FOR UPDATE SKIP LOCKED
 		}
 		attempts = append(attempts, a)
 	}
-	return attempts, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(attempts) == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return attempts, nil
+	}
+
+	ids := make([]string, 0, len(attempts))
+	for _, attempt := range attempts {
+		ids = append(ids, attempt.ID)
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_webhooks.webhook_delivery_attempts
+SET status = 'pending'
+WHERE id = ANY($1)
+`, ids); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return attempts, nil
 }
 
 func (r *PostgresRepository) IsDelivered(ctx context.Context, eventID, subscriptionID string) (bool, error) {
@@ -355,4 +395,27 @@ func generateSecret() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func validateSubscriptionURL(raw string) error {
+	if raw == "" {
+		return ErrInvalidURL
+	}
+	parsed, err := neturl.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return ErrInvalidURL
+	}
+	if parsed.Scheme == "https" {
+		return nil
+	}
+	if parsed.Scheme != "http" {
+		return ErrInvalidURL
+	}
+
+	host := parsed.Hostname()
+	ip := net.ParseIP(host)
+	if host == "localhost" || (ip != nil && ip.IsLoopback()) {
+		return nil
+	}
+	return ErrInvalidURL
 }
