@@ -11,10 +11,16 @@ type fakeRepo struct {
 	expireCalled bool
 }
 
-func (f *fakeRepo) CreateAuthorizedPayment(context.Context, CreateAuthorizedInput) (CaptureResult, error) {
+func (f *fakeRepo) StartAuthorization(context.Context, CreateAuthorizedInput) (CaptureResult, error) {
 	return CaptureResult{}, nil
 }
 func (f *fakeRepo) CreateFailedAttempt(context.Context, CreateAuthorizedInput, string, string) error {
+	return nil
+}
+func (f *fakeRepo) MarkAuthorizationAuthorized(context.Context, string, string, string, string, *time.Time) (CaptureResult, error) {
+	return CaptureResult{}, nil
+}
+func (f *fakeRepo) MarkAuthorizationFailed(context.Context, string, string, string, string) error {
 	return nil
 }
 func (f *fakeRepo) CaptureAuthorizedPayment(context.Context, string, string, int64) (CaptureResult, error) {
