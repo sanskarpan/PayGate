@@ -12,9 +12,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sanskarpan/PayGate/internal/auth"
 	"github.com/sanskarpan/PayGate/internal/common/middleware"
 	"github.com/sanskarpan/PayGate/internal/common/scrubber"
+	"github.com/sanskarpan/PayGate/internal/gateway"
+	"github.com/sanskarpan/PayGate/internal/ledger"
 	"github.com/sanskarpan/PayGate/internal/merchant"
+	"github.com/sanskarpan/PayGate/internal/order"
+	"github.com/sanskarpan/PayGate/internal/payment"
+	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
 
@@ -150,5 +156,154 @@ func TestIntegrationWebhookSecretRotationGracePeriod(t *testing.T) {
 	expected := time.Now().Add(webhook.RotateSecretGracePeriod)
 	if prevExpiresAt.Before(expected.Add(-5*time.Minute)) || prevExpiresAt.After(expected.Add(5*time.Minute)) {
 		t.Errorf("previous_secret_expires_at=%v, expected ~%v", prevExpiresAt, expected)
+	}
+}
+
+func TestIntegrationWebhookRejectsInsecurePublicHTTPURL(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	mux, merchantSvc, _, _ := buildGatewayMux(db)
+	ctx := context.Background()
+
+	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
+		Name: "Webhook URL Merchant", Email: "webhook-url@test.com", BusinessType: "company",
+	})
+	if err != nil {
+		t.Fatalf("create merchant: %v", err)
+	}
+	key, err := merchantSvc.CreateAPIKey(ctx, m.ID, merchant.CreateAPIKeyInput{
+		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite,
+	})
+	if err != nil {
+		t.Fatalf("create api key: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"url":    "http://example.com/hook",
+		"events": []string{"payment.captured"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks", bytes.NewReader(body))
+	req.Header.Set("Authorization", basicAuth(key.KeyID, key.KeySecret))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for insecure webhook URL, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestIntegrationGatewayAdminEndpointsRequireAdminScope(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	merchantSvc := merchant.NewService(merchant.NewPostgresRepository(db), merchant.WithSessionSecret("integration-dashboard-secret"))
+	authMw := auth.NewMiddleware(merchantSvc)
+	scenarioStore := gateway.NewScenarioStore(db)
+	adminHandler := gateway.NewAdminHandler(scenarioStore)
+
+	mux := http.NewServeMux()
+	adminHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
+		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
+	})
+
+	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
+		Name: "Admin Control Merchant", Email: "admin-control@test.com", BusinessType: "company",
+	})
+	if err != nil {
+		t.Fatalf("create merchant: %v", err)
+	}
+	writeKey, err := merchantSvc.CreateAPIKey(ctx, m.ID, merchant.CreateAPIKeyInput{
+		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite,
+	})
+	if err != nil {
+		t.Fatalf("create write api key: %v", err)
+	}
+	adminKey, err := merchantSvc.CreateAPIKey(ctx, m.ID, merchant.CreateAPIKeyInput{
+		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeAdmin,
+	})
+	if err != nil {
+		t.Fatalf("create admin api key: %v", err)
+	}
+
+	noAuthReq := httptest.NewRequest(http.MethodGet, "/v1/gateway/scenarios", nil)
+	noAuthRec := httptest.NewRecorder()
+	mux.ServeHTTP(noAuthRec, noAuthReq)
+	if noAuthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without auth, got %d", noAuthRec.Code)
+	}
+
+	writeReq := httptest.NewRequest(http.MethodGet, "/v1/gateway/scenarios", nil)
+	writeReq.Header.Set("Authorization", basicAuth(writeKey.KeyID, writeKey.KeySecret))
+	writeRec := httptest.NewRecorder()
+	mux.ServeHTTP(writeRec, writeReq)
+	if writeRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for non-admin key, got %d", writeRec.Code)
+	}
+
+	adminReq := httptest.NewRequest(http.MethodGet, "/v1/gateway/scenarios", nil)
+	adminReq.Header.Set("Authorization", basicAuth(adminKey.KeyID, adminKey.KeySecret))
+	adminRec := httptest.NewRecorder()
+	mux.ServeHTTP(adminRec, adminReq)
+	if adminRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for admin key, got %d body=%s", adminRec.Code, adminRec.Body.String())
+	}
+}
+
+func TestIntegrationPayoutRejectedWhileSettlementOnHold(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
+	ctx := context.Background()
+
+	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
+		Name: "Payout Hold Merchant", Email: "payout-hold@test.com", BusinessType: "company",
+	})
+	if err != nil {
+		t.Fatalf("create merchant: %v", err)
+	}
+	key, err := merchantSvc.CreateAPIKey(ctx, m.ID, merchant.CreateAPIKeyInput{
+		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite,
+	})
+	if err != nil {
+		t.Fatalf("create api key: %v", err)
+	}
+
+	o, err := orderSvc.Create(ctx, order.CreateInput{
+		MerchantID: m.ID, Amount: 5000, Currency: "INR", Receipt: "payout-hold-order",
+	})
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	authz, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
+		MerchantID: m.ID, OrderID: o.ID, Amount: o.Amount, Currency: o.Currency, Method: "card",
+	})
+	if err != nil {
+		t.Fatalf("authorize payment: %v", err)
+	}
+	if _, err := paymentSvc.CaptureForMerchant(ctx, m.ID, authz.PaymentID, o.Amount); err != nil {
+		t.Fatalf("capture payment: %v", err)
+	}
+
+	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
+	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledgerSvc))
+	sttl, err := settlementSvc.RunBatch(ctx, m.ID, time.Unix(0, 0), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("run settlement: %v", err)
+	}
+	if err := settlementSvc.Hold(ctx, m.ID, sttl.ID, "manual review"); err != nil {
+		t.Fatalf("hold settlement: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	req.Header.Set("Authorization", basicAuth(key.KeyID, key.KeySecret))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for payout on held settlement, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
