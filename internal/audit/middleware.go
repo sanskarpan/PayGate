@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
+	"github.com/sanskarpan/PayGate/internal/common/middleware"
 )
 
 // Middleware returns an http.Handler wrapper that records an audit log entry
@@ -41,13 +42,11 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		resourceType, resourceID := extractResource(r.URL.Path)
 		action := r.Method + " " + resourceType
 
-		// Collect remote IP; prefer X-Forwarded-For when behind a proxy.
-		ip := r.RemoteAddr
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			ip = strings.TrimSpace(strings.SplitN(fwd, ",", 2)[0])
+		ip := middleware.ClientIPWithTrustedProxies(r, nil)
+		corrID, _ := middleware.RequestIDFromContext(r.Context())
+		if corrID == "" {
+			corrID = r.Header.Get("X-Request-Id")
 		}
-
-		corrID := r.Header.Get("X-Request-Id")
 
 		s.Record(r.Context(), RecordInput{
 			MerchantID:    p.MerchantID,
