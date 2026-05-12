@@ -1,5 +1,5 @@
 import { getReconMismatches, requireViewer } from "../../lib/api";
-import { formatTime } from "../../lib/types";
+import { formatCompactNumber, formatTime, truncateMiddle } from "../../lib/types";
 
 export default async function ReconPage() {
   const viewer = await requireViewer();
@@ -16,28 +16,63 @@ export default async function ReconPage() {
     payment_settled_not_in_batch: "Settled Without Batch",
   };
 
+  const groupedOpen = open.reduce<Record<string, number>>((acc, item) => {
+    acc[item.mismatch_type] = (acc[item.mismatch_type] ?? 0) + 1;
+    return acc;
+  }, {});
+
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Reconciliation</div>
-        <h1>Recon Dashboard</h1>
+        <h1>Reconciliation Control</h1>
         <p className="lede">
           {open.length} open mismatch{open.length !== 1 ? "es" : ""} · {resolved.length} resolved
           for {viewer.merchant_id}.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Open</span>
+            <strong>{formatCompactNumber(open.length)}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Resolved</span>
+            <strong>{formatCompactNumber(resolved.length)}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Distinct mismatch types</span>
+            <strong>{Object.keys(groupedOpen).length}</strong>
+          </div>
+        </div>
       </div>
+
+      {open.length > 0 ? (
+        <div className="summary-grid">
+          {Object.entries(groupedOpen).map(([type, count]) => (
+            <div className="metric-card" key={type}>
+              <div className="eyebrow">Mismatch Type</div>
+              <div className="stat-value">{count}</div>
+              <div className="stat-label">{mismatchTypeLabel[type] ?? type}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {open.length > 0 && (
         <div className="list-card">
-          <h2 className="section-heading">
-            Open Mismatches ({open.length})
-          </h2>
+          <div className="section-head">
+            <div>
+              <h2>Open mismatches</h2>
+              <div className="section-kicker">Expected value, actual value, entity scope, and detection time</div>
+            </div>
+          </div>
           {open.map((mm) => (
             <div className="list-row list-row-error" key={mm.id}>
-              <div>
+              <div className="entity-primary">
                 <div className="row-title">
                   {mismatchTypeLabel[mm.mismatch_type] ?? mm.mismatch_type}
                 </div>
+                <div className="mono">{truncateMiddle(mm.id)}</div>
                 <div className="row-meta">
                   <span>{mm.entity_type}: {mm.entity_id}</span>
                   <span>Expected: {mm.expected_value}</span>
@@ -52,22 +87,27 @@ export default async function ReconPage() {
       )}
 
       {open.length === 0 && (
-        <div className="hero-card-success">
+        <div className="success-panel">
+          <div className="eyebrow">Healthy State</div>
           <p className="lede">All reconciliation checks passed. No open mismatches.</p>
         </div>
       )}
 
       {resolved.length > 0 && (
         <div className="list-card">
-          <h2 className="section-heading">
-            Resolved ({resolved.length})
-          </h2>
+          <div className="section-head">
+            <div>
+              <h2>Resolved mismatches</h2>
+              <div className="section-kicker">Historical anomalies already acknowledged or corrected</div>
+            </div>
+          </div>
           {resolved.map((mm) => (
             <div className="list-row" key={mm.id}>
-              <div>
+              <div className="entity-primary">
                 <div className="row-title">
                   {mismatchTypeLabel[mm.mismatch_type] ?? mm.mismatch_type}
                 </div>
+                <div className="mono">{truncateMiddle(mm.id)}</div>
                 <div className="row-meta">
                   <span>{mm.entity_type}: {mm.entity_id}</span>
                   <span>{formatTime(mm.created_at)}</span>

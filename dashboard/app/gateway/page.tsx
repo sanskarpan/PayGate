@@ -1,4 +1,5 @@
-import { getActiveGatewayScenario, getGatewayScenarios, requireViewer } from "../../lib/api";
+import GatewayScenarioControl from "../../components/gateway-scenario-control";
+import { getActiveGatewayScenario, getApiBaseUrl, getGatewayScenarios, requireViewer } from "../../lib/api";
 import { formatTime } from "../../lib/types";
 
 function modeBadge(mode: string) {
@@ -33,13 +34,24 @@ export default async function GatewaySimulatorPage() {
   ]);
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Gateway Simulator</div>
         <h1>Payment Gateway Control Panel</h1>
         <p className="lede">
-          Configure the simulated payment gateway behavior for testing failure paths and edge cases.
+          Configure simulated gateway behavior for failure-path testing, latency drills, and
+          callback timing edge cases.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Active mode</span>
+            <strong>{active?.mode ?? "success"}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Saved scenarios</span>
+            <strong>{scenarios.count}</strong>
+          </div>
+        </div>
       </div>
 
       {active && (
@@ -58,70 +70,31 @@ export default async function GatewaySimulatorPage() {
         </div>
       )}
 
-      <div className="detail-card">
-        <h2>Change Scenario</h2>
-        <p className="muted">Use the API to configure the gateway simulator:</p>
-        <div style={{ marginTop: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-          {[
-            { mode: "success", label: "Happy Path", desc: "All payments succeed" },
-            { mode: "slow", label: "Slow Gateway", desc: "3 second delay" },
-            { mode: "flaky", label: "Flaky (30%)", desc: "30% random failures" },
-            { mode: "decline", label: "All Declined", desc: "All payments fail" },
-            { mode: "timeout", label: "Timeout", desc: "No response at all" },
-          ].map(({ mode, label, desc }) => (
-            <div key={mode} className="list-row" style={{ cursor: "default" }}>
-              <div>
-                <div className="row-title">{label}</div>
-                <div className="row-meta">
-                  <span className={modeBadge(mode)}>{mode}</span>
-                  <span>{desc}</span>
-                </div>
-              </div>
-              <code style={{ fontSize: "0.75rem", opacity: 0.7 }}>
-                POST /v1/gateway/scenarios
-              </code>
-            </div>
-          ))}
-        </div>
+      <GatewayScenarioControl
+        apiBaseUrl={getApiBaseUrl()}
+        initialActive={active}
+        initialItems={scenarios.items}
+      />
 
-        <div style={{ marginTop: "1.5rem" }}>
-          <h3>API Example</h3>
-          <pre style={{ background: "var(--surface)", padding: "1rem", borderRadius: "0.5rem", overflow: "auto", fontSize: "0.85rem" }}>
-{`# Switch to flaky mode (30% failure rate)
+      <div className="detail-card">
+        <h2>API Example</h2>
+        <pre>
+{`# These endpoints require an admin API key or an admin dashboard session.
+# Switch to flaky mode (30% failure rate)
 curl -X POST http://localhost:8090/v1/gateway/scenarios \\
+  -u "$ADMIN_KEY_ID:$ADMIN_KEY_SECRET" \\
   -H 'Content-Type: application/json' \\
   -d '{"mode":"flaky","failure_rate":0.30,"delay_ms":0}'
 
 # Switch back to success mode
 curl -X POST http://localhost:8090/v1/gateway/scenarios \\
+  -u "$ADMIN_KEY_ID:$ADMIN_KEY_SECRET" \\
   -d '{"mode":"success"}'
 
 # Check active scenario
-curl http://localhost:8090/v1/gateway/scenarios/active`}
-          </pre>
-        </div>
-      </div>
-
-      <div className="list-card">
-        <h2 style={{ padding: "1rem 1rem 0" }}>Scenario History</h2>
-        {scenarios.items.length === 0 ? (
-          <p className="muted" style={{ padding: "1rem" }}>No scenarios configured yet. Using default (success) mode.</p>
-        ) : (
-          scenarios.items.map((sc) => (
-            <div className="list-row" key={sc.id}>
-              <div>
-                <div className="row-title">{sc.merchant_id || "Global"}</div>
-                <div className="row-meta">
-                  <span className={modeBadge(sc.mode)}>{sc.mode}</span>
-                  {sc.mode === "flaky" && <span>{Math.round(sc.failure_rate * 100)}% failure</span>}
-                  {(sc.mode === "slow" || sc.mode === "late_callback") && <span>{sc.delay_ms}ms delay</span>}
-                  {sc.active && <span className="badge-success">active</span>}
-                  <span>{formatTime(sc.created_at)}</span>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
+curl -u "$ADMIN_KEY_ID:$ADMIN_KEY_SECRET" \\
+  http://localhost:8090/v1/gateway/scenarios/active`}
+        </pre>
       </div>
     </section>
   );

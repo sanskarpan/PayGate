@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 
-import type { APIKeyItem } from "../lib/types";
+import { formatTime, type APIKeyItem } from "../lib/types";
 
 type CreateKeyResponse = {
   key_id: string;
@@ -21,14 +21,32 @@ export default function APIKeyManager({
   const [items, setItems] = useState(initialItems);
   const [mode, setMode] = useState("test");
   const [scope, setScope] = useState("write");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "revoked">("all");
+  const [query, setQuery] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [created, setCreated] = useState<CreateKeyResponse | null>(null);
+  const deferredQuery = useDeferredValue(query);
 
   const activeCount = useMemo(
     () => items.filter((item) => item.status === "active").length,
     [items],
   );
+
+  const visibleItems = useMemo(() => {
+    const lowered = deferredQuery.trim().toLowerCase();
+    return items.filter((item) => {
+      if (statusFilter !== "all" && item.status !== statusFilter) {
+        return false;
+      }
+      if (!lowered) {
+        return true;
+      }
+      return [item.id, item.mode, item.scope, item.status].some((value) =>
+        value.toLowerCase().includes(lowered),
+      );
+    });
+  }, [items, statusFilter, deferredQuery]);
 
   async function createKey() {
     setPending(true);
@@ -91,13 +109,52 @@ export default function APIKeyManager({
   }
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Access Surface</div>
         <h1>API Keys</h1>
         <p className="lede">
           Manage live credentials for integrations. Active keys: {activeCount}.
         </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Total keys</span>
+            <strong>{items.length}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Active</span>
+            <strong>{activeCount}</strong>
+          </div>
+        </div>
+        <div className="inline-form">
+          <label style={{ minWidth: "220px" }}>
+            Search
+            <input
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Filter by key id, mode, scope, or status"
+              type="text"
+              value={query}
+            />
+          </label>
+          <div className="filter-bar" role="tablist" aria-label="API key status filter">
+            {[
+              ["all", `All (${items.length})`],
+              ["active", `Active (${activeCount})`],
+              ["revoked", `Revoked (${items.length - activeCount})`],
+            ].map(([value, label]) => (
+              <button
+                aria-selected={statusFilter === value}
+                className={`filter-pill${statusFilter === value ? " active" : ""}`}
+                key={value}
+                onClick={() => setStatusFilter(value as "all" | "active" | "revoked")}
+                role="tab"
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="inline-form">
           <label>
             Mode
@@ -129,27 +186,43 @@ export default function APIKeyManager({
       </div>
 
       <div className="list-card">
-        {items.length === 0 ? (
-          <p className="muted">No keys issued yet.</p>
+        {visibleItems.length === 0 ? (
+          <div className="empty-state">
+            <strong>{items.length === 0 ? "No keys issued yet" : "No keys match this filter"}</strong>
+            <span className="muted">
+              {items.length === 0
+                ? "Create read, write, or admin credentials for merchant integrations."
+                : "Change the filter or search text to broaden the result set."}
+            </span>
+          </div>
         ) : (
-          items.map((item) => (
+          visibleItems.map((item) => (
             <article className="list-row" key={item.id}>
-              <div>
+              <div className="entity-primary">
                 <div className="row-title">{item.id}</div>
                 <div className="row-meta">
-                  <span>{item.mode}</span>
-                  <span>{item.scope}</span>
-                  <span>{item.status}</span>
+                  <span className="badge-neutral">{item.mode}</span>
+                  <span className="badge-info">{item.scope}</span>
+                  <span className={item.status === "active" ? "badge-success" : "badge-warning"}>
+                    {item.status}
+                  </span>
+                  {item.allowed_ips?.length ? <span>{item.allowed_ips.length} allowlisted IP entries</span> : null}
+                  <span>{item.last_used_at ? `Last used ${formatTime(item.last_used_at)}` : "Never used"}</span>
                 </div>
               </div>
-              <button
-                className="ghost-button"
-                disabled={pending || item.status !== "active"}
-                onClick={() => revokeKey(item.id)}
-                type="button"
-              >
-                Revoke
-              </button>
+              <div className="row-actions">
+                <a className="ghost-button" href={`/api-keys/${item.id}`}>
+                  IP Allowlist
+                </a>
+                <button
+                  className="ghost-button"
+                  disabled={pending || item.status !== "active"}
+                  onClick={() => revokeKey(item.id)}
+                  type="button"
+                >
+                  Revoke
+                </button>
+              </div>
             </article>
           ))
         )}

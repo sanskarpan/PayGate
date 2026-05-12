@@ -24,16 +24,19 @@ function isValidIPOrCIDR(value: string): boolean {
 export default function IPAllowlistManager({
   keyId,
   apiBaseUrl,
+  initialIPs,
 }: {
   keyId: string;
   apiBaseUrl: string;
+  initialIPs: string[];
 }) {
-  const [ips, setIps] = useState<string[]>([]);
+  const [ips, setIps] = useState<string[]>(initialIPs);
   const [input, setInput] = useState("");
   const [inputError, setInputError] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"error" | "success">("error");
+  const dirty = JSON.stringify(ips) !== JSON.stringify(initialIPs);
 
   function addIP() {
     const trimmed = input.trim();
@@ -53,6 +56,13 @@ export default function IPAllowlistManager({
 
   function removeIP(ip: string) {
     setIps((current) => current.filter((item) => item !== ip));
+  }
+
+  function reset() {
+    setIps(initialIPs);
+    setInput("");
+    setInputError("");
+    setMessage("");
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -103,10 +113,20 @@ export default function IPAllowlistManager({
           Restrict this API key to requests originating from specific IP
           addresses or CIDR ranges. Leave the list empty to allow all IPs.
         </p>
-        <p className="row-meta">
-          <span>Key ID:</span>
-          <code>{keyId}</code>
-        </p>
+        <div className="metric-strip">
+          <div className="metric-chip">
+            <span className="metric-chip-label">Key</span>
+            <code>{keyId}</code>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Entries</span>
+            <strong>{ips.length}</strong>
+          </div>
+          <div className="metric-chip">
+            <span className="metric-chip-label">Policy</span>
+            <strong>{ips.length === 0 ? "Open" : "Restricted"}</strong>
+          </div>
+        </div>
       </div>
 
       <div className="list-card">
@@ -135,11 +155,17 @@ export default function IPAllowlistManager({
           </div>
         </div>
         {inputError ? <p className="notice error">{inputError}</p> : null}
+        <div className="row-meta">
+          <span>Examples: 203.0.113.8, 198.51.100.0/24, 2001:db8::/32</span>
+        </div>
       </div>
 
       <div className="list-card">
         {ips.length === 0 ? (
-          <p className="muted">No IPs added — all source addresses are currently allowed.</p>
+          <div className="empty-state">
+            <strong>No IP restrictions</strong>
+            <span className="muted">All source addresses are currently allowed for this key.</span>
+          </div>
         ) : (
           ips.map((ip) => (
             <div className="list-row" key={ip}>
@@ -161,14 +187,27 @@ export default function IPAllowlistManager({
 
       <div className="list-card">
         <div className="list-row">
-          <button
-            className="primary-button"
-            type="button"
-            disabled={pending}
-            onClick={save}
-          >
-            {pending ? "Saving..." : "Save Allowlist"}
-          </button>
+          <div className="row-actions">
+            <button
+              className="primary-button"
+              type="button"
+              disabled={pending || !dirty}
+              onClick={save}
+            >
+              {pending ? "Saving..." : "Save Allowlist"}
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={pending || !dirty}
+              onClick={reset}
+            >
+              Reset Changes
+            </button>
+          </div>
+          <div className="micro-copy">
+            {dirty ? "Unsaved changes" : "Saved state matches the server snapshot used to open this page"}
+          </div>
         </div>
         {message ? (
           <p className={`notice ${messageType === "success" ? "success" : "error"}`}>

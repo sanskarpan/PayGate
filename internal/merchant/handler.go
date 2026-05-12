@@ -292,6 +292,7 @@ func (h *Handler) listOwnAPIKeys(w http.ResponseWriter, r *http.Request) {
 			"mode":         key.Mode,
 			"scope":        key.Scope,
 			"status":       key.Status,
+			"allowed_ips":  key.AllowedIPs,
 			"last_used_at": lastUsedAt,
 			"revoked_at":   revokedAt,
 			"created_at":   key.CreatedAt.Unix(),
@@ -428,13 +429,13 @@ func (h *Handler) inviteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
-		"id":          inv.ID,
-		"email":       inv.Email,
-		"role":        inv.Role,
-		"status":      inv.Status,
-		"token":       token,
-		"expires_at":  inv.ExpiresAt.Unix(),
-		"created_at":  inv.CreatedAt.Unix(),
+		"id":         inv.ID,
+		"email":      inv.Email,
+		"role":       inv.Role,
+		"status":     inv.Status,
+		"token":      token,
+		"expires_at": inv.ExpiresAt.Unix(),
+		"created_at": inv.CreatedAt.Unix(),
 	})
 }
 
