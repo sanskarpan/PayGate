@@ -11,6 +11,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
 	"github.com/sanskarpan/PayGate/internal/ledger"
 	"github.com/sanskarpan/PayGate/internal/outbox"
+	"github.com/sanskarpan/PayGate/internal/settlement"
 )
 
 // PostgresRepository implements Repository using pgxpool.
@@ -126,12 +127,17 @@ func (r *PostgresRepository) ProcessRefund(ctx context.Context, refundID string)
 
 	var ref Refund
 	var notesRaw []byte
+	var paymentAmount int64
+	var paymentFee int64
+	var amountRefunded int64
 	err = tx.QueryRow(ctx, `
-SELECT id, payment_id, order_id, merchant_id, amount, currency, reason, status
-FROM paygate_payments.refunds
-WHERE id = $1
+SELECT r.id, r.payment_id, r.order_id, r.merchant_id, r.amount, r.currency, r.reason, r.status,
+       p.amount, p.fee, p.amount_refunded
+	FROM paygate_payments.refunds r
+	JOIN paygate_payments.payments p ON p.id = r.payment_id
+WHERE r.id = $1
 FOR UPDATE
-`, refundID).Scan(&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency, &ref.Reason, &ref.Status)
+`, refundID).Scan(&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency, &ref.Reason, &ref.Status, &paymentAmount, &paymentFee, &amountRefunded)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Refund{}, ErrRefundNotFound
@@ -164,11 +170,22 @@ WHERE id = $2
 		return Refund{}, err
 	}
 
-	// Ledger reversal: Dr. MERCHANT_PAYABLE / Cr. REFUND_CLEARING
-	if _, err := r.ledger.CreateEntriesTx(ctx, tx, ref.MerchantID, "refund", refundID, "refund processed", []ledger.Entry{
-		{AccountCode: "MERCHANT_PAYABLE", DebitAmount: ref.Amount, Currency: ref.Currency, Description: "refund debit"},
+	prevFeeReversal := settlement.CalculateRefundFeeReversal(paymentAmount, paymentFee, amountRefunded)
+	newFeeReversal := settlement.CalculateRefundFeeReversal(paymentAmount, paymentFee, amountRefunded+ref.Amount)
+	feeDelta := newFeeReversal - prevFeeReversal
+	merchantPayableDelta := ref.Amount - feeDelta
+
+	entries := []ledger.Entry{
 		{AccountCode: "REFUND_CLEARING", CreditAmount: ref.Amount, Currency: ref.Currency, Description: "refund clearing credit"},
-	}); err != nil {
+	}
+	if merchantPayableDelta > 0 {
+		entries = append(entries, ledger.Entry{AccountCode: "MERCHANT_PAYABLE", DebitAmount: merchantPayableDelta, Currency: ref.Currency, Description: "refund merchant payable reversal"})
+	}
+	if feeDelta > 0 {
+		entries = append(entries, ledger.Entry{AccountCode: "PLATFORM_FEE_REVENUE", DebitAmount: feeDelta, Currency: ref.Currency, Description: "refund fee reversal"})
+	}
+
+	if _, err := r.ledger.CreateEntriesTx(ctx, tx, ref.MerchantID, "refund", refundID, "refund processed", entries); err != nil {
 		return Refund{}, err
 	}
 
