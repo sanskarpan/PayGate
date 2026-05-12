@@ -31,7 +31,7 @@ export default async function DisputesPage() {
   const openCount = disputes.items.filter((d) => d.status === "open" || d.status === "under_review").length;
 
   return (
-    <section className="stack">
+    <section className="stack fade-up">
       <div className="hero-card">
         <div className="eyebrow">Chargeback Management</div>
         <h1>Disputes</h1>
@@ -45,8 +45,17 @@ export default async function DisputesPage() {
         </p>
       </div>
       <div className="list-card">
+        <div className="section-head">
+          <div>
+            <h2>Case queue</h2>
+            <div className="section-kicker">Chargeback state, reason, linked payment, and due time</div>
+          </div>
+        </div>
         {disputes.items.length === 0 ? (
-          <p className="muted">No disputes recorded. Great news!</p>
+          <div className="empty-state">
+            <strong>No disputes recorded</strong>
+            <span className="muted">Merchant chargebacks and retrieval flows will surface here when they occur.</span>
+          </div>
         ) : (
           disputes.items.map((d) => (
             <Link className="list-row" href={`/disputes/${d.id}`} key={d.id}>
