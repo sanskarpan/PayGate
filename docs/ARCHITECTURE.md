@@ -111,7 +111,7 @@ This map shows domain boundaries and future extraction seams. In Phase 1 these r
 
 ### 3.9 Gateway Proxy (Simulated)
 - **Technology**: Go
-- **Responsibilities**: simulate bank/PSP responses with configurable behavior (success, delay, failure, late callback, duplicates). Accepts authorization and refund requests. Returns simulated responses.
+- **Responsibilities**: simulate bank/PSP responses with configurable behavior (success, delay, failure, late auth). Accepts authorization and refund requests. Returns simulated responses.
 - **Standalone**: no database, no events. Purely a test double with an HTTP API for configuration.
 
 ### 3.10 Merchant Dashboard (Frontend)
