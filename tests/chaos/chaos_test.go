@@ -5,9 +5,11 @@ package chaos_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
@@ -109,7 +111,8 @@ func TestRedisFailure_IdempotencyFallback(t *testing.T) {
 
 	// First request — should succeed using DB idempotency
 	body1 := `{"amount":50000,"currency":"INR","receipt":"chaos_redis_test"}`
-	resp1, err := idempotentPost(apiBase+"/v1/orders", idempKey, body1)
+	authHeader := chaosAuthHeader(t)
+	resp1, err := idempotentPost(apiBase+"/v1/orders", idempKey, body1, authHeader)
 	if err != nil {
 		t.Fatalf("first request failed: %v", err)
 	}
@@ -123,7 +126,7 @@ func TestRedisFailure_IdempotencyFallback(t *testing.T) {
 
 	// Second request — same idempotency key, Redis still down.
 	// Should return the same order from DB idempotency store.
-	resp2, err := idempotentPost(apiBase+"/v1/orders", idempKey, body1)
+	resp2, err := idempotentPost(apiBase+"/v1/orders", idempKey, body1, authHeader)
 	if err != nil {
 		t.Fatalf("second request failed: %v", err)
 	}
@@ -147,15 +150,31 @@ func TestDBLatency_CaptureTimeout(t *testing.T) {
 	t.Skip("requires a pre-authorized payment ID in PAYMENT_ID env var")
 }
 
-func idempotentPost(url, idempKey, body string) (*http.Response, error) {
+func idempotentPost(url, idempKey, body, authHeader string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBufferString(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", idempKey)
-	// Note: in a real test, set Authorization header with test API key
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
+	}
 	return http.DefaultClient.Do(req)
+}
+
+func chaosAuthHeader(t *testing.T) string {
+	t.Helper()
+	if header := os.Getenv("CHAOS_AUTH_HEADER"); header != "" {
+		return header
+	}
+	keyID := os.Getenv("CHAOS_API_KEY_ID")
+	keySecret := os.Getenv("CHAOS_API_KEY_SECRET")
+	if keyID != "" && keySecret != "" {
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(keyID+":"+keySecret))
+	}
+	t.Skip("set CHAOS_AUTH_HEADER or CHAOS_API_KEY_ID/CHAOS_API_KEY_SECRET to run chaos tests")
+	return ""
 }
 
 // TestKafkaFailure_OutboxReplay verifies that when the Kafka broker is
@@ -184,7 +203,7 @@ func TestKafkaFailure_OutboxReplay(t *testing.T) {
 	//    The business operation must not be blocked by message-broker availability.
 	idempKey := fmt.Sprintf("chaos-kafka-test-%d", time.Now().UnixNano())
 	body := `{"amount":75000,"currency":"INR","receipt":"chaos_kafka_test"}`
-	resp, err := idempotentPost(apiBase+"/v1/orders", idempKey, body)
+	resp, err := idempotentPost(apiBase+"/v1/orders", idempKey, body, chaosAuthHeader(t))
 	if err != nil {
 		t.Fatalf("order creation request failed: %v", err)
 	}
