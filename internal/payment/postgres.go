@@ -35,9 +35,9 @@ func (r *PostgresRepository) CreateFailedAttempt(ctx context.Context, in CreateA
 	defer func() { _ = tx.Rollback(ctx) }()
 	_, err = tx.Exec(ctx, `
 INSERT INTO paygate_payments.payment_attempts
-(id, order_id, merchant_id, amount, currency, method, status, error_code, error_description, idempotency_key)
-VALUES ($1,$2,$3,$4,$5,$6,'failed',$7,$8,$9)
-`, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, errorCode, errorDescription, in.IdempotencyKey)
+(id, order_id, merchant_id, payment_id, amount, currency, method, status, error_code, error_description, idempotency_key)
+VALUES ($1,$2,$3,$4,$5,$6,$7,'failed',$8,$9,$10)
+`, attemptID, in.OrderID, in.MerchantID, nullableText(in.PaymentID), in.Amount, in.Currency, in.Method, errorCode, errorDescription, in.IdempotencyKey)
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ WHERE id = $1 AND merchant_id = $2
 	return tx.Commit(ctx)
 }
 
-func (r *PostgresRepository) CreateAuthorizedPayment(ctx context.Context, in CreateAuthorizedInput) (CaptureResult, error) {
+func (r *PostgresRepository) StartAuthorization(ctx context.Context, in CreateAuthorizedInput) (CaptureResult, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return CaptureResult{}, err
@@ -103,13 +103,16 @@ FOR UPDATE
 	}
 
 	attemptID := idgen.New("attempt")
-	paymentID := idgen.New("pay")
+	paymentID := in.PaymentID
+	if paymentID == "" {
+		paymentID = idgen.New("pay")
+	}
 	now := time.Now().UTC()
 	_, err = tx.Exec(ctx, `
 INSERT INTO paygate_payments.payment_attempts
-(id, order_id, merchant_id, payment_id, amount, currency, method, status, gateway_reference, idempotency_key)
-VALUES ($1,$2,$3,$4,$5,$6,$7,'created',$8,$9)
-`, attemptID, in.OrderID, in.MerchantID, paymentID, in.Amount, in.Currency, in.Method, in.GatewayReference, in.IdempotencyKey)
+(id, order_id, merchant_id, payment_id, amount, currency, method, status, idempotency_key)
+VALUES ($1,$2,$3,$4,$5,$6,$7,'processing',$8)
+`, attemptID, in.OrderID, in.MerchantID, paymentID, in.Amount, in.Currency, in.Method, in.IdempotencyKey)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if in.IdempotencyKey != "" && errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -117,27 +120,14 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,'created',$8,$9)
 		}
 		return CaptureResult{}, fmt.Errorf("insert payment attempt: %w", err)
 	}
-	_, err = tx.Exec(ctx, `UPDATE paygate_payments.payment_attempts SET status='processing', updated_at=NOW() WHERE id=$1`, attemptID)
-	if err != nil {
-		return CaptureResult{}, err
-	}
 
 	_, err = tx.Exec(ctx, `
 INSERT INTO paygate_payments.payments
-(id, attempt_id, order_id, merchant_id, amount, currency, method, status, captured, gateway_reference, auth_code, authorized_at, auto_capture_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,'created',false,$8,$9,$10,$11)
-`, paymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, in.GatewayReference, in.AuthCode, now, in.AutoCaptureAt)
+(id, attempt_id, order_id, merchant_id, amount, currency, method, status, captured)
+VALUES ($1,$2,$3,$4,$5,$6,$7,'created',false)
+`, paymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method)
 	if err != nil {
 		return CaptureResult{}, fmt.Errorf("insert payment: %w", err)
-	}
-
-	_, err = tx.Exec(ctx, `UPDATE paygate_payments.payments SET status='authorized', updated_at=NOW() WHERE id=$1`, paymentID)
-	if err != nil {
-		return CaptureResult{}, err
-	}
-	_, err = tx.Exec(ctx, `UPDATE paygate_payments.payment_attempts SET status='authorized', updated_at=NOW() WHERE id=$1`, attemptID)
-	if err != nil {
-		return CaptureResult{}, err
 	}
 
 	_, _ = tx.Exec(ctx, `
@@ -155,7 +145,127 @@ WHERE id=$1 AND merchant_id=$2
 		return CaptureResult{}, err
 	}
 
-	return CaptureResult{PaymentID: paymentID, MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, Status: StateAuthorized, Captured: false, AuthorizedAt: &now, CreatedAt: now}, nil
+	return CaptureResult{PaymentID: paymentID, MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, Status: StateCreated, Captured: false, CreatedAt: now}, nil
+}
+
+func (r *PostgresRepository) MarkAuthorizationAuthorized(ctx context.Context, merchantID, paymentID, gatewayReference, authCode string, autoCaptureAt *time.Time) (CaptureResult, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return CaptureResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var current CaptureResult
+	var attemptID string
+	var status string
+	err = tx.QueryRow(ctx, `
+SELECT id, attempt_id, merchant_id, order_id, amount, currency, method, status, captured, created_at, authorized_at
+FROM paygate_payments.payments
+WHERE id = $1 AND merchant_id = $2
+FOR UPDATE
+`, paymentID, merchantID).Scan(&current.PaymentID, &attemptID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &status, &current.Captured, &current.CreatedAt, &current.AuthorizedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CaptureResult{}, ErrPaymentNotFound
+		}
+		return CaptureResult{}, err
+	}
+	switch PaymentState(status) {
+	case StateAuthorized:
+		return current, nil
+	case StateCreated:
+	default:
+		return CaptureResult{}, ErrInvalidTransition
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET status = 'authorized',
+    gateway_reference = $2,
+    auth_code = $3,
+    authorized_at = $4,
+    auto_capture_at = $5,
+    updated_at = NOW()
+WHERE id = $1
+`, paymentID, gatewayReference, authCode, now, autoCaptureAt); err != nil {
+		return CaptureResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payment_attempts
+SET status = 'authorized',
+    gateway_reference = $2,
+    updated_at = NOW()
+WHERE id = $1
+`, attemptID, gatewayReference); err != nil {
+		return CaptureResult{}, err
+	}
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{AggregateType: "payment", AggregateID: paymentID, EventType: "payment.authorized", MerchantID: merchantID, Payload: map[string]any{"payment_id": paymentID, "order_id": current.OrderID}}); err != nil {
+		return CaptureResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CaptureResult{}, err
+	}
+
+	current.Status = StateAuthorized
+	current.AuthorizedAt = &now
+	return current, nil
+}
+
+func (r *PostgresRepository) MarkAuthorizationFailed(ctx context.Context, merchantID, paymentID, errorCode, errorDescription string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var attemptID string
+	var orderID string
+	var status string
+	err = tx.QueryRow(ctx, `
+SELECT attempt_id, order_id, status
+FROM paygate_payments.payments
+WHERE id = $1 AND merchant_id = $2
+FOR UPDATE
+`, paymentID, merchantID).Scan(&attemptID, &orderID, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrPaymentNotFound
+		}
+		return err
+	}
+	switch PaymentState(status) {
+	case StateFailed:
+		return nil
+	case StateCreated:
+	default:
+		return ErrInvalidTransition
+	}
+
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET status = 'failed',
+    error_code = $2,
+    error_description = $3,
+    updated_at = NOW()
+WHERE id = $1
+`, paymentID, errorCode, errorDescription); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payment_attempts
+SET status = 'failed',
+    error_code = $2,
+    error_description = $3,
+    updated_at = NOW()
+WHERE id = $1
+`, attemptID, errorCode, errorDescription); err != nil {
+		return err
+	}
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{AggregateType: "payment_attempt", AggregateID: attemptID, EventType: "payment.failed", MerchantID: merchantID, Payload: map[string]any{"payment_id": paymentID, "order_id": orderID, "error_code": errorCode}}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *PostgresRepository) CaptureAuthorizedPayment(ctx context.Context, merchantID, paymentID string, amount int64) (CaptureResult, error) {
@@ -413,11 +523,12 @@ WHERE id = $1 AND merchant_id = $2
 }
 
 func (r *PostgresRepository) getPaymentByIdempotencyKey(ctx context.Context, merchantID, orderID, idempotencyKey string) (CaptureResult, error) {
-	var paymentID string
+	var paymentID *string
 	if err := r.db.QueryRow(ctx, `
 SELECT payment_id
 FROM paygate_payments.payment_attempts
 WHERE merchant_id = $1 AND order_id = $2 AND idempotency_key = $3
+  AND payment_id IS NOT NULL
 ORDER BY created_at DESC
 LIMIT 1
 `, merchantID, orderID, idempotencyKey).Scan(&paymentID); err != nil {
@@ -426,5 +537,15 @@ LIMIT 1
 		}
 		return CaptureResult{}, err
 	}
-	return r.GetPayment(ctx, merchantID, paymentID)
+	if paymentID == nil || *paymentID == "" {
+		return CaptureResult{}, ErrPaymentNotFound
+	}
+	return r.GetPayment(ctx, merchantID, *paymentID)
+}
+
+func nullableText(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }
