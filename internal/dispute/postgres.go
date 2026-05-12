@@ -115,7 +115,8 @@ LIMIT $2
 }
 
 // UpdateStatus transitions the dispute status, sets resolved_at for terminal states,
-// and emits a dispute.updated outbox event in a single transaction.
+// and emits a dispute.updated outbox event plus a terminal dispute.<status>
+// event when appropriate.
 func (r *PostgresRepository) UpdateStatus(ctx context.Context, merchantID, id string, status DisputeState, notes string) (Dispute, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -158,6 +159,21 @@ WHERE id = $1 AND merchant_id = $2
 		return Dispute{}, fmt.Errorf("write dispute.updated outbox event: %w", err)
 	}
 
+	if isTerminal {
+		if err := r.outbox.WriteTx(ctx, tx, outbox.Event{
+			AggregateType: "dispute",
+			AggregateID:   id,
+			EventType:     "dispute." + string(status),
+			MerchantID:    merchantID,
+			Payload: map[string]any{
+				"dispute_id": id,
+				"status":     status,
+			},
+		}); err != nil {
+			return Dispute{}, fmt.Errorf("write dispute terminal outbox event: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return Dispute{}, err
 	}
@@ -187,6 +203,37 @@ WHERE id = $1 AND merchant_id = $2
 	}
 
 	return r.GetByID(ctx, merchantID, id)
+}
+
+func (r *PostgresRepository) GetPaymentReference(ctx context.Context, merchantID, paymentID string) (PaymentReference, error) {
+	row := r.db.QueryRow(ctx, `
+SELECT id, merchant_id, amount, currency
+FROM paygate_payments.payments
+WHERE id = $1 AND merchant_id = $2
+`, paymentID, merchantID)
+
+	var ref PaymentReference
+	if err := row.Scan(&ref.ID, &ref.MerchantID, &ref.Amount, &ref.Currency); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PaymentReference{}, ErrPaymentNotFound
+		}
+		return PaymentReference{}, err
+	}
+	return ref, nil
+}
+
+func (r *PostgresRepository) SettlementExists(ctx context.Context, merchantID, settlementID string) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRow(ctx, `
+SELECT EXISTS(
+	SELECT 1
+	FROM paygate_settlements.settlements
+	WHERE id = $1 AND merchant_id = $2
+)
+`, settlementID, merchantID).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 // scanner is the common interface shared by pgx.Row and pgx.Rows.
