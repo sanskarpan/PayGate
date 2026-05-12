@@ -79,16 +79,37 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 			t.Fatalf("expected amount=9900, got %v", resp["amount"])
 		}
 
-		// Verify ledger entries were written.
-		var count int
-		if err := db.QueryRow(ctx,
-			`SELECT COUNT(*) FROM paygate_ledger.ledger_entries WHERE source_id = $1`,
+		// Verify ledger entries were written, including the fee-reversal leg on a full refund.
+		rows, err := db.Query(ctx,
+			`SELECT account_code, debit_amount, credit_amount
+			   FROM paygate_ledger.ledger_entries
+			  WHERE source_id = $1
+			  ORDER BY account_code`,
 			resp["id"],
-		).Scan(&count); err != nil {
+		)
+		if err != nil {
 			t.Fatalf("query ledger entries: %v", err)
 		}
-		if count != 2 {
-			t.Fatalf("expected 2 ledger entries for refund, got %d", count)
+		defer rows.Close()
+
+		type ledgerRow struct {
+			accountCode string
+			debit       int64
+			credit      int64
+		}
+		var entries []ledgerRow
+		for rows.Next() {
+			var entry ledgerRow
+			if err := rows.Scan(&entry.accountCode, &entry.debit, &entry.credit); err != nil {
+				t.Fatalf("scan ledger entry: %v", err)
+			}
+			entries = append(entries, entry)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("iterate ledger entries: %v", err)
+		}
+		if len(entries) != 3 {
+			t.Fatalf("expected 3 ledger entries for full refund, got %d", len(entries))
 		}
 	})
 

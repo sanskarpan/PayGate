@@ -19,17 +19,17 @@ const (
 )
 
 const (
-	EventProcess  SettlementEvent = "process"   // created → processing
-	EventComplete SettlementEvent = "complete"   // processing → processed
-	EventFail     SettlementEvent = "fail"       // processing → failed
+	EventProcess  SettlementEvent = "process"  // created → processing
+	EventComplete SettlementEvent = "complete" // processing → processed
+	EventFail     SettlementEvent = "fail"     // processing → failed
 )
 
 var (
-	ErrSettlementNotFound    = errors.New("settlement not found")
-	ErrInvalidTransition     = errors.New("invalid settlement state transition")
-	ErrNoEligiblePayments    = errors.New("no eligible payments found for settlement")
-	ErrSettlementOnHold      = errors.New("settlement is already on hold")
-	ErrSettlementNotOnHold   = errors.New("settlement is not on hold")
+	ErrSettlementNotFound  = errors.New("settlement not found")
+	ErrInvalidTransition   = errors.New("invalid settlement state transition")
+	ErrNoEligiblePayments  = errors.New("no eligible payments found for settlement")
+	ErrSettlementOnHold    = errors.New("settlement is already on hold")
+	ErrSettlementNotOnHold = errors.New("settlement is not on hold")
 )
 
 // Transition returns the next SettlementState for the given event,
@@ -100,6 +100,31 @@ func CalculateFee(amount int64) int64 {
 // CalculateNet returns the net merchant payout for an item.
 func CalculateNet(amount, fee, refunds int64) int64 {
 	return amount - fee - refunds
+}
+
+// CalculateRefundFeeReversal returns the cumulative portion of the original fee
+// that should be reversed for a cumulative refunded amount. It prorates by the
+// refunded share of the payment and guarantees full fee reversal on a full refund.
+func CalculateRefundFeeReversal(paymentAmount, paymentFee, refundedAmount int64) int64 {
+	switch {
+	case paymentAmount <= 0, paymentFee <= 0, refundedAmount <= 0:
+		return 0
+	case refundedAmount >= paymentAmount:
+		return paymentFee
+	default:
+		reversed := (paymentFee * refundedAmount) / paymentAmount
+		if reversed > paymentFee {
+			return paymentFee
+		}
+		return reversed
+	}
+}
+
+// CalculateRefundNetImpact returns the cumulative reduction to merchant payable
+// after accounting for the portion of platform fee that must be reversed.
+func CalculateRefundNetImpact(paymentAmount, paymentFee, refundedAmount int64) int64 {
+	feeReversal := CalculateRefundFeeReversal(paymentAmount, paymentFee, refundedAmount)
+	return refundedAmount - feeReversal
 }
 
 // EligiblePayment carries the fields needed to settle a single payment.

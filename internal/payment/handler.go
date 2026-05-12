@@ -4,19 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
+	"github.com/sanskarpan/PayGate/internal/common/idgen"
+	"github.com/sanskarpan/PayGate/internal/common/middleware"
 	"github.com/sanskarpan/PayGate/internal/merchant"
 )
 
-// RiskEvaluator is an optional hook called after gateway authorization to check
-// payment risk.  If the returned action is "block", the payment is declined.
-// If "hold", the payment is created but a risk event is recorded for review.
+// RiskEvaluator is an optional hook called before gateway authorization to
+// decide whether a payment should proceed, be held, or be blocked.
 type RiskEvaluator interface {
 	EvaluateAuthorize(ctx context.Context, merchantID, paymentID string, amount int64, ipAddress string) (string, error)
 }
@@ -65,22 +64,15 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	if req.Method == "" {
 		req.Method = "card"
 	}
-	out, err := h.svc.Authorize(r.Context(), req)
-	if err != nil {
-		handleError(w, err)
-		return
-	}
+	req.PaymentID = idgen.New("pay")
 
-	// Run risk evaluation after authorization; block payment if score requires it.
+	// Evaluate risk before contacting the gateway so blocked payments never
+	// persist as authorized or get swept into auto-capture.
 	if h.risk != nil {
-		ip := r.RemoteAddr
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			ip = strings.TrimSpace(strings.SplitN(fwd, ",", 2)[0])
-		} else if host, _, err := net.SplitHostPort(ip); err == nil {
-			ip = host
-		}
-		action, riskErr := h.risk.EvaluateAuthorize(r.Context(), p.MerchantID, out.PaymentID, req.Amount, ip)
+		ip := middleware.ClientIPWithTrustedProxies(r, nil)
+		action, riskErr := h.risk.EvaluateAuthorize(r.Context(), p.MerchantID, req.PaymentID, req.Amount, ip)
 		if riskErr == nil && action == "block" {
+			_ = h.svc.RecordFailedAttempt(r.Context(), req, "RISK_BLOCKED", "payment blocked due to risk policy")
 			httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{
 				Code:        "RISK_BLOCKED",
 				Description: "payment blocked due to risk policy",
@@ -90,6 +82,15 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if riskErr == nil && action == "hold" {
+			req.AutoCapture = false
+		}
+	}
+
+	out, err := h.svc.Authorize(r.Context(), req)
+	if err != nil {
+		handleError(w, err)
+		return
 	}
 
 	httpx.WriteJSON(w, http.StatusCreated, present(out))
