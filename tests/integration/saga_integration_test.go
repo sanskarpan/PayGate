@@ -12,168 +12,66 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sanskarpan/PayGate/internal/auth"
-	httpx "github.com/sanskarpan/PayGate/internal/common/http"
-	"github.com/sanskarpan/PayGate/internal/gateway"
-	"github.com/sanskarpan/PayGate/internal/idempotency"
-	"github.com/sanskarpan/PayGate/internal/ledger"
-	"github.com/sanskarpan/PayGate/internal/merchant"
-	"github.com/sanskarpan/PayGate/internal/order"
-	"github.com/sanskarpan/PayGate/internal/payment"
-	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/saga"
-	"github.com/sanskarpan/PayGate/internal/settlement"
 )
 
-func TestIntegrationSagaReplayCompletesFailedPayout(t *testing.T) {
+func TestIntegrationSagaReplayCompletesFailedCommand(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 	ctx := context.Background()
 
-	merchantRepo := merchant.NewPostgresRepository(db)
-	merchantSvc := merchant.NewService(merchantRepo, merchant.WithSessionSecret("integration-dashboard-secret"))
-	authMw := auth.NewMiddleware(merchantSvc)
-	idemMw := idempotency.NewMiddleware(idempotency.NewStore(db, nil))
-
-	orderSvc := order.NewService(order.NewPostgresRepository(db))
-	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
-	paymentSvc := payment.NewService(payment.NewPostgresRepository(db, ledgerSvc, orderSvc), gateway.NewSimulator())
-	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledgerSvc))
-
-	sagaSvc := saga.NewService(saga.NewPostgresRepository(db), nil)
-	go saga.NewWorker(sagaSvc, 10*time.Millisecond, nil).Start(context.Background())
-
-	payoutRepo := payout.NewPostgresRepository(db, ledgerSvc)
-	payoutSvc := payout.NewService(payoutRepo, nil)
-	payoutSvc.EnableSagaOrchestration(sagaSvc)
-	payoutSvc.RegisterSagaHandlers(sagaSvc)
+	env := buildGenericSagaEnv(t, db)
 
 	var failFirst atomic.Int32
 	failFirst.Store(1)
-	payoutSvc.SetTransferExecutorForTest(func(ctx context.Context, merchantID, payoutID, commandID string) (map[string]any, error) {
+	env.sagaSvc.RegisterHandler("test.command", func(ctx context.Context, cmd saga.Command) (map[string]any, error) {
 		if failFirst.CompareAndSwap(1, 0) {
-			return nil, errors.New("simulated rail failure")
+			return nil, errors.New("simulated command failure")
 		}
-		out, err := payoutRepo.Complete(ctx, merchantID, payoutID, "BNK_REPLAY_OK")
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{
-			"payout_id":      out.ID,
-			"bank_reference": out.BankReference,
-			"status":         out.Status,
-		}, nil
+		return map[string]any{"command_id": cmd.CommandID, "status": "completed"}, nil
+	})
+	env.sagaSvc.RegisterCompensationHandler("generic_replay", func(ctx context.Context, inst saga.Instance) error {
+		return errors.New("force replayable terminal failure")
 	})
 
-	merchantHandler := merchant.NewHandler(merchantSvc)
-	orderHandler := order.NewHandler(orderSvc)
-	paymentHandler := payment.NewHandler(paymentSvc)
-	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
-	sagaHandler := saga.NewHandler(sagaSvc)
-
-	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
-		return authMw.RequireScope(scope, idemMw.Wrap(next))
-	}
-
-	mux := http.NewServeMux()
-	merchantHandler.RegisterRoutes(mux)
-	orderHandler.RegisterRoutesWithAuth(mux, protected)
-	paymentHandler.RegisterRoutesWithAuth(mux, protected)
-	settlementHandler.RegisterRoutesWithAuth(mux, protected)
-	payoutHandler.RegisterRoutesWithAuth(mux, protected)
-	sagaHandler.RegisterRoutesWithAuth(mux, protected)
-	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, _ := httpx.PrincipalFromContext(r.Context())
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})
-	})))
-
-	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Saga Merchant", Email: "saga@test.com", BusinessType: "company",
+	merchantID, authHeader := createSagaMerchant(t, ctx, env)
+	instance, err := env.sagaSvc.StartCommandSaga(ctx, saga.CreateCommandSagaInput{
+		MerchantID: merchantID,
+		SagaType:   "generic_replay",
+		InitialStep: saga.CreateStepInput{
+			StepName:    "run_test_command",
+			StepKind:    saga.StepKindCommand,
+			CommandName: "test.command",
+			InputPayload: map[string]any{
+				"kind": "replay",
+			},
+			MaxAttempts: 1,
+		},
 	})
 	if err != nil {
-		t.Fatalf("create merchant: %v", err)
+		t.Fatalf("start saga: %v", err)
 	}
-	key, err := merchantSvc.CreateAPIKey(ctx, createdMerchant.ID, merchant.CreateAPIKeyInput{
-		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeAdmin,
+
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(workerCtx)
+	}()
+	defer func() {
+		cancelWorker()
+		<-done
+	}()
+
+	waitFor(t, 5*time.Second, func() bool {
+		current, err := env.sagaSvc.Get(ctx, merchantID, instance.ID)
+		return err == nil && current.Status == saga.StatusFailed
 	})
-	if err != nil {
-		t.Fatalf("create api key: %v", err)
-	}
-	authHeader := basicAuth(key.KeyID, key.KeySecret)
 
-	o, err := orderSvc.Create(ctx, order.CreateInput{
-		MerchantID: createdMerchant.ID,
-		Amount:     12000,
-		Currency:   "INR",
-		Receipt:    "saga-replay",
-	})
-	if err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	authOut, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID,
-		OrderID:    o.ID,
-		Amount:     o.Amount,
-		Currency:   o.Currency,
-		Method:     "card",
-	})
-	if err != nil {
-		t.Fatalf("authorize payment: %v", err)
-	}
-	if _, err := paymentSvc.CaptureForMerchant(ctx, createdMerchant.ID, authOut.PaymentID, o.Amount); err != nil {
-		t.Fatalf("capture payment: %v", err)
-	}
-
-	sttl, err := settlementSvc.RunBatch(ctx, createdMerchant.ID, time.Unix(0, 0), time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatalf("run settlement batch: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
-	req.Header.Set("Authorization", authHeader)
-	req.Header.Set("X-Request-Id", "corr-saga-001")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("initiate payout: expected 201, got %d body=%s", rec.Code, rec.Body.String())
-	}
-
-	var payoutID, sagaID string
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		err := db.QueryRow(ctx, `
-SELECT id, saga_id
-FROM paygate_payouts.payouts
-WHERE merchant_id = $1 AND settlement_id = $2 AND status = 'processing'
-`, createdMerchant.ID, sttl.ID).Scan(&payoutID, &sagaID)
-		if err == nil && payoutID != "" && sagaID != "" {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if payoutID == "" || sagaID == "" {
-		t.Fatal("expected processing payout with attached failed saga")
-	}
-
-	deadline = time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		var sagaStatus string
-		err := db.QueryRow(ctx, `
-SELECT status
-FROM paygate_sagas.saga_instances
-WHERE id = $1
-`, sagaID).Scan(&sagaStatus)
-		if err == nil && sagaStatus == string(saga.StatusFailed) {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	getReq := httptest.NewRequest(http.MethodGet, "/v1/sagas/"+sagaID, nil)
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/sagas/"+instance.ID, nil)
 	getReq.Header.Set("Authorization", authHeader)
 	getRec := httptest.NewRecorder()
-	mux.ServeHTTP(getRec, getReq)
+	env.mux.ServeHTTP(getRec, getReq)
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("get saga: expected 200, got %d body=%s", getRec.Code, getRec.Body.String())
 	}
@@ -185,44 +83,32 @@ WHERE id = $1
 		t.Fatalf("expected failed saga before replay, got %v", sagaResp["status"])
 	}
 
-	replayReq := httptest.NewRequest(http.MethodPost, "/v1/sagas/"+sagaID+"/replay", nil)
+	replayReq := httptest.NewRequest(http.MethodPost, "/v1/sagas/"+instance.ID+"/replay", nil)
 	replayReq.Header.Set("Authorization", authHeader)
 	replayRec := httptest.NewRecorder()
-	mux.ServeHTTP(replayRec, replayReq)
+	env.mux.ServeHTTP(replayRec, replayReq)
 	if replayRec.Code != http.StatusAccepted {
 		t.Fatalf("replay saga: expected 202, got %d body=%s", replayRec.Code, replayRec.Body.String())
 	}
 
-	deadline = time.Now().Add(5 * time.Second)
-	var replayCount int
-	for time.Now().Before(deadline) {
-		var payoutStatus string
-		var sagaStatus string
-		var bankReference string
-		err := db.QueryRow(ctx, `
-SELECT p.status, p.bank_reference, s.status, s.replay_count
-FROM paygate_payouts.payouts p
-JOIN paygate_sagas.saga_instances s ON s.id = p.saga_id
-WHERE p.id = $1
-`, payoutID).Scan(&payoutStatus, &bankReference, &sagaStatus, &replayCount)
-		if err == nil && payoutStatus == "completed" && sagaStatus == "completed" && bankReference == "BNK_REPLAY_OK" {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if replayCount != 1 {
-		t.Fatalf("expected replay_count=1, got %d", replayCount)
-	}
+	waitFor(t, 5*time.Second, func() bool {
+		current, err := env.sagaSvc.Get(ctx, merchantID, instance.ID)
+		return err == nil && current.Status == saga.StatusCompleted && current.ReplayCount == 1
+	})
 
-	var ledgerEntries int
-	if err := db.QueryRow(ctx, `
-SELECT COUNT(*)
-FROM paygate_ledger.ledger_entries
-WHERE source_id = $1
-`, payoutID).Scan(&ledgerEntries); err != nil {
-		t.Fatalf("count payout ledger entries: %v", err)
+	req := httptest.NewRequest(http.MethodGet, "/v1/sagas/"+instance.ID+"/dispatches", nil)
+	req.Header.Set("Authorization", authHeader)
+	rec := httptest.NewRecorder()
+	env.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get dispatches: expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if ledgerEntries != 2 {
-		t.Fatalf("expected 2 payout ledger entries after replay success, got %d", ledgerEntries)
+	var dispatches map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &dispatches); err != nil {
+		t.Fatalf("decode dispatches: %v", err)
+	}
+	items := dispatches["items"].([]any)
+	if len(items) == 0 {
+		t.Fatal("expected replay dispatch records")
 	}
 }
