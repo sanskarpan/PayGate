@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	appmetrics "github.com/sanskarpan/PayGate/internal/common/metrics"
 )
 
 type Publisher interface {
@@ -21,6 +22,16 @@ type Relay struct {
 	publisher Publisher
 	logger    *slog.Logger
 	interval  time.Duration
+	resolver  SchemaVersionResolver
+}
+
+type PublishSchemaVersion struct {
+	Subject string
+	Version string
+}
+
+type SchemaVersionResolver interface {
+	ResolvePublishVersions(ctx context.Context, subject string) ([]PublishSchemaVersion, error)
 }
 
 type Record struct {
@@ -41,6 +52,11 @@ func NewRelay(db *pgxpool.Pool, publisher Publisher, interval time.Duration, log
 		interval = time.Second
 	}
 	return &Relay{db: db, publisher: publisher, logger: logger, interval: interval}
+}
+
+func (r *Relay) WithSchemaVersionResolver(resolver SchemaVersionResolver) *Relay {
+	r.resolver = resolver
+	return r
 }
 
 func (r *Relay) Start(ctx context.Context) {
@@ -100,21 +116,34 @@ FOR UPDATE SKIP LOCKED
 	}
 
 	for _, rec := range records {
-		payload, err := json.Marshal(map[string]any{
-			"id":             rec.ID,
-			"aggregate_type": rec.AggregateType,
-			"aggregate_id":   rec.AggregateID,
-			"event_type":     rec.EventType,
-			"merchant_id":    rec.MerchantID,
-			"payload":        json.RawMessage(rec.Payload),
-			"created_at":     rec.CreatedAt.Unix(),
-			"schema_version": "1.0.0",
-		})
+		schemas, err := r.resolvePublishSchemas(ctx, rec.EventType)
 		if err != nil {
-			return 0, fmt.Errorf("marshal outbox envelope: %w", err)
-		}
-		if err := publishWithRetry(ctx, r.publisher, TopicForEvent(rec.EventType), rec.MerchantID, payload); err != nil {
 			return 0, err
+		}
+		topic := TopicForEvent(rec.EventType)
+		for _, schema := range schemas {
+			payload, err := json.Marshal(map[string]any{
+				"id":             rec.ID,
+				"event_id":       rec.ID,
+				"aggregate_type": rec.AggregateType,
+				"aggregate_id":   rec.AggregateID,
+				"event_type":     rec.EventType,
+				"merchant_id":    rec.MerchantID,
+				"payload":        json.RawMessage(rec.Payload),
+				"created_at":     rec.CreatedAt.Unix(),
+				"occurred_at":    rec.CreatedAt.UTC().Format(time.RFC3339),
+				"correlation_id": rec.AggregateID,
+				"causation_id":   rec.ID,
+				"schema_subject": schema.Subject,
+				"schema_version": schema.Version,
+			})
+			if err != nil {
+				return 0, fmt.Errorf("marshal outbox envelope: %w", err)
+			}
+			if err := publishWithRetry(ctx, r.publisher, topic, rec.MerchantID, payload); err != nil {
+				return 0, err
+			}
+			appmetrics.EventSchemaPublishesTotal.WithLabelValues(topic, rec.EventType, schema.Subject, schema.Version).Inc()
 		}
 		if _, err := tx.Exec(ctx, `UPDATE public.outbox SET published_at = NOW() WHERE id = $1`, rec.ID); err != nil {
 			return 0, fmt.Errorf("mark outbox published: %w", err)
@@ -125,6 +154,20 @@ FOR UPDATE SKIP LOCKED
 		return 0, err
 	}
 	return len(records), nil
+}
+
+func (r *Relay) resolvePublishSchemas(ctx context.Context, eventType string) ([]PublishSchemaVersion, error) {
+	if r.resolver == nil {
+		return []PublishSchemaVersion{{Subject: eventType, Version: "1.0.0"}}, nil
+	}
+	versions, err := r.resolver.ResolvePublishVersions(ctx, eventType)
+	if err != nil {
+		return nil, fmt.Errorf("resolve schema publish versions for %s: %w", eventType, err)
+	}
+	if len(versions) == 0 {
+		return []PublishSchemaVersion{{Subject: eventType, Version: "1.0.0"}}, nil
+	}
+	return versions, nil
 }
 
 func (r *Relay) CleanupPublished(ctx context.Context, olderThan time.Duration) (int64, error) {
