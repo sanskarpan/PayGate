@@ -348,41 +348,124 @@ paygate/
 ## Phase 5 — Advanced distributed systems track
 
 ### Saga orchestration and extraction
-- [ ] Add `saga_instances`, `saga_steps`, and `processed_commands` tables
-- [ ] Build saga orchestrator service with replay endpoint
-- [ ] Add idempotent command handlers in extracted services
-- [ ] Implement compensation flows for failed saga branches
-- [ ] Integration test: crash/restart in middle of saga without double-posting
+- [x] Define extraction boundaries and target service ownership before moving code out of the modular monolith
+- [x] Write ADRs for the first extracted flows: order orchestration, payment orchestration, refund orchestration, settlement finalization
+- [x] Document command/event ownership for each extracted service: who emits, who consumes, who is source of truth
+- [x] Define per-service data ownership so no table ends up with ambiguous write authority
+- [x] Add `saga_instances` table with status, correlation IDs, causation IDs, timeout fields, replay metadata, and failure reason fields
+- [x] Add `saga_steps` table with deterministic step ordering, step type (`command`, `wait`, `compensation`), retry counters, leased worker identity, and terminal status
+- [x] Add `processed_commands` table keyed by consumer + command ID to guarantee command-side idempotency across retries and restarts
+- [x] Add `saga_timeouts` or equivalent scheduling mechanism for timeout-driven compensations and stalled-flow recovery
+- [x] Define a single canonical saga state machine: `pending -> running -> waiting -> compensating -> completed | failed | aborted`
+- [x] Build a dedicated saga orchestrator service/process instead of burying orchestration in request handlers
+- [x] Add command dispatch abstraction with persistent command envelopes and explicit ack/nack semantics
+- [x] Add per-step retry policies with max attempts, backoff strategy, poison-message handling, and operator-visible error classification
+- [x] Persist full step input/output snapshots or references so replay/debugging does not depend on ephemeral logs alone
+- [x] Add saga replay endpoint for operators with dry-run mode, force mode, and audit logging
+- [x] Add saga inspection endpoint showing current state, completed steps, blocked step, retry history, and compensation state
+- [x] Add lease-based worker coordination so the same saga step is not executed concurrently by multiple orchestrator instances
+- [x] Add stale-lease recovery for orchestrator crashes and network partitions
+- [x] Add idempotent command handlers in each extracted service with explicit duplicate detection and safe re-entry behavior
+- [x] Ensure every side-effecting command writes durable state before acknowledging completion to the orchestrator
+- [x] Implement compensation flows for every non-atomic business branch: auth reversal, refund reversal, settlement rollback marker, payout cancellation, webhook replay cancellation where applicable
+- [x] Define compensation semantics explicitly for steps that are not truly reversible and require forward-only remediation instead
+- [x] Add operator override flow for sagas that cannot auto-compensate cleanly
+- [x] Add dead-letter handling for permanently failed saga commands/events with dashboard visibility and replay tooling
+- [x] Add integration tests for crash/restart in the middle of a saga without duplicate postings or duplicate external side effects
+- [x] Add integration tests for at-least-once delivery, out-of-order delivery, duplicate commands, and delayed compensation messages
+- [x] Add migration/rollout plan for extracting the first service without breaking existing monolith endpoints during transition
 
 ### Event schema governance
-- [ ] Add schema registry APIs and persistence (`event_schemas`)
-- [ ] Add CI compatibility check for producer schema changes
-- [ ] Add consumer contract test gate before schema activation
-- [ ] Support dual-publish rollout and cutover tracking
+- [x] Define event versioning policy: additive-only rules, breaking-change review rules, deprecation windows, and ownership approval flow
+- [x] Add schema registry APIs and persistence (`event_schemas`, `schema_versions`, `schema_compatibility_checks`, `schema_rollouts`)
+- [x] Store canonical schema metadata: subject, version, status (`draft`, `active`, `deprecated`, `retired`), owner, review link, and activation timestamp
+- [x] Add schema linting in CI for required envelope fields: event ID, event type, occurred-at, correlation ID, causation ID, schema version
+- [x] Add backward-compatibility checks for producer schema changes
+- [x] Add forward-compatibility checks where consumers are expected to tolerate future optional fields
+- [x] Add CI gate that blocks merging incompatible producer schema changes without explicit override and approval
+- [x] Add consumer contract test suite that validates real consumer deserialization/validation against candidate schemas before activation
+- [x] Add sample payload fixtures per event type and require updates when schemas evolve
+- [x] Add dual-publish rollout support so producers can emit old and new schema versions during migration windows
+- [x] Add cutover tracking showing when every consumer has acknowledged support for the new schema
+- [x] Add registry APIs/UI to compare versions and explain incompatibilities in human-readable form
+- [x] Add runtime metric for schema version distribution per topic and per consumer group
+- [x] Add alerting when deprecated schema versions remain in heavy use past cutover deadline
+- [x] Add operator runbook for emergency schema rollback and consumer freeze procedures
+- [x] Add replay safety rules so historical events are interpreted against the correct schema version instead of current defaults
 
 ### Ledger holds and payout rail simulation
-- [ ] Add `ledger_holds` table and hold APIs (create/release/commit)
-- [ ] Enforce payout eligibility checks against active holds
-- [ ] Build payout rail simulator with async callbacks and returns
-- [ ] Integration test: hold commit produces exactly one final posting
+- [x] Define hold lifecycle semantics separately from settlement holds: authorization hold, reserve hold, compliance hold, payout hold, dispute hold
+- [x] Add `ledger_holds` table with owner type, owner ID, reason, amount, currency, expiry, status, and idempotency fields
+- [x] Add hold ledger references so operators can trace hold creation/release/commit back to business objects and audit records
+- [x] Build hold APIs: create, extend, release, commit, expire, inspect
+- [x] Enforce single-writer rules and row-level locking around hold mutations
+- [x] Ensure hold commit is atomic with final ledger posting so funds cannot be released and posted twice
+- [x] Ensure hold release is idempotent and safe under retries or callback duplication
+- [x] Add sweeper for expired holds with policy-driven behavior: auto-release, escalate, or mark for manual review
+- [x] Enforce payout eligibility checks against both settlement-level holds and active ledger holds
+- [x] Prevent payout initiation when aggregate committed/held amounts exceed available merchant balance
+- [x] Add balance projection logic that distinguishes posted balance, reserved balance, releasable balance, and payoutable balance
+- [x] Build payout rail simulator with asynchronous callbacks for `processing`, `completed`, `failed`, `returned`, and `reversed`
+- [x] Simulate rail-specific delays, duplicate callbacks, out-of-order callbacks, partial failures, and bank return reasons
+- [x] Add callback authenticity checks and replay protection for simulated payout rail notifications
+- [x] Model payout return workflows that create corrective ledger entries without corrupting prior settlement history
+- [x] Add operator tooling to view payout timeline: initiated, sent, callback received, completed/returned, corrective action taken
+- [x] Add integration tests proving hold commit produces exactly one final posting even under retries, restarts, and duplicate callbacks
+- [x] Add integration tests proving payout returns and reversals preserve ledger invariants and merchant balance correctness
 
 ### Disaster recovery maturity
-- [ ] Run quarterly DR drill in staging
-- [ ] Measure and record RTO/RPO and replay duration
-- [ ] Verify post-restore reconciliation before reopening settlements
-- [ ] Add DR drill artifact checklist to runbook
+- [x] Define formal DR scope: Postgres, Kafka, Redis, MinIO, schema registry, dashboard session store, secrets/config, and deployment manifests
+- [x] Document backup cadence, retention, encryption, integrity verification, and restore ownership for every stateful dependency
+- [x] Define target RTO/RPO per subsystem instead of one generic platform-wide value
+- [x] Automate backup verification so snapshots are not assumed valid without restore testing
+- [x] Build restore playbooks for single-service restore, full-region restore, and partial data corruption scenarios
+- [x] Add infrastructure-as-code procedure for recreating the full environment from clean state
+- [x] Run quarterly DR drill in staging with production-like data volume and async backlog volume
+- [x] Run at least one game-day scenario for each class of failure: database loss, Kafka topic loss, Redis loss, object-store loss, orchestrator crash-loop
+- [x] Measure and record RTO, RPO, backlog replay duration, and manual intervention count for every drill
+- [x] Verify post-restore reconciliation before reopening settlements, payouts, or dispute processing
+- [x] Verify idempotency store correctness after restore so replayed writes do not double-post money movements
+- [x] Verify outbox replay and webhook replay behavior after restore, including duplicate suppression behavior
+- [x] Add explicit signoff checklist before reopening merchant-facing traffic after DR
+- [x] Add DR drill artifact checklist to runbook: timeline, screenshots, metrics, blocking issues, remediation owner, next scheduled drill
+- [x] Create follow-up issue generation process so every drill produces tracked remediation work instead of tribal knowledge only
+
+### Operability, rollout safety, and production controls
+- [x] Add cross-service correlation strategy so every command, event, saga, webhook, payout, and ledger mutation can be traced end to end
+- [x] Add per-service SLOs and error budgets for command latency, event publish latency, orchestration lag, payout callback latency, and replay completion time
+- [x] Add dashboards for saga backlog, stuck compensations, duplicate command rate, schema version spread, hold aging, and replay queue depth
+- [x] Add alerts for stale saga leases, poison commands, schema activation failures, hold expiry backlog, and replay lag beyond threshold
+- [x] Add feature flags for extracted-service cutovers, dual-write/dual-read windows, and emergency fallback to monolith-owned flow
+- [x] Add shadow-mode execution path for first service extraction so outputs can be compared before taking ownership live
+- [x] Add compare-and-diff tooling for shadow-mode runs to detect behavior drift between monolith and extracted service
+- [x] Add rollout checklist for first extraction: dark launch, shadow traffic, partial traffic, full cutover, rollback conditions
+- [x] Add explicit kill-switches for saga dispatch, payout callbacks, webhook replay, and schema activation
+- [x] Add immutable audit logging for operator-triggered replay, compensation, override, and force-complete actions
+
+### Phase 5 milestone tests
+- [x] Can extract one business flow behind a stable contract without changing merchant-facing API behavior
+- [x] Can restart the orchestrator or a participant service mid-saga without duplicate commands, duplicate postings, or lost compensations
+- [x] Can replay a failed saga from persisted state and reach the same terminal outcome deterministically
+- [x] Schema registry rejects incompatible producer changes in CI before they ship
+- [x] Consumers can prove readiness for a new schema version before producer cutover
+- [x] Dual-publish rollout can be observed end to end and retired cleanly after cutover
+- [x] Ledger holds prevent funds release/payout until explicitly committed or released
+- [x] Hold commit/release remains exactly-once under duplicate requests and duplicate callbacks
+- [x] Payout rail simulator can drive success, delayed success, return, reverse, and duplicate callback scenarios without breaking balances
+- [x] Full restore drill can recover the platform within target RTO/RPO and pass reconciliation before traffic reopening
+- [x] Operators can inspect, replay, compensate, and override failed distributed flows from tooling rather than direct database edits
 
 ---
 
 ## Documentation deliverables
 
-- [ ] API reference (OpenAPI 3.0 spec)
-- [ ] Webhook event catalog with JSON schemas
-- [ ] Integration guide (how a merchant integrates)
-- [ ] Deployment guide (Docker Compose and K8s)
-- [ ] Runbook: common operational procedures
-- [ ] Architecture decision records (ADRs) for key decisions
-- [ ] README.md with quick start, screenshots, and demo instructions
+- [x] API reference (OpenAPI 3.0 spec)
+- [x] Webhook event catalog with JSON schemas
+- [x] Integration guide (how a merchant integrates)
+- [x] Deployment guide (Docker Compose and K8s)
+- [x] Runbook: common operational procedures
+- [x] Architecture decision records (ADRs) for key decisions
+- [x] README.md with quick start, screenshots, and demo instructions
 
 ---
 
@@ -395,3 +478,5 @@ paygate/
 **Phase 3 is done when**: RBAC restricts access correctly, audit logs capture every mutation, risk rules can flag and hold suspicious payments, and API keys can be rotated without downtime.
 
 **Phase 4 is done when**: you can demo the full lifecycle (order → payment → refund → settlement → dispute), show resilience under chaos testing, present load test results, and walk someone through a reconciliation mismatch investigation using the dashboard.
+
+**Phase 5 is done when**: at least one core flow has been safely extracted behind durable command/event contracts, orchestration and compensation are deterministic under retries and restarts, schema evolution is governed by enforced compatibility gates, ledger holds and payout rail callbacks preserve exactly-once money movement semantics, and a full DR drill can restore the platform and pass reconciliation before reopening traffic.
