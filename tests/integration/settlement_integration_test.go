@@ -131,6 +131,24 @@ func TestIntegrationSettlementBatch(t *testing.T) {
 		}
 	})
 
+	t.Run("list settlements via API after rollback marker", func(t *testing.T) {
+		marked, err := settlementSvc.MarkRollback(ctx, createdMerchant.ID, sttl.ID, "post-settlement reconciliation drill")
+		if err != nil {
+			t.Fatalf("mark rollback: %v", err)
+		}
+		if marked.RollbackMarkedAt == nil {
+			t.Fatal("expected rollback marker timestamp")
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/settlements", nil)
+		req.Header.Set("Authorization", authHeader)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 after rollback marker, got %d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("get settlement detail via API", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/v1/settlements/"+sttl.ID, nil)
 		req.Header.Set("Authorization", authHeader)
