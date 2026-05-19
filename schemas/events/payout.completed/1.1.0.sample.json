@@ -1,0 +1,16 @@
+{
+  "event_id": "evt_payout_completed_v1_1",
+  "event_type": "payout.completed",
+  "occurred_at": "2026-05-13T11:05:00Z",
+  "correlation_id": "payout_456",
+  "causation_id": "evt_payout_completed_v1_1",
+  "schema_version": "1.1.0",
+  "merchant_id": "merch_456",
+  "payload": {
+    "payout_id": "payout_456",
+    "bank_reference": "BNK_456",
+    "rail_reference": "RAIL_456",
+    "amount": 14700,
+    "currency": "INR"
+  }
+}
