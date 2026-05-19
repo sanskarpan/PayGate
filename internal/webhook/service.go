@@ -165,6 +165,10 @@ func (s *Service) RotateSecret(ctx context.Context, merchantID, id string) (Webh
 	return s.repo.RotateSecret(ctx, merchantID, id)
 }
 
+func (s *Service) CancelEventRetries(ctx context.Context, merchantID, eventID, reason string) (int64, error) {
+	return s.repo.CancelDeliveryRetries(ctx, merchantID, eventID, reason)
+}
+
 // ReplayEvent re-delivers a previously recorded event to its matching subscriptions.
 // It looks up all delivery attempts for the event, picks the request body from the
 // most recent one, and re-calls DeliverEvent (which handles idempotency by checking
