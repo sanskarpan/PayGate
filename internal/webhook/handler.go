@@ -32,6 +32,7 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 	mux.Handle("GET /v1/webhooks/{webhookID}/deliveries", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listDeliveries)))
 	mux.Handle("POST /v1/webhooks/{webhookID}/rotate-secret", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.rotateSecret)))
 	mux.Handle("POST /v1/webhooks/events/{eventID}/replay", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.replay)))
+	mux.Handle("POST /v1/webhooks/events/{eventID}/cancel-retries", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.cancelRetries)))
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -218,6 +219,34 @@ func (h *Handler) replay(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) cancelRetries(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+			return
+		}
+	}
+	count, err := h.svc.CancelEventRetries(r.Context(), p.MerchantID, r.PathValue("eventID"), req.Reason)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"entity":        "webhook_retry_cancellation",
+		"event_id":      r.PathValue("eventID"),
+		"cancelled":     count,
+		"cancel_reason": req.Reason,
+	})
+}
+
 func present(sub WebhookSubscription) map[string]any {
 	return map[string]any{
 		"id":          sub.ID,
@@ -247,17 +276,27 @@ func presentAttempt(a WebhookDeliveryAttempt) map[string]any {
 		"id":              a.ID,
 		"entity":          "webhook_delivery",
 		"event_id":        a.EventID,
+		"event_type":      a.EventType,
 		"subscription_id": a.SubscriptionID,
 		"status":          a.Status,
 		"request_url":     a.RequestURL,
 		"response_code":   a.ResponseCode,
 		"response_body":   a.ResponseBody,
 		"error":           a.ErrorMessage,
+		"cancel_reason":   a.CancelReason,
 		"attempt_number":  a.AttemptNumber,
 		"next_retry_at":   nextRetryAt,
+		"cancelled_at":    presentTime(a.CancelledAt),
 		"created_at":      a.CreatedAt.Unix(),
 		"created_at_rfc":  a.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func presentTime(ts *time.Time) any {
+	if ts == nil {
+		return nil
+	}
+	return ts.Unix()
 }
 
 func handleError(w http.ResponseWriter, err error) {
