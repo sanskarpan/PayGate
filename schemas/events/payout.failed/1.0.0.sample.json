@@ -1,0 +1,13 @@
+{
+  "event_id": "evt_payout_failed_v1",
+  "event_type": "payout.failed",
+  "occurred_at": "2026-05-13T10:12:00Z",
+  "correlation_id": "payout_123",
+  "causation_id": "evt_payout_failed_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "payout_id": "payout_123",
+    "reason": "rail timeout"
+  }
+}
