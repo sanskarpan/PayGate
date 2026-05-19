@@ -1,0 +1,630 @@
+openapi: 3.0.3
+info:
+  title: PayGate API
+  version: 0.5.0
+  description: >
+    Merchant-facing and operator APIs for orders, payments, refunds, settlements,
+    payouts, webhooks, sagas, and event schema governance.
+servers:
+  - url: http://localhost:8090
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      responses:
+        '200': { description: OK }
+  /readyz:
+    get:
+      summary: Readiness check
+      responses:
+        '200': { description: Ready }
+        '503': { description: Dependency unavailable }
+  /v1/orders:
+    post:
+      summary: Create order
+      security: [{ basicAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+    get:
+      summary: List orders
+      security: [{ basicAuth: [] }]
+      responses:
+        '200':
+          description: Orders
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+  /v1/orders/{orderID}:
+    get:
+      summary: Get order
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: orderID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /v1/payments:
+    get:
+      summary: List payments
+      security: [{ basicAuth: [] }]
+      responses:
+        '200':
+          description: Payments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+  /v1/payments/authorize:
+    post:
+      summary: Authorize payment
+      security: [{ basicAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizePaymentRequest'
+      responses:
+        '201':
+          description: Payment authorized or processing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+  /v1/payments/{paymentID}:
+    get:
+      summary: Get payment
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: paymentID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Payment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+  /v1/payments/{paymentID}/capture:
+    post:
+      summary: Capture payment
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: paymentID
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: Payment captured
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+  /v1/payments/{paymentID}/refunds:
+    post:
+      summary: Create refund
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: paymentID
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRefundRequest'
+      responses:
+        '201':
+          description: Refund created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Refund' }
+    get:
+      summary: List refunds for a payment
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: paymentID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Refunds
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+  /v1/refunds/{refundID}:
+    get:
+      summary: Get refund
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: refundID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Refund
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Refund' }
+  /v1/refunds/{refundID}/reverse:
+    post:
+      summary: Reverse refund
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: refundID
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Refund reversed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Refund' }
+  /v1/settlements:
+    get:
+      summary: List settlements
+      security: [{ basicAuth: [] }]
+      responses:
+        '200':
+          description: Settlements
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+  /v1/settlements/batch:
+    post:
+      summary: Run settlement batch
+      security: [{ basicAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                period_start: { type: integer, format: int64 }
+                period_end: { type: integer, format: int64 }
+      responses:
+        '201':
+          description: Settlement created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Settlement' }
+  /v1/settlements/{settlementID}:
+    get:
+      summary: Get settlement
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: settlementID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Settlement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Settlement' }
+  /v1/settlements/{settlementID}/payout:
+    post:
+      summary: Initiate payout for settlement
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: settlementID
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Payout created or reused
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payout' }
+  /v1/payouts:
+    get:
+      summary: List payouts
+      security: [{ basicAuth: [] }]
+      responses:
+        '200':
+          description: Payouts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+  /v1/payouts/{payoutID}:
+    get:
+      summary: Get payout
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: payoutID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Payout
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payout' }
+  /v1/payouts/{payoutID}/events:
+    get:
+      summary: Get payout timeline
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: payoutID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Payout events
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+  /v1/payouts/rail/callbacks:
+    post:
+      summary: Accept payout rail callback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RailCallbackRequest' }
+      responses:
+        '202': { description: Callback accepted }
+        '401': { description: Invalid signature }
+  /v1/webhooks:
+    get:
+      summary: List webhook subscriptions
+      security: [{ basicAuth: [] }]
+      responses:
+        '200':
+          description: Webhooks
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+    post:
+      summary: Create webhook subscription
+      security: [{ basicAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWebhookRequest' }
+      responses:
+        '201': { description: Webhook created }
+  /v1/webhooks/{webhookID}:
+    get:
+      summary: Get webhook subscription
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: webhookID
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Webhook subscription }
+  /v1/webhooks/{webhookID}/deliveries:
+    get:
+      summary: List webhook deliveries
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: webhookID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Delivery attempts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+  /v1/disputes:
+    get:
+      summary: List disputes
+      security: [{ basicAuth: [] }]
+      responses:
+        '200':
+          description: Disputes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+    post:
+      summary: Create dispute
+      security: [{ basicAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDisputeRequest' }
+      responses:
+        '201': { description: Dispute created }
+  /v1/disputes/{disputeID}:
+    get:
+      summary: Get dispute
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: disputeID
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Dispute }
+  /v1/sagas:
+    get:
+      summary: List sagas
+      security: [{ basicAuth: [] }]
+      responses:
+        '200':
+          description: Sagas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectionResponse' }
+  /v1/sagas/{sagaID}:
+    get:
+      summary: Get saga
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: sagaID
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Saga
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Saga' }
+  /v1/sagas/{sagaID}/replay:
+    post:
+      summary: Replay failed saga
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: sagaID
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run: { type: boolean }
+                force: { type: boolean }
+                reason: { type: string }
+      responses:
+        '202': { description: Replay scheduled }
+  /v1/sagas/{sagaID}/override:
+    post:
+      summary: Override saga
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: sagaID
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [abort, force_complete]
+                reason: { type: string }
+      responses:
+        '202': { description: Override applied }
+  /v1/sagas/{sagaID}/dispatches:
+    get:
+      summary: List saga command dispatches
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: sagaID
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Dispatch history }
+  /v1/event-schemas:
+    get:
+      summary: List event schemas
+      security: [{ basicAuth: [] }]
+      responses:
+        '200': { description: Schemas }
+    post:
+      summary: Create event schema subject
+      security: [{ basicAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, event_type, topic_name, owner]
+              properties:
+                subject: { type: string }
+                event_type: { type: string }
+                topic_name: { type: string }
+                owner: { type: string }
+                review_link: { type: string }
+      responses:
+        '201': { description: Schema created }
+  /v1/event-schemas/{subject}/versions:
+    post:
+      summary: Register schema version
+      security: [{ basicAuth: [] }]
+      parameters:
+        - in: path
+          name: subject
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, schema, sample_payload]
+              properties:
+                version: { type: string }
+                schema: { type: object }
+                sample_payload: { type: object }
+                review_link: { type: string }
+      responses:
+        '201': { description: Version registered }
+        '409': { description: Incompatible version }
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+  schemas:
+    CollectionResponse:
+      type: object
+      properties:
+        entity: { type: string, example: collection }
+        count: { type: integer }
+        items:
+          type: array
+          items: { type: object }
+    Order:
+      type: object
+      properties:
+        id: { type: string }
+        amount: { type: integer, format: int64 }
+        currency: { type: string }
+        status: { type: string }
+        receipt: { type: string }
+    Payment:
+      type: object
+      properties:
+        id: { type: string }
+        order_id: { type: string }
+        status: { type: string }
+        amount: { type: integer, format: int64 }
+        currency: { type: string }
+        method: { type: string }
+    Refund:
+      type: object
+      properties:
+        id: { type: string }
+        payment_id: { type: string }
+        status: { type: string }
+        amount: { type: integer, format: int64 }
+        currency: { type: string }
+    Settlement:
+      type: object
+      properties:
+        id: { type: string }
+        status: { type: string }
+        net_amount: { type: integer, format: int64 }
+        currency: { type: string }
+        on_hold: { type: boolean }
+    Payout:
+      type: object
+      properties:
+        id: { type: string }
+        settlement_id: { type: string }
+        saga_id: { type: string }
+        status: { type: string }
+        amount: { type: integer, format: int64 }
+        currency: { type: string }
+        bank_reference: { type: string }
+    Saga:
+      type: object
+      properties:
+        id: { type: string }
+        saga_type: { type: string }
+        status: { type: string }
+        failure_code: { type: string }
+        failure_reason: { type: string }
+        replay_count: { type: integer }
+        steps:
+          type: array
+          items: { type: object }
+    CreateOrderRequest:
+      type: object
+      required: [amount, currency, receipt]
+      properties:
+        amount: { type: integer, format: int64 }
+        currency: { type: string }
+        receipt: { type: string }
+        notes: { type: object, additionalProperties: true }
+    AuthorizePaymentRequest:
+      type: object
+      required: [order_id, amount, currency, method]
+      properties:
+        order_id: { type: string }
+        amount: { type: integer, format: int64 }
+        currency: { type: string }
+        method: { type: string }
+    CreateRefundRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount: { type: integer, format: int64 }
+        reason: { type: string }
+        notes: { type: object, additionalProperties: true }
+    CreateWebhookRequest:
+      type: object
+      required: [url, events]
+      properties:
+        url: { type: string, format: uri }
+        events:
+          type: array
+          items: { type: string }
+    CreateDisputeRequest:
+      type: object
+      required: [payment_id, reason, amount, currency]
+      properties:
+        payment_id: { type: string }
+        settlement_id: { type: string }
+        reason: { type: string }
+        amount: { type: integer, format: int64 }
+        currency: { type: string }
+    RailCallbackRequest:
+      type: object
+      required: [event_id, payout_id, merchant_id, status]
+      properties:
+        event_id: { type: string }
+        payout_id: { type: string }
+        merchant_id: { type: string }
+        status: { type: string }
+        rail_reference: { type: string }
+        reason: { type: string }
+        occurred_at: { type: string, format: date-time }
