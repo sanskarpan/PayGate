@@ -24,4 +24,25 @@ type Repository interface {
 
 	// Fail transitions a payout from processing to failed and records the failure reason.
 	Fail(ctx context.Context, merchantID, id, reason string) (Payout, error)
+
+	// Cancel transitions an in-flight payout to cancelled to prevent further processing.
+	Cancel(ctx context.Context, merchantID, id, reason string) (Payout, error)
+
+	// ApplyRailCallback applies a signed rail callback exactly once.
+	ApplyRailCallback(ctx context.Context, callback RailCallback, signature string) (Payout, bool, error)
+
+	// ListEvents returns payout timeline events, newest first.
+	ListEvents(ctx context.Context, merchantID, payoutID string, limit int) ([]TimelineEvent, error)
+
+	// AttachSaga associates a saga instance with the payout.
+	AttachSaga(ctx context.Context, merchantID, id, sagaID string) (Payout, error)
+
+	// UpsertSimulatorScenario configures a payout rail simulation script for a settlement.
+	UpsertSimulatorScenario(ctx context.Context, merchantID, settlementID string, scenario SimulatorScenario) (SimulatorScenario, error)
+
+	// GetSimulatorScenario returns the simulator scenario for a settlement.
+	GetSimulatorScenario(ctx context.Context, merchantID, settlementID string) (SimulatorScenario, error)
+
+	// GetSimulatorScenarioForPayout returns the simulator scenario tied to the payout settlement and consumes one transient failure if configured.
+	GetSimulatorScenarioForPayout(ctx context.Context, merchantID, payoutID string) (SimulatorScenario, bool, error)
 }
