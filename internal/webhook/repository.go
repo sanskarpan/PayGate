@@ -30,6 +30,9 @@ type Repository interface {
 	// Replay: find the most recent succeeded delivery attempt for eventID to replay
 	FindDeliveryByEvent(ctx context.Context, merchantID, eventID string) ([]WebhookDeliveryAttempt, error)
 
+	// CancelDeliveryRetries marks due or future retries for an event as cancelled.
+	CancelDeliveryRetries(ctx context.Context, merchantID, eventID, reason string) (int64, error)
+
 	// RotateSecret replaces the signing secret for a subscription.
 	RotateSecret(ctx context.Context, merchantID, id string) (WebhookSubscription, error)
 }
