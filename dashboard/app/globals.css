@@ -281,6 +281,7 @@ pre {
 .hero-card {
   position: relative;
   overflow: hidden;
+  min-width: 0;
   background:
     linear-gradient(135deg, rgba(255, 253, 247, 0.92), rgba(245, 239, 228, 0.88)),
     var(--card);
@@ -289,7 +290,9 @@ pre {
 .hero-card::after {
   content: "";
   position: absolute;
-  inset: auto -10% -30% 52%;
+  right: 0;
+  bottom: -30%;
+  width: min(220px, 34%);
   height: 220px;
   background: radial-gradient(circle, rgba(13, 111, 93, 0.12), transparent 60%);
   pointer-events: none;
@@ -309,6 +312,10 @@ pre {
   font-size: clamp(2.3rem, 5vw, 4.4rem);
   line-height: 0.94;
   max-width: 12ch;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .lede {
