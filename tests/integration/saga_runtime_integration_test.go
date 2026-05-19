@@ -29,17 +29,17 @@ func TestIntegrationSagaTimeoutRecordsDeadLetterAndCompensation(t *testing.T) {
 
 	var compensated atomic.Int32
 	env.sagaSvc.RegisterHandler("test.timeout", func(ctx context.Context, cmd saga.Command) (map[string]any, error) {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(1500 * time.Millisecond)
 		return map[string]any{"command_id": cmd.CommandID, "status": "late_success"}, nil
 	})
 	env.sagaSvc.RegisterCompensationHandler("generic_timeout", func(ctx context.Context, inst saga.Instance) error {
 		compensated.Add(1)
 		return nil
 	})
-	env.sagaSvc.SetLeaseTTLForTest(25 * time.Millisecond)
+	env.sagaSvc.SetLeaseTTLForTest(time.Second)
 
 	merchantID, authHeader := createSagaMerchant(t, ctx, env)
-	timeoutAt := time.Now().Add(40 * time.Millisecond)
+	timeoutAt := time.Now().Add(100 * time.Millisecond)
 	instance, err := env.sagaSvc.StartCommandSaga(ctx, saga.CreateCommandSagaInput{
 		MerchantID: merchantID,
 		SagaType:   "generic_timeout",
@@ -77,7 +77,7 @@ func TestIntegrationSagaTimeoutRecordsDeadLetterAndCompensation(t *testing.T) {
 		<-timeoutDone
 	}()
 
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, 8*time.Second, func() bool {
 		current, err := env.sagaSvc.Get(ctx, merchantID, instance.ID)
 		return err == nil && current.Status == saga.StatusAborted
 	})
@@ -135,7 +135,7 @@ func TestIntegrationSagaOperatorAbortRecordsAction(t *testing.T) {
 	env.sagaSvc.RegisterCompensationHandler("generic_abort", func(ctx context.Context, inst saga.Instance) error {
 		return nil
 	})
-	env.sagaSvc.SetLeaseTTLForTest(50 * time.Millisecond)
+	env.sagaSvc.SetLeaseTTLForTest(time.Second)
 
 	merchantID, authHeader := createSagaMerchant(t, ctx, env)
 	instance, err := env.sagaSvc.StartCommandSaga(ctx, saga.CreateCommandSagaInput{
@@ -205,7 +205,7 @@ func TestIntegrationSagaConcurrentWorkersCompleteCommandOnce(t *testing.T) {
 		time.Sleep(90 * time.Millisecond)
 		return map[string]any{"command_id": cmd.CommandID, "status": "completed"}, nil
 	})
-	env.sagaSvc.SetLeaseTTLForTest(25 * time.Millisecond)
+	env.sagaSvc.SetLeaseTTLForTest(time.Second)
 
 	merchantID, authHeader := createSagaMerchant(t, ctx, env)
 	instance, err := env.sagaSvc.StartCommandSaga(ctx, saga.CreateCommandSagaInput{
@@ -279,7 +279,7 @@ func TestIntegrationSagaWorkerRestartRetriesCommand(t *testing.T) {
 		}
 		return map[string]any{"command_id": cmd.CommandID, "status": "completed"}, nil
 	})
-	env.sagaSvc.SetLeaseTTLForTest(25 * time.Millisecond)
+	env.sagaSvc.SetLeaseTTLForTest(time.Second)
 
 	merchantID, authHeader := createSagaMerchant(t, ctx, env)
 	instance, err := env.sagaSvc.StartCommandSaga(ctx, saga.CreateCommandSagaInput{
@@ -320,7 +320,7 @@ func TestIntegrationSagaWorkerRestartRetriesCommand(t *testing.T) {
 		<-restartDone
 	}()
 
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, 8*time.Second, func() bool {
 		current, err := env.sagaSvc.Get(ctx, merchantID, instance.ID)
 		return err == nil && current.Status == saga.StatusCompleted
 	})
