@@ -23,6 +23,7 @@ func NewHandler(svc *Service) *Handler {
 // RegisterRoutesWithAuth wires the refund endpoints into mux under auth.
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("POST /v1/payments/{paymentID}/refunds", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.create)))
+	mux.Handle("POST /v1/refunds/{refundID}/reverse", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.reverse)))
 	mux.Handle("GET /v1/refunds/{refundID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.get)))
 	mux.Handle("GET /v1/payments/{paymentID}/refunds", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listByPayment)))
 }
@@ -70,6 +71,29 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, present(ref))
 }
 
+func (h *Handler) reverse(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+			return
+		}
+	}
+	ref, err := h.svc.Reverse(r.Context(), p.MerchantID, r.PathValue("refundID"), req.Reason)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, present(ref))
+}
+
 func (h *Handler) listByPayment(w http.ResponseWriter, r *http.Request) {
 	p, ok := httpx.PrincipalFromContext(r.Context())
 	if !ok {
@@ -98,18 +122,27 @@ func present(ref Refund) map[string]any {
 		processedAt = ref.ProcessedAt.Unix()
 	}
 	return map[string]any{
-		"id":          ref.ID,
-		"entity":      "refund",
-		"payment_id":  ref.PaymentID,
-		"amount":      ref.Amount,
-		"currency":    ref.Currency,
-		"reason":      ref.Reason,
-		"status":      ref.Status,
-		"notes":       ref.Notes,
-		"processed_at": processedAt,
-		"created_at":  ref.CreatedAt.Unix(),
-		"created_at_rfc": ref.CreatedAt.Format(time.RFC3339),
+		"id":              ref.ID,
+		"entity":          "refund",
+		"payment_id":      ref.PaymentID,
+		"amount":          ref.Amount,
+		"currency":        ref.Currency,
+		"reason":          ref.Reason,
+		"status":          ref.Status,
+		"notes":           ref.Notes,
+		"processed_at":    processedAt,
+		"reversal_reason": ref.ReversalReason,
+		"reversed_at":     presentTime(ref.ReversedAt),
+		"created_at":      ref.CreatedAt.Unix(),
+		"created_at_rfc":  ref.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func presentTime(ts *time.Time) any {
+	if ts == nil {
+		return nil
+	}
+	return ts.Unix()
 }
 
 func handleError(w http.ResponseWriter, err error) {
