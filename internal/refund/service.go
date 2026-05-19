@@ -34,3 +34,7 @@ func (s *Service) Get(ctx context.Context, merchantID, refundID string) (Refund,
 func (s *Service) ListByPayment(ctx context.Context, merchantID, paymentID string) ([]Refund, error) {
 	return s.repo.ListRefunds(ctx, merchantID, paymentID)
 }
+
+func (s *Service) Reverse(ctx context.Context, merchantID, refundID, reason string) (Refund, error) {
+	return s.repo.ReverseRefund(ctx, merchantID, refundID, reason)
+}

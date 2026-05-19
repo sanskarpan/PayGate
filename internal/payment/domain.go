@@ -7,28 +7,30 @@ type PaymentState string
 type PaymentEvent string
 
 const (
-	StateCreated      PaymentState = "created"
-	StateAuthorized   PaymentState = "authorized"
-	StateCaptured     PaymentState = "captured"
-	StateFailed       PaymentState = "failed"
-	StateAutoRefunded PaymentState = "auto_refunded"
+	StateCreated               PaymentState = "created"
+	StateAuthorized            PaymentState = "authorized"
+	StateAuthorizationReversed PaymentState = "authorization_reversed"
+	StateCaptured              PaymentState = "captured"
+	StateFailed                PaymentState = "failed"
+	StateAutoRefunded          PaymentState = "auto_refunded"
 )
 
 const (
 	EventAuthSuccess   PaymentEvent = "auth_success"
 	EventAuthFailed    PaymentEvent = "auth_failed"
+	EventAuthReversed  PaymentEvent = "auth_reversed"
 	EventCapture       PaymentEvent = "capture"
 	EventCaptureExpiry PaymentEvent = "capture_expiry"
 )
 
 var (
-	ErrInvalidTransition      = errors.New("invalid payment transition")
-	ErrOrderNotFound          = errors.New("order not found")
-	ErrOrderExpired           = errors.New("order is expired")
-	ErrCurrencyMismatch       = errors.New("payment currency must match order currency")
-	ErrAmountMismatch         = errors.New("payment amount does not match order constraints")
-	ErrAuthorizationDeclined  = errors.New("payment authorization declined by gateway")
-	ErrInvalidPaymentAmount   = errors.New("payment amount must be greater than zero")
+	ErrInvalidTransition     = errors.New("invalid payment transition")
+	ErrOrderNotFound         = errors.New("order not found")
+	ErrOrderExpired          = errors.New("order is expired")
+	ErrCurrencyMismatch      = errors.New("payment currency must match order currency")
+	ErrAmountMismatch        = errors.New("payment amount does not match order constraints")
+	ErrAuthorizationDeclined = errors.New("payment authorization declined by gateway")
+	ErrInvalidPaymentAmount  = errors.New("payment amount must be greater than zero")
 )
 
 func Transition(from PaymentState, ev PaymentEvent) (PaymentState, error) {
@@ -38,6 +40,7 @@ func Transition(from PaymentState, ev PaymentEvent) (PaymentState, error) {
 			EventAuthFailed:  StateFailed,
 		},
 		StateAuthorized: {
+			EventAuthReversed:  StateAuthorizationReversed,
 			EventCapture:       StateCaptured,
 			EventCaptureExpiry: StateAutoRefunded,
 		},

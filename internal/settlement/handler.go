@@ -28,6 +28,7 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 	mux.Handle("POST /v1/settlements/partial", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.runPartialBatch)))
 	mux.Handle("POST /v1/settlements/{settlementID}/hold", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.hold)))
 	mux.Handle("POST /v1/settlements/{settlementID}/release", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.release)))
+	mux.Handle("POST /v1/settlements/{settlementID}/rollback-marker", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.markRollback)))
 }
 
 func (h *Handler) runBatch(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +177,29 @@ func (h *Handler) release(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) markRollback(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST", Description: "invalid request body"})
+			return
+		}
+	}
+	sttl, err := h.svc.MarkRollback(r.Context(), p.MerchantID, r.PathValue("settlementID"), body.Reason)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, present(sttl))
+}
+
 func present(s Settlement) map[string]any {
 	var processedAt *int64
 	if s.ProcessedAt != nil {
@@ -183,22 +207,33 @@ func present(s Settlement) map[string]any {
 		processedAt = &ts
 	}
 	return map[string]any{
-		"id":            s.ID,
-		"entity":        "settlement",
-		"merchant_id":   s.MerchantID,
-		"status":        s.Status,
-		"period_start":  s.PeriodStart.Unix(),
-		"period_end":    s.PeriodEnd.Unix(),
-		"total_amount":  s.TotalAmount,
-		"total_fees":    s.TotalFees,
-		"total_refunds": s.TotalRefunds,
-		"net_amount":    s.NetAmount,
-		"payment_count": s.PaymentCount,
-		"currency":      s.Currency,
-		"processed_at":  processedAt,
-		"created_at":    s.CreatedAt.Unix(),
-		"created_at_rfc": s.CreatedAt.Format(time.RFC3339),
+		"id":                 s.ID,
+		"entity":             "settlement",
+		"merchant_id":        s.MerchantID,
+		"status":             s.Status,
+		"period_start":       s.PeriodStart.Unix(),
+		"period_end":         s.PeriodEnd.Unix(),
+		"total_amount":       s.TotalAmount,
+		"total_fees":         s.TotalFees,
+		"total_refunds":      s.TotalRefunds,
+		"net_amount":         s.NetAmount,
+		"payment_count":      s.PaymentCount,
+		"currency":           s.Currency,
+		"processed_at":       processedAt,
+		"on_hold":            s.OnHold,
+		"hold_reason":        s.HoldReason,
+		"rollback_marked_at": presentTime(s.RollbackMarkedAt),
+		"rollback_reason":    s.RollbackReason,
+		"created_at":         s.CreatedAt.Unix(),
+		"created_at_rfc":     s.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func presentTime(ts *time.Time) any {
+	if ts == nil {
+		return nil
+	}
+	return ts.Unix()
 }
 
 func presentItem(item SettlementItem) map[string]any {
@@ -228,6 +263,8 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "SETTLEMENT_ON_HOLD", Description: err.Error()})
 	case errors.Is(err, ErrSettlementNotOnHold):
 		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "SETTLEMENT_NOT_ON_HOLD", Description: err.Error()})
+	case errors.Is(err, ErrSettlementRollbackMarked):
+		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "SETTLEMENT_ROLLBACK_MARKED", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error"})
 	}

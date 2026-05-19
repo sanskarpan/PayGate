@@ -268,6 +268,80 @@ WHERE id = $1
 	return tx.Commit(ctx)
 }
 
+func (r *PostgresRepository) ReverseAuthorization(ctx context.Context, merchantID, paymentID, reason string) (CaptureResult, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return CaptureResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var current CaptureResult
+	var attemptID string
+	var status string
+	err = tx.QueryRow(ctx, `
+SELECT id, attempt_id, merchant_id, order_id, amount, currency, method, status, captured, created_at, authorized_at
+FROM paygate_payments.payments
+WHERE id = $1 AND merchant_id = $2
+FOR UPDATE
+`, paymentID, merchantID).Scan(&current.PaymentID, &attemptID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &status, &current.Captured, &current.CreatedAt, &current.AuthorizedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CaptureResult{}, ErrPaymentNotFound
+		}
+		return CaptureResult{}, err
+	}
+	switch PaymentState(status) {
+	case StateAuthorizationReversed:
+		current.Status = StateAuthorizationReversed
+		return current, nil
+	case StateAuthorized:
+	default:
+		return CaptureResult{}, ErrInvalidTransition
+	}
+
+	now := time.Now().UTC()
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET status = 'authorization_reversed',
+    auto_capture_at = NULL,
+    error_code = 'AUTHORIZATION_REVERSED',
+    error_description = NULLIF($2, ''),
+    updated_at = $3
+WHERE id = $1
+`, paymentID, reason, now); err != nil {
+		return CaptureResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payment_attempts
+SET status = 'authorization_reversed',
+    error_code = 'AUTHORIZATION_REVERSED',
+    error_description = NULLIF($2, ''),
+    updated_at = $3
+WHERE id = $1
+`, attemptID, reason, now); err != nil {
+		return CaptureResult{}, err
+	}
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{
+		AggregateType: "payment",
+		AggregateID:   paymentID,
+		EventType:     "payment.authorization_reversed",
+		MerchantID:    merchantID,
+		Payload: map[string]any{
+			"payment_id": paymentID,
+			"order_id":   current.OrderID,
+			"reason":     reason,
+		},
+	}); err != nil {
+		return CaptureResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CaptureResult{}, err
+	}
+
+	current.Status = StateAuthorizationReversed
+	return current, nil
+}
+
 func (r *PostgresRepository) CaptureAuthorizedPayment(ctx context.Context, merchantID, paymentID string, amount int64) (CaptureResult, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

@@ -19,6 +19,10 @@ type Repository interface {
 	// amount_refunded_pending reservation, and writes an outbox event.
 	FailRefund(ctx context.Context, refundID string) (Refund, error)
 
+	// ReverseRefund transitions a processed refund to reversed and writes
+	// corrective ledger entries so the money path remains auditable and forward-only.
+	ReverseRefund(ctx context.Context, merchantID, refundID, reason string) (Refund, error)
+
 	// GetRefund fetches a refund by ID, scoped to merchantID.
 	GetRefund(ctx context.Context, merchantID, refundID string) (Refund, error)
 

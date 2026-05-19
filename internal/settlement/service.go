@@ -48,6 +48,10 @@ func (s *Service) Release(ctx context.Context, merchantID, settlementID string) 
 	return s.repo.ReleaseSettlement(ctx, merchantID, settlementID)
 }
 
+func (s *Service) MarkRollback(ctx context.Context, merchantID, settlementID, reason string) (Settlement, error) {
+	return s.repo.MarkRollback(ctx, merchantID, settlementID, reason)
+}
+
 // GetItems returns the settlement items for a settlement.
 func (s *Service) GetItems(ctx context.Context, merchantID, settlementID string) (Settlement, []SettlementItem, error) {
 	sttl, err := s.repo.GetSettlement(ctx, merchantID, settlementID)

@@ -262,19 +262,124 @@ WHERE id = $2
 	return ref, nil
 }
 
+func (r *PostgresRepository) ReverseRefund(ctx context.Context, merchantID, refundID, reason string) (Refund, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Refund{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var ref Refund
+	var paymentAmount int64
+	var paymentFee int64
+	var amountRefunded int64
+	var amountRefundedPending int64
+	err = tx.QueryRow(ctx, `
+SELECT r.id, r.payment_id, r.order_id, r.merchant_id, r.amount, r.currency, r.reason, r.status,
+       p.amount, p.fee, p.amount_refunded, p.amount_refunded_pending
+FROM paygate_payments.refunds r
+JOIN paygate_payments.payments p ON p.id = r.payment_id
+WHERE r.id = $1 AND r.merchant_id = $2
+FOR UPDATE
+`, refundID, merchantID).Scan(&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency, &ref.Reason, &ref.Status, &paymentAmount, &paymentFee, &amountRefunded, &amountRefundedPending)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Refund{}, ErrRefundNotFound
+		}
+		return Refund{}, err
+	}
+	if _, err := Transition(ref.Status, EventReverse); err != nil {
+		return Refund{}, err
+	}
+	if amountRefunded < ref.Amount {
+		return Refund{}, ErrInvalidTransition
+	}
+
+	prevFeeReversal := settlement.CalculateRefundFeeReversal(paymentAmount, paymentFee, amountRefunded)
+	newAmountRefunded := amountRefunded - ref.Amount
+	newFeeReversal := settlement.CalculateRefundFeeReversal(paymentAmount, paymentFee, newAmountRefunded)
+	feeDelta := prevFeeReversal - newFeeReversal
+	merchantPayableDelta := ref.Amount - feeDelta
+	now := time.Now().UTC()
+
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.refunds
+SET status = 'reversed',
+    reversal_reason = NULLIF($2, ''),
+    reversed_at = $3,
+    updated_at = $3
+WHERE id = $1
+`, refundID, reason, now); err != nil {
+		return Refund{}, err
+	}
+
+	refundStatus := "partial"
+	switch total := newAmountRefunded + amountRefundedPending; {
+	case total <= 0:
+		refundStatus = "none"
+	case total >= paymentAmount:
+		refundStatus = "full"
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET amount_refunded = amount_refunded - $1,
+    refund_status = $3,
+    updated_at = NOW()
+WHERE id = $2
+`, ref.Amount, ref.PaymentID, refundStatus); err != nil {
+		return Refund{}, err
+	}
+
+	entries := []ledger.Entry{
+		{AccountCode: "REFUND_CLEARING", DebitAmount: ref.Amount, Currency: ref.Currency, Description: "refund reversal clearing debit"},
+	}
+	if merchantPayableDelta > 0 {
+		entries = append(entries, ledger.Entry{AccountCode: "MERCHANT_PAYABLE", CreditAmount: merchantPayableDelta, Currency: ref.Currency, Description: "refund reversal merchant payable restore"})
+	}
+	if feeDelta > 0 {
+		entries = append(entries, ledger.Entry{AccountCode: "PLATFORM_FEE_REVENUE", CreditAmount: feeDelta, Currency: ref.Currency, Description: "refund reversal fee restore"})
+	}
+	if _, err := r.ledger.CreateEntriesTx(ctx, tx, ref.MerchantID, "refund_reversal", refundID, "refund reversed", entries); err != nil {
+		return Refund{}, err
+	}
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{
+		AggregateType: "refund",
+		AggregateID:   refundID,
+		EventType:     "refund.reversed",
+		MerchantID:    ref.MerchantID,
+		Payload: map[string]any{
+			"refund_id":  refundID,
+			"payment_id": ref.PaymentID,
+			"amount":     ref.Amount,
+			"reason":     reason,
+		},
+	}); err != nil {
+		return Refund{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Refund{}, err
+	}
+
+	ref.Status = StateReversed
+	ref.ReversedAt = &now
+	ref.ReversalReason = reason
+	return ref, nil
+}
+
 // GetRefund fetches a single refund by ID and merchantID.
 func (r *PostgresRepository) GetRefund(ctx context.Context, merchantID, refundID string) (Refund, error) {
 	var ref Refund
 	var notesRaw []byte
 	var gatewayRefundID *string
+	var reversalReason *string
 	err := r.db.QueryRow(ctx, `
 SELECT id, payment_id, order_id, merchant_id, amount, currency,
-       reason, status, gateway_refund_id, notes, processed_at, created_at, updated_at
+       reason, status, gateway_refund_id, notes, processed_at, reversal_reason, reversed_at, created_at, updated_at
 FROM paygate_payments.refunds
 WHERE id = $1 AND merchant_id = $2
 `, refundID, merchantID).Scan(
 		&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency,
-		&ref.Reason, &ref.Status, &gatewayRefundID, &notesRaw, &ref.ProcessedAt,
+		&ref.Reason, &ref.Status, &gatewayRefundID, &notesRaw, &ref.ProcessedAt, &reversalReason, &ref.ReversedAt,
 		&ref.CreatedAt, &ref.UpdatedAt,
 	)
 	if err != nil {
@@ -286,6 +391,9 @@ WHERE id = $1 AND merchant_id = $2
 	if gatewayRefundID != nil {
 		ref.GatewayRefundID = *gatewayRefundID
 	}
+	if reversalReason != nil {
+		ref.ReversalReason = *reversalReason
+	}
 	if len(notesRaw) > 0 {
 		_ = json.Unmarshal(notesRaw, &ref.Notes)
 	}
@@ -296,7 +404,7 @@ WHERE id = $1 AND merchant_id = $2
 func (r *PostgresRepository) ListRefunds(ctx context.Context, merchantID, paymentID string) ([]Refund, error) {
 	rows, err := r.db.Query(ctx, `
 SELECT id, payment_id, order_id, merchant_id, amount, currency,
-       reason, status, gateway_refund_id, notes, processed_at, created_at, updated_at
+       reason, status, gateway_refund_id, notes, processed_at, reversal_reason, reversed_at, created_at, updated_at
 FROM paygate_payments.refunds
 WHERE merchant_id = $1 AND payment_id = $2
 ORDER BY created_at DESC
@@ -311,15 +419,19 @@ ORDER BY created_at DESC
 		var ref Refund
 		var notesRaw []byte
 		var gatewayRefundID *string
+		var reversalReason *string
 		if err := rows.Scan(
 			&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency,
-			&ref.Reason, &ref.Status, &gatewayRefundID, &notesRaw, &ref.ProcessedAt,
+			&ref.Reason, &ref.Status, &gatewayRefundID, &notesRaw, &ref.ProcessedAt, &reversalReason, &ref.ReversedAt,
 			&ref.CreatedAt, &ref.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
 		if gatewayRefundID != nil {
 			ref.GatewayRefundID = *gatewayRefundID
+		}
+		if reversalReason != nil {
+			ref.ReversalReason = *reversalReason
 		}
 		if len(notesRaw) > 0 {
 			_ = json.Unmarshal(notesRaw, &ref.Notes)

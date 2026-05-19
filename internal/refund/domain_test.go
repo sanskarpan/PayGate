@@ -16,11 +16,13 @@ func TestTransition(t *testing.T) {
 		{name: "created+initiate→processing", from: StateCreated, event: EventInitiate, want: StateProcessing},
 		{name: "processing+success→processed", from: StateProcessing, event: EventSuccess, want: StateProcessed},
 		{name: "processing+failure→failed", from: StateProcessing, event: EventFailure, want: StateFailed},
+		{name: "processed+reverse→reversed", from: StateProcessed, event: EventReverse, want: StateReversed},
 
 		// Invalid transitions
 		{name: "created+success is invalid", from: StateCreated, event: EventSuccess, wantErr: true},
 		{name: "created+failure is invalid", from: StateCreated, event: EventFailure, wantErr: true},
 		{name: "processed+anything is terminal", from: StateProcessed, event: EventInitiate, wantErr: true},
+		{name: "reversed+anything is terminal", from: StateReversed, event: EventInitiate, wantErr: true},
 		{name: "failed+anything is terminal", from: StateFailed, event: EventInitiate, wantErr: true},
 		{name: "processing+initiate is invalid", from: StateProcessing, event: EventInitiate, wantErr: true},
 	}
@@ -45,9 +47,9 @@ func TestTransition(t *testing.T) {
 
 func TestPaymentSnapshotRefundableBalance(t *testing.T) {
 	tests := []struct {
-		name    string
-		snap    PaymentSnapshot
-		want    int64
+		name string
+		snap PaymentSnapshot
+		want int64
 	}{
 		{
 			name: "no refunds yet",

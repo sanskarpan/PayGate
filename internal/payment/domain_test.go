@@ -10,8 +10,10 @@ func TestTransition(t *testing.T) {
 	}{
 		{StateCreated, EventAuthSuccess, true},
 		{StateCreated, EventAuthFailed, true},
+		{StateAuthorized, EventAuthReversed, true},
 		{StateAuthorized, EventCapture, true},
 		{StateAuthorized, EventCaptureExpiry, true},
+		{StateAuthorizationReversed, EventCapture, false},
 		{StateCaptured, EventCapture, false},
 	}
 	for _, tc := range cases {
