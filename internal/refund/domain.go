@@ -15,21 +15,23 @@ const (
 	StateCreated    RefundState = "created"
 	StateProcessing RefundState = "processing"
 	StateProcessed  RefundState = "processed"
+	StateReversed   RefundState = "reversed"
 	StateFailed     RefundState = "failed"
 )
 
 const (
-	EventInitiate RefundEvent = "initiate"   // created → processing
-	EventSuccess  RefundEvent = "success"    // processing → processed
-	EventFailure  RefundEvent = "failure"    // processing → failed
+	EventInitiate RefundEvent = "initiate" // created → processing
+	EventSuccess  RefundEvent = "success"  // processing → processed
+	EventReverse  RefundEvent = "reverse"  // processed → reversed
+	EventFailure  RefundEvent = "failure"  // processing → failed
 )
 
 var (
-	ErrInvalidTransition  = errors.New("invalid refund state transition")
-	ErrRefundNotFound     = errors.New("refund not found")
-	ErrPaymentNotCaptured = errors.New("refund requires a captured payment")
+	ErrInvalidTransition             = errors.New("invalid refund state transition")
+	ErrRefundNotFound                = errors.New("refund not found")
+	ErrPaymentNotCaptured            = errors.New("refund requires a captured payment")
 	ErrRefundAmountExceedsRefundable = errors.New("refund amount exceeds refundable balance")
-	ErrZeroRefundAmount   = errors.New("refund amount must be greater than zero")
+	ErrZeroRefundAmount              = errors.New("refund amount must be greater than zero")
 )
 
 // Transition returns the next state given the current state and event,
@@ -42,6 +44,9 @@ func Transition(from RefundState, ev RefundEvent) (RefundState, error) {
 		StateProcessing: {
 			EventSuccess: StateProcessed,
 			EventFailure: StateFailed,
+		},
+		StateProcessed: {
+			EventReverse: StateReversed,
 		},
 	}
 	m, ok := table[from]
@@ -68,6 +73,8 @@ type Refund struct {
 	GatewayRefundID string
 	Notes           map[string]any
 	ProcessedAt     *time.Time
+	ReversalReason  string
+	ReversedAt      *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
