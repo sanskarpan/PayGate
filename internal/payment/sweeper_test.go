@@ -23,6 +23,9 @@ func (f *fakeRepo) MarkAuthorizationAuthorized(context.Context, string, string, 
 func (f *fakeRepo) MarkAuthorizationFailed(context.Context, string, string, string, string) error {
 	return nil
 }
+func (f *fakeRepo) ReverseAuthorization(context.Context, string, string, string) (CaptureResult, error) {
+	return CaptureResult{}, nil
+}
 func (f *fakeRepo) CaptureAuthorizedPayment(context.Context, string, string, int64) (CaptureResult, error) {
 	return CaptureResult{}, nil
 }
