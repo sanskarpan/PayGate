@@ -30,6 +30,9 @@ func TestIntegrationSagaReplayCompletesFailedCommand(t *testing.T) {
 		}
 		return map[string]any{"command_id": cmd.CommandID, "status": "completed"}, nil
 	})
+	env.sagaSvc.RegisterCompensationHandler("generic_replay", func(ctx context.Context, inst saga.Instance) error {
+		return errors.New("force replayable terminal failure")
+	})
 
 	merchantID, authHeader := createSagaMerchant(t, ctx, env)
 	instance, err := env.sagaSvc.StartCommandSaga(ctx, saga.CreateCommandSagaInput{
