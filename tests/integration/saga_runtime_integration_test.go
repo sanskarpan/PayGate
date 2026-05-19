@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -329,8 +330,10 @@ func buildGenericSagaEnv(t *testing.T, db *pgxpool.Pool) genericSagaEnv {
 func createSagaMerchant(t *testing.T, ctx context.Context, env genericSagaEnv) (string, string) {
 	t.Helper()
 
+	slug := strings.NewReplacer("/", "-", " ", "-", "_", "-").Replace(strings.ToLower(t.Name()))
+	email := fmt.Sprintf("%s-%d@test.com", slug, time.Now().UnixNano())
 	createdMerchant, err := env.merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Saga Runtime Merchant", Email: "runtime@test.com", BusinessType: "company",
+		Name: "Saga Runtime Merchant", Email: email, BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
