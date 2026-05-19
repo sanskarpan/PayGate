@@ -1,4 +1,5 @@
 import http from "k6/http";
+import encoding from "k6/encoding";
 import { check, sleep } from "k6";
 
 export const options = {
@@ -21,7 +22,7 @@ const API_SECRET = __ENV.API_SECRET || "secret_demo";
 
 function authHeader() {
   return {
-    Authorization: `Basic ${btoa(`${API_KEY}:${API_SECRET}`)}`,
+    Authorization: `Basic ${encoding.b64encode(`${API_KEY}:${API_SECRET}`)}`,
     "Content-Type": "application/json",
     "Idempotency-Key": `spike-${__VU}-${__ITER}-${Date.now()}`,
   };
@@ -42,7 +43,7 @@ export default function () {
   } else if (op < 0.8) {
     // 30%: list orders (read)
     const res = http.get(`${BASE_URL}/v1/orders?count=10`, {
-      headers: { Authorization: `Basic ${btoa(`${API_KEY}:${API_SECRET}`)}` },
+      headers: { Authorization: `Basic ${encoding.b64encode(`${API_KEY}:${API_SECRET}`)}` },
     });
     check(res, { "list ok": (r) => r.status === 200 });
   } else {
