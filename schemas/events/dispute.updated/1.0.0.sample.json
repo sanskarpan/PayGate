@@ -1,0 +1,13 @@
+{
+  "event_id": "evt_dispute_updated_v1",
+  "event_type": "dispute.updated",
+  "occurred_at": "2026-05-13T10:20:00Z",
+  "correlation_id": "disp_123",
+  "causation_id": "evt_dispute_updated_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "dispute_id": "disp_123",
+    "status": "under_review"
+  }
+}
