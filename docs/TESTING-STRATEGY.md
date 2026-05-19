@@ -253,6 +253,8 @@ func TestAPIContract_CreateOrder(t *testing.T) {
 }
 ```
 
+The repo now enforces the published OpenAPI contract through the integration suite. [`tests/integration/openapi_contract_integration_test.go`](../tests/integration/openapi_contract_integration_test.go) loads [`docs/openapi.yaml`](./openapi.yaml), asserts the documented routes exist for the core money flow, and verifies live responses include the expected top-level contract fields.
+
 ### 4.2 Webhook payload contract tests
 
 Verify webhook payloads match the documented schema for each event type:
@@ -299,7 +301,36 @@ func TestGRPCContract_LedgerCreateEntries(t *testing.T) {
 
 ## 5. End-to-end tests
 
-### 5.1 Full flow tests
+### 5.1 Browser + API E2E baseline
+
+The repo now includes a real Playwright harness under [`dashboard/tests/e2e/`](../dashboard/tests/e2e) that exercises:
+
+- dashboard login through the real auth form
+- merchant bootstrap through the live HTTP API
+- order creation, authorization, capture, refund, settlement, payout, and dispute flows
+- async webhook delivery into a real local receiver route at [`dashboard/app/api/test-webhook/route.ts`](../dashboard/app/api/test-webhook/route.ts)
+- operator page rendering across the major dashboard surfaces
+- session-authenticated API access via the same dashboard cookie used by the browser
+
+Run it locally:
+
+```bash
+bash scripts/dr/recreate_local_env.sh
+cd dashboard
+pnpm install
+pnpm test:e2e
+```
+
+The Playwright harness intentionally starts the Go API locally and uses Docker only for stateful infra dependencies. It seeds a unique merchant per run, so tests do not depend on pre-existing data.
+
+For repeatable local verification, use the repo runners under [`scripts/test/`](../scripts/test):
+
+- `run_full_verification.sh`: unit, vet, integration, fuzz smoke, dashboard lint/build, Playwright
+- `run_load_smoke.sh`: bootstrapped k6 smoke against a live gateway
+- `run_chaos_suite.sh`: Toxiproxy-backed Redis/Kafka failure checks against a live gateway
+- `bootstrap_test_merchant.sh`: creates an isolated merchant and admin key for scripted tests
+
+### 5.2 Full flow tests
 
 Run against a fully deployed local environment (Docker Compose):
 
@@ -350,7 +381,7 @@ func TestE2E_HappyPath_OrderThroughSettlement(t *testing.T) {
 }
 ```
 
-### 5.2 Failure path tests
+### 5.3 Failure path tests
 
 ```go
 func TestE2E_GatewayTimeout_PaymentFails(t *testing.T) {
@@ -381,6 +412,16 @@ func TestE2E_FlakyGateway_OnlySuccessfulCapturePostsLedger(t *testing.T) {
     assert.Len(t, entries, 3)
 }
 ```
+
+---
+
+### 5.4 What the current E2E suite must prove
+
+- UI auth works from the login form to the overview page
+- seeded merchant data is visible across orders, payments, refunds, settlements, payouts, webhooks, disputes, audit, recon, and observability pages
+- idempotent API writes replay the original response body and headers
+- async outbox-driven side effects finish: payout saga completes and webhook deliveries succeed
+- no browser console or uncaught page errors occur during major dashboard navigation
 
 ---
 
@@ -509,6 +550,20 @@ stages:
 
 Chaos tests run weekly in a dedicated staging environment, not in CI.
 
+In this repo, CI now enforces:
+
+- Go lint + unit + integration
+- dashboard lint + production build
+- Playwright browser/API smoke on a live local API + dashboard process with Docker-backed infra
+- k6 order-creation smoke in CI on every change
+
+The repo now includes:
+
+- [`tests/load/ci_smoke.js`](../tests/load/ci_smoke.js) for fast PR-safe performance regression coverage
+- [`.github/workflows/heavy-verification.yml`](../.github/workflows/heavy-verification.yml) for scheduled heavier fuzz, chaos, and spike verification
+
+That is the minimum confidence gate for claiming the operator product still works end to end after a change.
+
 ---
 
 ## 9. Advanced test suite (optional track)
@@ -532,3 +587,29 @@ Chaos tests run weekly in a dedicated staging environment, not in CI.
 ### 9.4 DR simulation tests
 - Restore from backup + replay outbox + replay Kafka offsets
 - Reconciliation catch-up within target SLO
+
+---
+
+## 10. Additional hardening mechanisms
+
+### 10.1 Fuzzing
+
+The repo should keep fuzz tests on high-risk parser and signature boundaries. The current baseline now covers:
+
+- dashboard session token parsing
+- payout rail signature verification
+- event schema document validation
+
+Run targeted fuzzing locally:
+
+```bash
+go test ./internal/merchant -run=^$ -fuzz=FuzzSessionManagerParse -fuzztime=10s
+go test ./internal/payout -run=^$ -fuzz=FuzzVerifyRailPayload -fuzztime=10s
+go test ./internal/eventschema -run=^$ -fuzz=FuzzValidateDocument -fuzztime=10s
+```
+
+### 10.2 Recommended next expansion
+
+- run Playwright against multiple viewport classes once the suite grows
+- move some integration tests to `testcontainers-go` if isolated dependency bootstrapping becomes a bottleneck
+- add consumer-specific webhook contract suites for external integrators
