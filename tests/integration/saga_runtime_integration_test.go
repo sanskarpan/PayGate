@@ -58,7 +58,24 @@ func TestIntegrationSagaTimeoutRecordsDeadLetterAndCompensation(t *testing.T) {
 		t.Fatalf("start saga: %v", err)
 	}
 
-	go saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(context.Background())
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	timeoutCtx, cancelTimeoutWorker := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	timeoutDone := make(chan struct{})
+	go func() {
+		defer close(done)
+		saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(workerCtx)
+	}()
+	go func() {
+		defer close(timeoutDone)
+		saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(timeoutCtx)
+	}()
+	defer func() {
+		cancelWorker()
+		cancelTimeoutWorker()
+		<-done
+		<-timeoutDone
+	}()
 
 	waitFor(t, 5*time.Second, func() bool {
 		current, err := env.sagaSvc.Get(ctx, merchantID, instance.ID)
@@ -134,7 +151,17 @@ func TestIntegrationSagaOperatorAbortRecordsAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start saga: %v", err)
 	}
-	go saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(context.Background())
+
+	workerCtx, cancelWorker := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(workerCtx)
+	}()
+	defer func() {
+		cancelWorker()
+		<-done
+	}()
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sagas/"+instance.ID+"/override", strings.NewReader(`{"action":"abort","reason":"manual operator stop"}`))
 	req.Header.Set("Authorization", authHeader)
@@ -166,7 +193,7 @@ func TestIntegrationSagaOperatorAbortRecordsAction(t *testing.T) {
 	}
 }
 
-func TestIntegrationSagaDuplicateLeaseRunsHandlerTwiceButCompletesOnce(t *testing.T) {
+func TestIntegrationSagaConcurrentWorkersCompleteCommandOnce(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 	ctx := context.Background()
@@ -194,15 +221,31 @@ func TestIntegrationSagaDuplicateLeaseRunsHandlerTwiceButCompletesOnce(t *testin
 	if err != nil {
 		t.Fatalf("start saga: %v", err)
 	}
-	go saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(context.Background())
-	go saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(context.Background())
+	workerCtxOne, cancelWorkerOne := context.WithCancel(context.Background())
+	workerCtxTwo, cancelWorkerTwo := context.WithCancel(context.Background())
+	doneOne := make(chan struct{})
+	doneTwo := make(chan struct{})
+	go func() {
+		defer close(doneOne)
+		saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(workerCtxOne)
+	}()
+	go func() {
+		defer close(doneTwo)
+		saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(workerCtxTwo)
+	}()
+	defer func() {
+		cancelWorkerOne()
+		cancelWorkerTwo()
+		<-doneOne
+		<-doneTwo
+	}()
 
 	waitFor(t, 5*time.Second, func() bool {
 		current, err := env.sagaSvc.Get(ctx, merchantID, instance.ID)
 		return err == nil && current.Status == saga.StatusCompleted
 	})
-	if executions.Load() < 2 {
-		t.Fatalf("expected duplicate handler execution, got %d", executions.Load())
+	if executions.Load() != 1 {
+		t.Fatalf("expected a single completed handler execution, got %d", executions.Load())
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/sagas/"+instance.ID+"/dispatches", nil)
@@ -216,8 +259,8 @@ func TestIntegrationSagaDuplicateLeaseRunsHandlerTwiceButCompletesOnce(t *testin
 	if err := json.Unmarshal(rec.Body.Bytes(), &dispatches); err != nil {
 		t.Fatalf("decode dispatches: %v", err)
 	}
-	if len(dispatches["items"].([]any)) < 2 {
-		t.Fatal("expected multiple dispatch attempts under duplicate lease")
+	if len(dispatches["items"].([]any)) != 1 {
+		t.Fatalf("expected one dispatch record, got %d", len(dispatches["items"].([]any)))
 	}
 }
 
@@ -267,8 +310,15 @@ func TestIntegrationSagaWorkerRestartRetriesCommand(t *testing.T) {
 	<-done
 
 	restartCtx, cancelRestart := context.WithCancel(context.Background())
-	defer cancelRestart()
-	go saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(restartCtx)
+	restartDone := make(chan struct{})
+	go func() {
+		defer close(restartDone)
+		saga.NewWorker(env.sagaSvc, 10*time.Millisecond, nil).Start(restartCtx)
+	}()
+	defer func() {
+		cancelRestart()
+		<-restartDone
+	}()
 
 	waitFor(t, 5*time.Second, func() bool {
 		current, err := env.sagaSvc.Get(ctx, merchantID, instance.ID)
