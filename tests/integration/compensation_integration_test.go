@@ -242,16 +242,16 @@ func createSettledMerchantFlowForCompensation(t *testing.T, ctx context.Context,
 
 	createdMerchant, authHeader := createMerchantAndWriteKey(t, ctx, merchantSvc, "settlement-rollback@test.com")
 	createdOrder := createOrderForMerchant(t, ctx, orderSvc, createdMerchant.ID, 9500, "settlement-rollback-order")
-	captured := authorizeAndCaptureOptional(t, ctx, paymentSvc, createdMerchant.ID, createdOrder, true)
+	authorizeAndCaptureOptional(t, ctx, paymentSvc, createdMerchant.ID, createdOrder, true)
 
 	var settlementID string
 	if err := db.QueryRow(ctx, `
 SELECT id
 FROM paygate_settlements.settlements
-WHERE merchant_id = $1 AND payment_id = $2
+WHERE merchant_id = $1
 ORDER BY created_at DESC
 LIMIT 1
-`, createdMerchant.ID, captured.PaymentID).Scan(&settlementID); err != nil {
+`, createdMerchant.ID).Scan(&settlementID); err != nil {
 		t.Fatalf("query settlement: %v", err)
 	}
 
