@@ -1,0 +1,13 @@
+{
+  "event_id": "evt_order_paid_v1",
+  "event_type": "order.paid",
+  "occurred_at": "2026-05-13T10:05:00Z",
+  "correlation_id": "ord_123",
+  "causation_id": "evt_order_paid_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "order_id": "ord_123",
+    "payment_id": "pay_123"
+  }
+}
