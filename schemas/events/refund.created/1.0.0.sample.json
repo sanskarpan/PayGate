@@ -1,0 +1,13 @@
+{
+  "event_id": "evt_refund_created_v1",
+  "event_type": "refund.created",
+  "occurred_at": "2026-05-13T10:16:00Z",
+  "correlation_id": "rfnd_123",
+  "causation_id": "evt_refund_created_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "refund_id": "rfnd_123",
+    "payment_id": "pay_123"
+  }
+}
