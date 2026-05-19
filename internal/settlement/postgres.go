@@ -286,20 +286,24 @@ WHERE id = ANY($2)
 func (r *PostgresRepository) GetSettlement(ctx context.Context, merchantID, id string) (Settlement, error) {
 	var s Settlement
 	var holdReason *string
+	var rollbackReason *string
 	err := r.db.QueryRow(ctx, `
 SELECT id, merchant_id, status, period_start, period_end, total_amount, total_fees,
        total_refunds, net_amount, payment_count, currency, processed_at, created_at, updated_at,
-       on_hold, hold_reason, held_at, released_at
+       on_hold, hold_reason, held_at, released_at, rollback_marked_at, rollback_reason
 FROM paygate_settlements.settlements
 WHERE id = $1 AND merchant_id = $2
 `, id, merchantID).Scan(
 		&s.ID, &s.MerchantID, &s.Status, &s.PeriodStart, &s.PeriodEnd,
 		&s.TotalAmount, &s.TotalFees, &s.TotalRefunds, &s.NetAmount,
 		&s.PaymentCount, &s.Currency, &s.ProcessedAt, &s.CreatedAt, &s.UpdatedAt,
-		&s.OnHold, &holdReason, &s.HeldAt, &s.ReleasedAt,
+		&s.OnHold, &holdReason, &s.HeldAt, &s.ReleasedAt, &s.RollbackMarkedAt, &rollbackReason,
 	)
 	if holdReason != nil {
 		s.HoldReason = *holdReason
+	}
+	if rollbackReason != nil {
+		s.RollbackReason = *rollbackReason
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Settlement{}, ErrSettlementNotFound
@@ -311,7 +315,7 @@ func (r *PostgresRepository) ListSettlements(ctx context.Context, merchantID str
 	rows, err := r.db.Query(ctx, `
 SELECT id, merchant_id, status, period_start, period_end, total_amount, total_fees,
        total_refunds, net_amount, payment_count, currency, processed_at, created_at, updated_at,
-       on_hold, hold_reason, held_at, released_at
+       on_hold, hold_reason, held_at, released_at, rollback_marked_at, rollback_reason
 FROM paygate_settlements.settlements
 WHERE merchant_id = $1
 ORDER BY created_at DESC
@@ -326,16 +330,20 @@ LIMIT 100
 	for rows.Next() {
 		var s Settlement
 		var holdReason *string
+		var rollbackReason *string
 		if err := rows.Scan(
 			&s.ID, &s.MerchantID, &s.Status, &s.PeriodStart, &s.PeriodEnd,
 			&s.TotalAmount, &s.TotalFees, &s.TotalRefunds, &s.NetAmount,
 			&s.PaymentCount, &s.Currency, &s.ProcessedAt, &s.CreatedAt, &s.UpdatedAt,
-			&s.OnHold, &holdReason, &s.HeldAt, &s.ReleasedAt,
+			&s.OnHold, &holdReason, &s.HeldAt, &s.ReleasedAt, &s.RollbackMarkedAt, &rollbackReason,
 		); err != nil {
 			return nil, err
 		}
 		if holdReason != nil {
 			s.HoldReason = *holdReason
+		}
+		if rollbackReason != nil {
+			s.RollbackReason = *rollbackReason
 		}
 		settlements = append(settlements, s)
 	}
@@ -394,4 +402,81 @@ ORDER BY created_at
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (r *PostgresRepository) MarkRollback(ctx context.Context, merchantID, settlementID, reason string) (Settlement, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Settlement{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var current Settlement
+	var holdReason *string
+	var rollbackReason *string
+	err = tx.QueryRow(ctx, `
+SELECT id, merchant_id, status, period_start, period_end, total_amount, total_fees,
+       total_refunds, net_amount, payment_count, currency, processed_at, created_at, updated_at,
+       on_hold, hold_reason, held_at, released_at, rollback_marked_at, rollback_reason
+FROM paygate_settlements.settlements
+WHERE id = $1 AND merchant_id = $2
+FOR UPDATE
+`, settlementID, merchantID).Scan(
+		&current.ID, &current.MerchantID, &current.Status, &current.PeriodStart, &current.PeriodEnd,
+		&current.TotalAmount, &current.TotalFees, &current.TotalRefunds, &current.NetAmount,
+		&current.PaymentCount, &current.Currency, &current.ProcessedAt, &current.CreatedAt, &current.UpdatedAt,
+		&current.OnHold, &holdReason, &current.HeldAt, &current.ReleasedAt, &current.RollbackMarkedAt, &rollbackReason,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Settlement{}, ErrSettlementNotFound
+		}
+		return Settlement{}, err
+	}
+	if holdReason != nil {
+		current.HoldReason = *holdReason
+	}
+	if rollbackReason != nil {
+		current.RollbackReason = *rollbackReason
+	}
+	if current.RollbackMarkedAt != nil {
+		return current, nil
+	}
+
+	now := time.Now().UTC()
+	holdReasonValue := current.HoldReason
+	if holdReasonValue == "" {
+		holdReasonValue = "rollback marker"
+		if reason != "" {
+			holdReasonValue = "rollback marker: " + reason
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_settlements.settlements
+SET rollback_marked_at = $3,
+    rollback_reason = NULLIF($4, ''),
+    on_hold = TRUE,
+    hold_reason = $5,
+    held_at = COALESCE(held_at, $3),
+    updated_at = $3
+WHERE id = $1 AND merchant_id = $2
+`, settlementID, merchantID, now, reason, holdReasonValue); err != nil {
+		return Settlement{}, err
+	}
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{
+		AggregateType: "settlement",
+		AggregateID:   settlementID,
+		EventType:     "settlement.rollback_marked",
+		MerchantID:    merchantID,
+		Payload: map[string]any{
+			"settlement_id": settlementID,
+			"reason":        reason,
+		},
+	}); err != nil {
+		return Settlement{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Settlement{}, err
+	}
+	return r.GetSettlement(ctx, merchantID, settlementID)
 }
