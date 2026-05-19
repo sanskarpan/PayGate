@@ -25,11 +25,12 @@ const (
 )
 
 var (
-	ErrSettlementNotFound  = errors.New("settlement not found")
-	ErrInvalidTransition   = errors.New("invalid settlement state transition")
-	ErrNoEligiblePayments  = errors.New("no eligible payments found for settlement")
-	ErrSettlementOnHold    = errors.New("settlement is already on hold")
-	ErrSettlementNotOnHold = errors.New("settlement is not on hold")
+	ErrSettlementNotFound       = errors.New("settlement not found")
+	ErrInvalidTransition        = errors.New("invalid settlement state transition")
+	ErrNoEligiblePayments       = errors.New("no eligible payments found for settlement")
+	ErrSettlementOnHold         = errors.New("settlement is already on hold")
+	ErrSettlementNotOnHold      = errors.New("settlement is not on hold")
+	ErrSettlementRollbackMarked = errors.New("settlement is marked for rollback remediation")
 )
 
 // Transition returns the next SettlementState for the given event,
@@ -57,24 +58,26 @@ func Transition(from SettlementState, ev SettlementEvent) (SettlementState, erro
 
 // Settlement groups payments for a merchant into a single payout batch.
 type Settlement struct {
-	ID           string
-	MerchantID   string
-	Status       SettlementState
-	PeriodStart  time.Time
-	PeriodEnd    time.Time
-	TotalAmount  int64 // sum of captured payment amounts
-	TotalFees    int64 // sum of platform fees deducted
-	TotalRefunds int64 // sum of refunded amounts
-	NetAmount    int64 // TotalAmount - TotalFees - TotalRefunds
-	PaymentCount int
-	Currency     string
-	ProcessedAt  *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	OnHold       bool
-	HoldReason   string
-	HeldAt       *time.Time
-	ReleasedAt   *time.Time
+	ID               string
+	MerchantID       string
+	Status           SettlementState
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	TotalAmount      int64 // sum of captured payment amounts
+	TotalFees        int64 // sum of platform fees deducted
+	TotalRefunds     int64 // sum of refunded amounts
+	NetAmount        int64 // TotalAmount - TotalFees - TotalRefunds
+	PaymentCount     int
+	Currency         string
+	ProcessedAt      *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	OnHold           bool
+	HoldReason       string
+	HeldAt           *time.Time
+	ReleasedAt       *time.Time
+	RollbackMarkedAt *time.Time
+	RollbackReason   string
 }
 
 // SettlementItem is one payment's contribution to a settlement batch.
