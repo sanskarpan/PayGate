@@ -41,6 +41,7 @@ func WithRiskEvaluator(r RiskEvaluator) func(*Handler) {
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("POST /v1/payments/authorize", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.authorize)))
 	mux.Handle("POST /v1/payments/{paymentID}/capture", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.capture)))
+	mux.Handle("POST /v1/payments/{paymentID}/reverse-authorization", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.reverseAuthorization)))
 	mux.Handle("GET /v1/payments/{paymentID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.get)))
 	mux.Handle("GET /v1/payments", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.list)))
 }
@@ -110,6 +111,29 @@ func (h *Handler) capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := h.svc.CaptureForMerchant(r.Context(), p.MerchantID, r.PathValue("paymentID"), req.Amount)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, present(out))
+}
+
+func (h *Handler) reverseAuthorization(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+			return
+		}
+	}
+	out, err := h.svc.ReverseAuthorization(r.Context(), p.MerchantID, r.PathValue("paymentID"), req.Reason)
 	if err != nil {
 		handleError(w, err)
 		return
