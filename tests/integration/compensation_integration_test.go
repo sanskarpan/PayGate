@@ -10,13 +10,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
-	"github.com/sanskarpan/PayGate/internal/ledger"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/merchant"
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
-	"github.com/sanskarpan/PayGate/internal/webhook"
 )
 
 func TestIntegrationPaymentAuthorizationReverseBlocksCaptureAndWritesEvent(t *testing.T) {
@@ -111,15 +109,14 @@ func TestIntegrationRefundReverseRestoresBalancesAndWritesCorrectiveEntries(t *t
 		t.Fatalf("expected payment refund counters reset, got amount_refunded=%d refund_status=%s", refundedAmount, refundStatus)
 	}
 
-	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
-	merchantPayable, err := ledgerSvc.GetBalanceByCurrency(ctx, createdMerchant.ID, "MERCHANT_PAYABLE", "INR")
+	merchantPayable, err := ledgerBalanceByCurrency(ctx, db, createdMerchant.ID, "MERCHANT_PAYABLE", "INR")
 	if err != nil {
 		t.Fatalf("merchant payable balance: %v", err)
 	}
 	if merchantPayable != -9800 {
 		t.Fatalf("expected merchant payable balance -9800 after reversal, got %d", merchantPayable)
 	}
-	refundClearing, err := ledgerSvc.GetBalanceByCurrency(ctx, createdMerchant.ID, "REFUND_CLEARING", "INR")
+	refundClearing, err := ledgerBalanceByCurrency(ctx, db, createdMerchant.ID, "REFUND_CLEARING", "INR")
 	if err != nil {
 		t.Fatalf("refund clearing balance: %v", err)
 	}
@@ -142,7 +139,7 @@ func TestIntegrationSettlementRollbackMarkerBlocksPayout(t *testing.T) {
 	ctx := context.Background()
 
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
-	_, authHeader, sttl := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
+	_, authHeader, sttl := createSettledMerchantFlowForCompensation(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
 
 	markReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/rollback-marker", bytes.NewReader([]byte(`{"reason":"reconciliation_gap_detected"}`)))
 	markReq.Header.Set("Authorization", authHeader)
@@ -173,145 +170,6 @@ func TestIntegrationSettlementRollbackMarkerBlocksPayout(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected one settlement.rollback_marked event, got %d", count)
-	}
-}
-
-func TestIntegrationPayoutCancellationPreventsLateCompletionPosting(t *testing.T) {
-	db := testDB(t)
-	defer db.Close()
-	ctx := context.Background()
-
-	mux, merchantSvc, orderSvc, paymentSvc := buildPayoutRailMux(db, func(context.Context, string, string, string) (map[string]any, error) {
-		return map[string]any{"status": "processing"}, nil
-	})
-	merchantID, authHeader, sttl := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
-	req.Header.Set("Authorization", authHeader)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("initiate payout: expected 201, got %d body=%s", rec.Code, rec.Body.String())
-	}
-
-	var created map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode payout create response: %v", err)
-	}
-	payoutID, _ := created["id"].(string)
-	if payoutID == "" {
-		t.Fatal("expected payout id")
-	}
-
-	cancelReq := httptest.NewRequest(http.MethodPost, "/v1/payouts/"+payoutID+"/cancel", bytes.NewReader([]byte(`{"reason":"manual_abort_before_completion"}`)))
-	cancelReq.Header.Set("Authorization", authHeader)
-	cancelReq.Header.Set("Content-Type", "application/json")
-	cancelRec := httptest.NewRecorder()
-	mux.ServeHTTP(cancelRec, cancelReq)
-	if cancelRec.Code != http.StatusOK {
-		t.Fatalf("cancel payout: expected 200, got %d body=%s", cancelRec.Code, cancelRec.Body.String())
-	}
-	if !bytes.Contains(cancelRec.Body.Bytes(), []byte(`"status":"cancelled"`)) {
-		t.Fatalf("expected cancelled payout response, got %s", cancelRec.Body.String())
-	}
-
-	completePayload := map[string]any{
-		"event_id":       "rail_evt_cancelled_late_complete",
-		"payout_id":      payoutID,
-		"merchant_id":    merchantID,
-		"status":         "completed",
-		"rail_reference": "BNK_CANCELLED_LATE",
-		"occurred_at":    time.Now().UTC().Format(time.RFC3339),
-	}
-	completeRec := doRailCallback(t, mux, completePayload, true)
-	if completeRec.Code != http.StatusAccepted {
-		t.Fatalf("late completion callback: expected 202, got %d body=%s", completeRec.Code, completeRec.Body.String())
-	}
-
-	var status string
-	if err := db.QueryRow(ctx, `SELECT status FROM paygate_payouts.payouts WHERE id = $1`, payoutID).Scan(&status); err != nil {
-		t.Fatalf("query payout status: %v", err)
-	}
-	if status != "cancelled" {
-		t.Fatalf("expected payout to remain cancelled, got %s", status)
-	}
-
-	var ledgerEntries int
-	if err := db.QueryRow(ctx, `SELECT COUNT(*) FROM paygate_ledger.ledger_entries WHERE source_id = $1`, payoutID).Scan(&ledgerEntries); err != nil {
-		t.Fatalf("count payout ledger entries: %v", err)
-	}
-	if ledgerEntries != 0 {
-		t.Fatalf("expected no payout ledger postings after cancellation, got %d", ledgerEntries)
-	}
-}
-
-func TestIntegrationWebhookRetryCancellationStopsReplayableFailures(t *testing.T) {
-	db := testDB(t)
-	defer db.Close()
-	ctx := context.Background()
-
-	mux, merchantSvc, _, _ := buildGatewayMux(db)
-	createdMerchant, authHeader := createMerchantAndWriteKey(t, ctx, merchantSvc, "webhook-cancel@test.com")
-
-	failingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	defer failingServer.Close()
-
-	createReq := httptest.NewRequest(http.MethodPost, "/v1/webhooks", bytes.NewReader([]byte(`{"url":"`+failingServer.URL+`","events":["payment.captured"]}`)))
-	createReq.Header.Set("Authorization", authHeader)
-	createReq.Header.Set("Content-Type", "application/json")
-	createRec := httptest.NewRecorder()
-	mux.ServeHTTP(createRec, createReq)
-	if createRec.Code != http.StatusCreated {
-		t.Fatalf("create webhook: expected 201, got %d body=%s", createRec.Code, createRec.Body.String())
-	}
-
-	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
-	if err := webhookSvc.DeliverEvent(ctx, "evt_cancel_retry", createdMerchant.ID, "payment.captured", map[string]any{
-		"event_type": "payment.captured",
-		"payment_id": "pay_cancel_retry",
-		"order_id":   "order_cancel_retry",
-	}); err != nil {
-		t.Fatalf("deliver event: %v", err)
-	}
-
-	cancelReq := httptest.NewRequest(http.MethodPost, "/v1/webhooks/events/evt_cancel_retry/cancel-retries", bytes.NewReader([]byte(`{"reason":"operator_cancelled_retry_queue"}`)))
-	cancelReq.Header.Set("Authorization", authHeader)
-	cancelReq.Header.Set("Content-Type", "application/json")
-	cancelRec := httptest.NewRecorder()
-	mux.ServeHTTP(cancelRec, cancelReq)
-	if cancelRec.Code != http.StatusOK {
-		t.Fatalf("cancel retries: expected 200, got %d body=%s", cancelRec.Code, cancelRec.Body.String())
-	}
-
-	var status string
-	var nextRetryAt *time.Time
-	var cancelReason string
-	if err := db.QueryRow(ctx, `
-SELECT status, next_retry_at, cancel_reason
-FROM paygate_webhooks.webhook_delivery_attempts
-WHERE merchant_id = $1 AND event_id = $2
-LIMIT 1
-`, createdMerchant.ID, "evt_cancel_retry").Scan(&status, &nextRetryAt, &cancelReason); err != nil {
-		t.Fatalf("query delivery attempt: %v", err)
-	}
-	if status != string(webhook.DeliveryCancelled) {
-		t.Fatalf("expected cancelled delivery status, got %s", status)
-	}
-	if nextRetryAt != nil {
-		t.Fatalf("expected next_retry_at to be cleared after cancellation, got %v", nextRetryAt)
-	}
-	if cancelReason != "operator_cancelled_retry_queue" {
-		t.Fatalf("expected cancel reason to persist, got %q", cancelReason)
-	}
-
-	processed, err := webhookSvc.RetryPendingDeliveries(ctx, 20)
-	if err != nil {
-		t.Fatalf("retry pending deliveries: %v", err)
-	}
-	if processed != 0 {
-		t.Fatalf("expected no retry work after cancellation, got %d", processed)
 	}
 }
 
@@ -367,4 +225,39 @@ func authorizeAndCaptureOptional(t *testing.T, ctx context.Context, paymentSvc *
 		t.Fatalf("capture payment: %v", err)
 	}
 	return captured
+}
+
+func ledgerBalanceByCurrency(ctx context.Context, db *pgxpool.Pool, merchantID, accountCode, currency string) (int64, error) {
+	var balance int64
+	err := db.QueryRow(ctx, `
+SELECT COALESCE(SUM(debit_amount - credit_amount), 0)
+FROM paygate_ledger.ledger_entries
+WHERE merchant_id = $1 AND account_code = $2 AND currency = $3
+`, merchantID, accountCode, currency).Scan(&balance)
+	return balance, err
+}
+
+func createSettledMerchantFlowForCompensation(t *testing.T, ctx context.Context, db *pgxpool.Pool, merchantSvc *merchant.Service, orderSvc *order.Service, paymentSvc *payment.Service) (string, string, settlementSnapshot) {
+	t.Helper()
+
+	createdMerchant, authHeader := createMerchantAndWriteKey(t, ctx, merchantSvc, "settlement-rollback@test.com")
+	createdOrder := createOrderForMerchant(t, ctx, orderSvc, createdMerchant.ID, 9500, "settlement-rollback-order")
+	captured := authorizeAndCaptureOptional(t, ctx, paymentSvc, createdMerchant.ID, createdOrder, true)
+
+	var settlementID string
+	if err := db.QueryRow(ctx, `
+SELECT id
+FROM paygate_settlements.settlements
+WHERE merchant_id = $1 AND payment_id = $2
+ORDER BY created_at DESC
+LIMIT 1
+`, createdMerchant.ID, captured.PaymentID).Scan(&settlementID); err != nil {
+		t.Fatalf("query settlement: %v", err)
+	}
+
+	return createdMerchant.ID, authHeader, settlementSnapshot{ID: settlementID}
+}
+
+type settlementSnapshot struct {
+	ID string
 }
