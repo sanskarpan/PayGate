@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sanskarpan/PayGate/internal/ledger"
 	"github.com/sanskarpan/PayGate/internal/merchant"
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
+	"github.com/sanskarpan/PayGate/internal/settlement"
 )
 
 func TestIntegrationPaymentAuthorizationReverseBlocksCaptureAndWritesEvent(t *testing.T) {
@@ -244,18 +247,13 @@ func createSettledMerchantFlowForCompensation(t *testing.T, ctx context.Context,
 	createdOrder := createOrderForMerchant(t, ctx, orderSvc, createdMerchant.ID, 9500, "settlement-rollback-order")
 	authorizeAndCaptureOptional(t, ctx, paymentSvc, createdMerchant.ID, createdOrder, true)
 
-	var settlementID string
-	if err := db.QueryRow(ctx, `
-SELECT id
-FROM paygate_settlements.settlements
-WHERE merchant_id = $1
-ORDER BY created_at DESC
-LIMIT 1
-`, createdMerchant.ID).Scan(&settlementID); err != nil {
-		t.Fatalf("query settlement: %v", err)
+	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledger.NewService(ledger.NewRepository(db))))
+	sttl, err := settlementSvc.RunBatch(ctx, createdMerchant.ID, time.Unix(0, 0), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("run settlement batch: %v", err)
 	}
 
-	return createdMerchant.ID, authHeader, settlementSnapshot{ID: settlementID}
+	return createdMerchant.ID, authHeader, settlementSnapshot{ID: sttl.ID}
 }
 
 type settlementSnapshot struct {
