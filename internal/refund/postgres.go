@@ -313,14 +313,12 @@ WHERE id = $1
 		return Refund{}, err
 	}
 
-	refundStatus := "none"
+	refundStatus := "partial"
 	switch total := newAmountRefunded + amountRefundedPending; {
 	case total <= 0:
 		refundStatus = "none"
 	case total >= paymentAmount:
 		refundStatus = "full"
-	default:
-		refundStatus = "partial"
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE paygate_payments.payments
