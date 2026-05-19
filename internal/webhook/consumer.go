@@ -28,12 +28,20 @@ var topics = []string{
 type Consumer struct {
 	svc           *Service
 	kafkaConsumer KafkaConsumer
+	consumerGroup string
 }
 
 // NewConsumer creates a Consumer that reads from the given KafkaConsumer and
 // delivers events through svc.
 func NewConsumer(svc *Service, kc KafkaConsumer) *Consumer {
-	return &Consumer{svc: svc, kafkaConsumer: kc}
+	return &Consumer{svc: svc, kafkaConsumer: kc, consumerGroup: "webhook-service"}
+}
+
+func NewNamedConsumer(svc *Service, kc KafkaConsumer, consumerGroup string) *Consumer {
+	if consumerGroup == "" {
+		consumerGroup = "webhook-service"
+	}
+	return &Consumer{svc: svc, kafkaConsumer: kc, consumerGroup: consumerGroup}
 }
 
 // Start subscribes to all paygate Kafka topics and blocks until ctx is
@@ -49,12 +57,17 @@ func (c *Consumer) Start(ctx context.Context) error {
 // outboxEnvelope matches the JSON structure written by outbox.Relay.PublishBatch.
 type outboxEnvelope struct {
 	ID            string          `json:"id"`
+	EventID       string          `json:"event_id"`
 	AggregateType string          `json:"aggregate_type"`
 	AggregateID   string          `json:"aggregate_id"`
 	EventType     string          `json:"event_type"`
 	MerchantID    string          `json:"merchant_id"`
 	Payload       json.RawMessage `json:"payload"`
 	CreatedAt     int64           `json:"created_at"`
+	OccurredAt    string          `json:"occurred_at"`
+	CorrelationID string          `json:"correlation_id"`
+	CausationID   string          `json:"causation_id"`
+	SchemaSubject string          `json:"schema_subject"`
 	SchemaVersion string          `json:"schema_version"`
 }
 
@@ -65,6 +78,9 @@ func (c *Consumer) HandleMessage(ctx context.Context, topic, key string, payload
 	var env outboxEnvelope
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return fmt.Errorf("webhook consumer: unmarshal outbox envelope from topic %s: %w", topic, err)
+	}
+	if env.ID == "" {
+		env.ID = env.EventID
 	}
 
 	if env.ID == "" {
@@ -96,7 +112,21 @@ func (c *Consumer) HandleMessage(ctx context.Context, topic, key string, payload
 	innerPayload["aggregate_type"] = env.AggregateType
 	innerPayload["aggregate_id"] = env.AggregateID
 	innerPayload["created_at"] = time.Unix(env.CreatedAt, 0).UTC().Format(time.RFC3339)
-
+	if env.OccurredAt != "" {
+		innerPayload["occurred_at"] = env.OccurredAt
+	}
+	if env.CorrelationID != "" {
+		innerPayload["correlation_id"] = env.CorrelationID
+	}
+	if env.CausationID != "" {
+		innerPayload["causation_id"] = env.CausationID
+	}
+	if env.SchemaSubject != "" {
+		innerPayload["schema_subject"] = env.SchemaSubject
+	}
+	if env.SchemaVersion != "" {
+		innerPayload["schema_version"] = env.SchemaVersion
+	}
 	if err := c.svc.DeliverEvent(ctx, env.ID, env.MerchantID, env.EventType, innerPayload); err != nil {
 		return fmt.Errorf("webhook consumer: deliver event (id=%s): %w", env.ID, err)
 	}

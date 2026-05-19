@@ -31,6 +31,7 @@ const (
 	DeliverySucceeded    DeliveryStatus = "succeeded"
 	DeliveryFailed       DeliveryStatus = "failed"
 	DeliveryDeadLettered DeliveryStatus = "dead_lettered"
+	DeliveryCancelled    DeliveryStatus = "cancelled"
 )
 
 // MaxDeliveryAttempts is the number of attempts before an event is dead-lettered.
@@ -104,8 +105,10 @@ type WebhookDeliveryAttempt struct {
 	ResponseCode   int
 	ResponseBody   string
 	ErrorMessage   string
+	CancelReason   string
 	AttemptNumber  int
 	NextRetryAt    *time.Time
+	CancelledAt    *time.Time
 	CreatedAt      time.Time
 }
 
