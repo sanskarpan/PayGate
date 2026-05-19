@@ -6,12 +6,20 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/sanskarpan/PayGate/internal/common/middleware"
+	"github.com/sanskarpan/PayGate/internal/ledger"
+	"github.com/sanskarpan/PayGate/internal/saga"
 )
 
 // Service orchestrates payout use-cases.
 type Service struct {
-	repo   Repository
-	logger *slog.Logger
+	repo             Repository
+	logger           *slog.Logger
+	ledgerSvc        *ledger.Service
+	sagaSvc          *saga.Service
+	transferExecutor func(context.Context, string, string, string) (map[string]any, error)
+	railSecret       string
 }
 
 // NewService creates a new Service.
@@ -22,39 +30,80 @@ func NewService(repo Repository, logger *slog.Logger) *Service {
 	return &Service{repo: repo, logger: logger}
 }
 
+func (s *Service) SetRailCallbackSecret(secret string) {
+	s.railSecret = secret
+}
+
+func (s *Service) SetLedgerService(ledgerSvc *ledger.Service) {
+	s.ledgerSvc = ledgerSvc
+}
+
+func (s *Service) EnableSagaOrchestration(svc *saga.Service) {
+	s.sagaSvc = svc
+}
+
+func (s *Service) RegisterSagaHandlers(svc *saga.Service) {
+	svc.RegisterHandler("payout.complete_transfer", func(ctx context.Context, cmd saga.Command) (map[string]any, error) {
+		return s.executeTransfer(ctx, cmd.MerchantID, stringValue(cmd.InputPayload["payout_id"]), cmd.CommandID)
+	})
+	svc.RegisterCompensationHandler("payout_execution", func(ctx context.Context, inst saga.Instance) error {
+		payoutID := stringValue(inst.ContextPayload["payout_id"])
+		if payoutID == "" {
+			payoutID = stringValue(inst.InputPayload["payout_id"])
+		}
+		if payoutID == "" {
+			return nil
+		}
+		current, err := s.repo.GetByID(ctx, inst.MerchantID, payoutID)
+		if err != nil {
+			if errors.Is(err, ErrPayoutNotFound) {
+				return nil
+			}
+			return err
+		}
+		switch current.Status {
+		case StateCompleted, StateFailed, StateReturned, StateReversed, StateCancelled:
+			return nil
+		default:
+			_, err := s.repo.Fail(ctx, inst.MerchantID, payoutID, "saga compensation applied: "+inst.FailureReason)
+			return err
+		}
+	})
+}
+
+func (s *Service) SetTransferExecutorForTest(fn func(context.Context, string, string, string) (map[string]any, error)) {
+	s.transferExecutor = fn
+}
+
 // InitiatePayout creates a payout for the given settlement if one does not already exist,
-// transitions it to processing, and simulates the bank transfer asynchronously.
+// transitions it to processing, and launches execution.
 func (s *Service) InitiatePayout(ctx context.Context, merchantID, settlementID string) (Payout, error) {
-	// Get or create the payout for this settlement.
 	p, err := s.repo.GetBySettlementID(ctx, merchantID, settlementID)
 	if err != nil {
 		if !errors.Is(err, ErrPayoutNotFound) {
 			return Payout{}, err
 		}
-		// Payout does not exist yet — we need to look up the settlement net amount.
-		// The caller (handler) is expected to pass amount/currency via context or the
-		// settlement service. Here we delegate to GetBySettlementID callers' responsibility:
-		// if none found, return the not found error so the handler can supply the amount.
 		return Payout{}, ErrPayoutNotFound
 	}
 
-	// Initiate the existing payout.
 	p, err = s.repo.Initiate(ctx, merchantID, p.ID)
 	if err != nil {
 		return Payout{}, err
 	}
-
-	// Detach from request context so HTTP cancellation doesn't abort the transfer.
-	detached := context.WithoutCancel(ctx)
-	go s.simulateBankTransfer(detached, p.MerchantID, p.ID)
-
+	if err := s.launchPayoutExecution(ctx, &p); err != nil {
+		return Payout{}, err
+	}
 	return p, nil
 }
 
 // InitiatePayoutForSettlement creates a payout for the given settlement using the provided
-// amount and currency, then transitions it to processing and kicks off a simulated bank transfer.
+// amount and currency, then transitions it to processing and launches execution.
 func (s *Service) InitiatePayoutForSettlement(ctx context.Context, merchantID, settlementID string, amount int64, currency string) (Payout, error) {
-	// Try to get existing payout first.
+	if s.ledgerSvc != nil {
+		if err := s.ledgerSvc.CanReserveForPayout(ctx, merchantID, currency, amount); err != nil {
+			return Payout{}, err
+		}
+	}
 	existing, err := s.repo.GetBySettlementID(ctx, merchantID, settlementID)
 	if err != nil && !errors.Is(err, ErrPayoutNotFound) {
 		return Payout{}, err
@@ -62,7 +111,6 @@ func (s *Service) InitiatePayoutForSettlement(ctx context.Context, merchantID, s
 
 	var p Payout
 	if errors.Is(err, ErrPayoutNotFound) {
-		// Create a new payout.
 		p, err = s.repo.CreateForSettlement(ctx, merchantID, settlementID, amount, currency)
 		if err != nil {
 			return Payout{}, fmt.Errorf("create payout: %w", err)
@@ -71,39 +119,14 @@ func (s *Service) InitiatePayoutForSettlement(ctx context.Context, merchantID, s
 		p = existing
 	}
 
-	// Initiate (pending → processing).
 	p, err = s.repo.Initiate(ctx, merchantID, p.ID)
 	if err != nil {
 		return Payout{}, fmt.Errorf("initiate payout: %w", err)
 	}
-
-	// Detach from request context so HTTP cancellation doesn't abort the transfer.
-	detached := context.WithoutCancel(ctx)
-	go s.simulateBankTransfer(detached, p.MerchantID, p.ID)
-
-	return p, nil
-}
-
-// simulateBankTransfer sleeps 2s then completes (or fails) the payout.
-func (s *Service) simulateBankTransfer(ctx context.Context, merchantID, payoutID string) {
-	time.Sleep(2 * time.Second)
-
-	bankRef := fmt.Sprintf("BNK_%d", time.Now().UnixNano())
-	detached := ctx
-
-	if _, err := s.repo.Complete(detached, merchantID, payoutID, bankRef); err != nil {
-		s.logger.Error("simulate bank transfer: complete failed",
-			"payout_id", payoutID,
-			"merchant_id", merchantID,
-			"error", err,
-		)
-		if _, ferr := s.repo.Fail(detached, merchantID, payoutID, err.Error()); ferr != nil {
-			s.logger.Error("simulate bank transfer: fail also failed",
-				"payout_id", payoutID,
-				"error", ferr,
-			)
-		}
+	if err := s.launchPayoutExecution(ctx, &p); err != nil {
+		return Payout{}, err
 	}
+	return p, nil
 }
 
 // Get returns a payout by ID scoped to the merchant.
@@ -119,4 +142,239 @@ func (s *Service) List(ctx context.Context, merchantID string, limit int) ([]Pay
 // GetBySettlement returns the payout associated with a settlement.
 func (s *Service) GetBySettlement(ctx context.Context, merchantID, settlementID string) (Payout, error) {
 	return s.repo.GetBySettlementID(ctx, merchantID, settlementID)
+}
+
+func (s *Service) ListEvents(ctx context.Context, merchantID, payoutID string, limit int) ([]TimelineEvent, error) {
+	return s.repo.ListEvents(ctx, merchantID, payoutID, limit)
+}
+
+func (s *Service) Cancel(ctx context.Context, merchantID, payoutID, reason string) (Payout, error) {
+	current, err := s.repo.Cancel(ctx, merchantID, payoutID, reason)
+	if err != nil {
+		return Payout{}, err
+	}
+	if s.sagaSvc != nil && current.SagaID != "" {
+		if _, overrideErr := s.sagaSvc.Override(ctx, saga.OverrideInput{
+			MerchantID: current.MerchantID,
+			SagaID:     current.SagaID,
+			Action:     saga.OverrideActionAbort,
+			Reason:     reason,
+		}); overrideErr != nil {
+			s.logger.Warn("payout cancel saga override failed", "payout_id", payoutID, "saga_id", current.SagaID, "error", overrideErr)
+		}
+	}
+	return current, nil
+}
+
+func (s *Service) UpsertSimulatorScenario(ctx context.Context, merchantID, settlementID string, scenario SimulatorScenario) (SimulatorScenario, error) {
+	if err := validateSimulatorScenario(scenario); err != nil {
+		return SimulatorScenario{}, err
+	}
+	return s.repo.UpsertSimulatorScenario(ctx, merchantID, settlementID, scenario)
+}
+
+func (s *Service) GetSimulatorScenario(ctx context.Context, merchantID, settlementID string) (SimulatorScenario, error) {
+	scenario, err := s.repo.GetSimulatorScenario(ctx, merchantID, settlementID)
+	if errors.Is(err, ErrSimulatorScenarioNotFound) {
+		scenario = defaultSimulatorScenario()
+		scenario.MerchantID = merchantID
+		scenario.SettlementID = settlementID
+		return scenario, nil
+	}
+	return scenario, err
+}
+
+func (s *Service) ApplyRailCallback(ctx context.Context, callback RailCallback, signature string) (Payout, bool, error) {
+	return s.repo.ApplyRailCallback(ctx, callback, signature)
+}
+
+func (s *Service) launchPayoutExecution(ctx context.Context, p *Payout) error {
+	if p.Status == StateCompleted || p.Status == StateFailed || p.Status == StateCancelled {
+		return nil
+	}
+	if s.sagaSvc == nil {
+		go s.simulateBankTransfer(context.WithoutCancel(ctx), p.MerchantID, p.ID)
+		return nil
+	}
+	if p.SagaID != "" {
+		return nil
+	}
+
+	correlationID, _ := middleware.RequestIDFromContext(ctx)
+	instance, err := s.sagaSvc.StartCommandSaga(ctx, saga.CreateCommandSagaInput{
+		MerchantID:    p.MerchantID,
+		SagaType:      "payout_execution",
+		CorrelationID: correlationID,
+		InputPayload: map[string]any{
+			"payout_id":     p.ID,
+			"settlement_id": p.SettlementID,
+			"amount":        p.Amount,
+			"currency":      p.Currency,
+		},
+		ContextPayload: map[string]any{
+			"payout_id": p.ID,
+		},
+		InitialStep: saga.CreateStepInput{
+			StepName:    "complete_payout_transfer",
+			StepKind:    saga.StepKindCommand,
+			CommandName: "payout.complete_transfer",
+			InputPayload: map[string]any{
+				"payout_id": p.ID,
+			},
+			MaxAttempts: 3,
+		},
+	})
+	if err != nil {
+		if _, failErr := s.repo.Fail(ctx, p.MerchantID, p.ID, "failed to start payout saga: "+err.Error()); failErr != nil {
+			s.logger.Error("payout saga start failure handling failed", "payout_id", p.ID, "error", failErr)
+		}
+		return fmt.Errorf("start payout saga: %w", err)
+	}
+	updated, err := s.repo.AttachSaga(ctx, p.MerchantID, p.ID, instance.ID)
+	if err != nil {
+		if _, failErr := s.repo.Fail(ctx, p.MerchantID, p.ID, "failed to attach payout saga: "+err.Error()); failErr != nil {
+			s.logger.Error("payout saga attach failure handling failed", "payout_id", p.ID, "error", failErr)
+		}
+		return fmt.Errorf("attach payout saga: %w", err)
+	}
+	*p = updated
+	return nil
+}
+
+// simulateBankTransfer sleeps 2s then completes (or fails) the payout.
+func (s *Service) simulateBankTransfer(ctx context.Context, merchantID, payoutID string) {
+	if _, err := s.executeTransfer(ctx, merchantID, payoutID, ""); err != nil {
+		s.logger.Error("simulate bank transfer failed", "payout_id", payoutID, "merchant_id", merchantID, "error", err)
+		if _, ferr := s.repo.Fail(ctx, merchantID, payoutID, err.Error()); ferr != nil {
+			s.logger.Error("simulate bank transfer: fail also failed", "payout_id", payoutID, "error", ferr)
+		}
+	}
+}
+
+func (s *Service) executeTransfer(ctx context.Context, merchantID, payoutID, commandID string) (map[string]any, error) {
+	current, err := s.repo.GetByID(ctx, merchantID, payoutID)
+	if err == nil {
+		switch current.Status {
+		case StateCompleted, StateFailed, StateReturned, StateReversed, StateCancelled:
+			return map[string]any{
+				"payout_id":      current.ID,
+				"bank_reference": current.BankReference,
+				"status":         current.Status,
+			}, nil
+		}
+	}
+
+	if s.transferExecutor != nil {
+		return s.transferExecutor(ctx, merchantID, payoutID, commandID)
+	}
+
+	baseID := commandID
+	if baseID == "" {
+		baseID = fmt.Sprintf("rail_%d", time.Now().UnixNano())
+	}
+	scenario, shouldFail, err := s.repo.GetSimulatorScenarioForPayout(ctx, merchantID, payoutID)
+	if err != nil {
+		return nil, err
+	}
+	if shouldFail {
+		return nil, errors.New("simulated payout rail transient failure")
+	}
+	if len(scenario.Steps) == 0 {
+		scenario = defaultSimulatorScenario()
+	}
+
+	var payoutOut Payout
+	for i, step := range scenario.Steps {
+		eventID := fmt.Sprintf("%s_%s_%d", baseID, step.Status, i)
+		occurredAt := time.Now().UTC()
+		if step.DelayMilliseconds > 0 {
+			time.Sleep(time.Duration(step.DelayMilliseconds) * time.Millisecond)
+		}
+		callbackOut, _, err := s.repo.ApplyRailCallback(ctx, RailCallback{
+			EventID:       eventID,
+			PayoutID:      payoutID,
+			MerchantID:    merchantID,
+			Status:        step.Status,
+			RailReference: defaultRailReference(step, step.Status),
+			Reason:        step.Reason,
+			OccurredAt:    occurredAt,
+		}, "simulated")
+		if err != nil && !errors.Is(err, ErrInvalidTransition) {
+			return nil, err
+		}
+		if err == nil {
+			payoutOut = callbackOut
+		}
+		for dup := 0; dup < step.DuplicateCount; dup++ {
+			callbackOut, _, err = s.repo.ApplyRailCallback(ctx, RailCallback{
+				EventID:       eventID,
+				PayoutID:      payoutID,
+				MerchantID:    merchantID,
+				Status:        step.Status,
+				RailReference: defaultRailReference(step, step.Status),
+				Reason:        step.Reason,
+				OccurredAt:    occurredAt,
+			}, "simulated")
+			if err != nil && !errors.Is(err, ErrInvalidTransition) {
+				return nil, err
+			}
+			if err == nil {
+				payoutOut = callbackOut
+			}
+		}
+	}
+	if payoutOut.ID == "" {
+		payoutOut, err = s.repo.GetByID(ctx, merchantID, payoutID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return map[string]any{
+		"payout_id":      payoutOut.ID,
+		"bank_reference": payoutOut.BankReference,
+		"status":         payoutOut.Status,
+	}, nil
+}
+
+func stringValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func validateSimulatorScenario(scenario SimulatorScenario) error {
+	for _, step := range scenario.Steps {
+		switch step.Status {
+		case RailStatusProcessing, RailStatusCompleted, RailStatusFailed, RailStatusReturned, RailStatusReversed:
+		default:
+			return fmt.Errorf("%w: unsupported step status %q", ErrInvalidSimulatorScenario, step.Status)
+		}
+		if step.DelayMilliseconds < 0 || step.DuplicateCount < 0 {
+			return fmt.Errorf("%w: negative delay or duplicate count", ErrInvalidSimulatorScenario)
+		}
+	}
+	if scenario.TransientFailuresRemaining < 0 {
+		return fmt.Errorf("%w: transient_failures_remaining must be >= 0", ErrInvalidSimulatorScenario)
+	}
+	return nil
+}
+
+func defaultSimulatorScenario() SimulatorScenario {
+	return SimulatorScenario{
+		Steps: []SimulatorScenarioStep{
+			{Status: RailStatusProcessing},
+			{Status: RailStatusCompleted, DelayMilliseconds: 2000},
+		},
+	}
+}
+
+func defaultRailReference(step SimulatorScenarioStep, status RailCallbackStatus) string {
+	if step.RailReference != "" {
+		return step.RailReference
+	}
+	if status == RailStatusCompleted {
+		return fmt.Sprintf("BNK_%d", time.Now().UnixNano())
+	}
+	return ""
 }
