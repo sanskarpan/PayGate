@@ -101,6 +101,11 @@ var (
 		Name: "paygate_outbox_unpublished_total",
 		Help: "Number of outbox entries not yet published to Kafka",
 	})
+
+	EventSchemaPublishesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "paygate_event_schema_publishes_total",
+		Help: "Total published event envelopes by schema subject and version",
+	}, []string{"topic", "event_type", "schema_subject", "schema_version"})
 )
 
 type statusRecorder struct {
