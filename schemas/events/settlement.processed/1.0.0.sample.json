@@ -1,0 +1,13 @@
+{
+  "event_id": "evt_settlement_processed_v1",
+  "event_type": "settlement.processed",
+  "occurred_at": "2026-05-13T10:09:00Z",
+  "correlation_id": "settl_123",
+  "causation_id": "evt_settlement_processed_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "settlement_id": "settl_123",
+    "net_amount": "49000"
+  }
+}
