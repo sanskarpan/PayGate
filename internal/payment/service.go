@@ -111,6 +111,10 @@ func (s *Service) CaptureForMerchant(ctx context.Context, merchantID, paymentID 
 	return s.repo.CaptureAuthorizedPayment(ctx, merchantID, paymentID, amount)
 }
 
+func (s *Service) ReverseAuthorization(ctx context.Context, merchantID, paymentID, reason string) (CaptureResult, error) {
+	return s.repo.ReverseAuthorization(ctx, merchantID, paymentID, reason)
+}
+
 func (s *Service) Get(ctx context.Context, merchantID, paymentID string) (CaptureResult, error) {
 	return s.repo.GetPayment(ctx, merchantID, paymentID)
 }
