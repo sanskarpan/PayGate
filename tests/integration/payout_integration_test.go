@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -328,7 +329,81 @@ func TestIntegrationPayoutSimulatorScenarioExercisesRetryOutOfOrderDuplicateAndR
 	defer db.Close()
 	ctx := context.Background()
 
-	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
+	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
+	transferFn := func(ctx context.Context, merchantID, payoutID, commandID string) (map[string]any, error) {
+		repo := payout.NewPostgresRepository(db, ledgerSvc)
+		var payoutOut payout.Payout
+		for attempt := 0; attempt < 5; attempt++ {
+			scenario, shouldFail, err := repo.GetSimulatorScenarioForPayout(ctx, merchantID, payoutID)
+			if err != nil {
+				return nil, err
+			}
+			if shouldFail {
+				continue
+			}
+			baseID := commandID
+			if baseID == "" {
+				baseID = fmt.Sprintf("rail_%d", time.Now().UnixNano())
+			}
+			for i, step := range scenario.Steps {
+				eventID := fmt.Sprintf("%s_%s_%d", baseID, step.Status, i)
+				occurredAt := time.Now().UTC()
+				if step.DelayMilliseconds > 0 {
+					time.Sleep(time.Duration(step.DelayMilliseconds) * time.Millisecond)
+				}
+				railReference := step.RailReference
+				if railReference == "" {
+					railReference = fmt.Sprintf("BANK_%s", strings.ToUpper(string(step.Status)))
+				}
+				callbackOut, _, err := repo.ApplyRailCallback(ctx, payout.RailCallback{
+					EventID:       eventID,
+					PayoutID:      payoutID,
+					MerchantID:    merchantID,
+					Status:        step.Status,
+					RailReference: railReference,
+					Reason:        step.Reason,
+					OccurredAt:    occurredAt,
+				}, "simulated")
+				if err != nil && !errors.Is(err, payout.ErrInvalidTransition) {
+					return nil, err
+				}
+				if err == nil {
+					payoutOut = callbackOut
+				}
+				for dup := 0; dup < step.DuplicateCount; dup++ {
+					callbackOut, _, err = repo.ApplyRailCallback(ctx, payout.RailCallback{
+						EventID:       eventID,
+						PayoutID:      payoutID,
+						MerchantID:    merchantID,
+						Status:        step.Status,
+						RailReference: railReference,
+						Reason:        step.Reason,
+						OccurredAt:    occurredAt,
+					}, "simulated")
+					if err != nil && !errors.Is(err, payout.ErrInvalidTransition) {
+						return nil, err
+					}
+					if err == nil {
+						payoutOut = callbackOut
+					}
+				}
+			}
+			if payoutOut.ID == "" {
+				payoutOut, err = repo.GetByID(ctx, merchantID, payoutID)
+				if err != nil {
+					return nil, err
+				}
+			}
+			return map[string]any{
+				"payout_id":      payoutOut.ID,
+				"bank_reference": payoutOut.BankReference,
+				"status":         payoutOut.Status,
+			}, nil
+		}
+		return nil, errors.New("simulated payout rail transient failure")
+	}
+
+	mux, merchantSvc, orderSvc, paymentSvc := buildPayoutRailMux(db, transferFn)
 	_, authHeader, sttl := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
 
 	getScenarioReq := httptest.NewRequest(http.MethodGet, "/v1/settlements/"+sttl.ID+"/payout-simulator", nil)
