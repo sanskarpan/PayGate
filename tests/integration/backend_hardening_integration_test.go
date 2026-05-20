@@ -16,6 +16,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/auth"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/dispute"
+	"github.com/sanskarpan/PayGate/internal/eventschema"
 	"github.com/sanskarpan/PayGate/internal/gateway"
 	"github.com/sanskarpan/PayGate/internal/idempotency"
 	"github.com/sanskarpan/PayGate/internal/ledger"
@@ -293,6 +294,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledgerSvc))
 	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
 	disputeSvc := dispute.NewService(dispute.NewPostgresRepository(db))
+	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
 
 	merchantHandler := merchant.NewHandler(merchantSvc)
 	orderHandler := order.NewHandler(orderSvc)
@@ -300,8 +302,10 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	refundHandler := refund.NewHandler(refundSvc)
 	webhookHandler := webhook.NewHandler(webhookSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
 	disputeHandler := dispute.NewHandler(disputeSvc)
+	holdHandler := ledger.NewHoldHandler(ledgerSvc)
+	schemaHandler := eventschema.NewHandler(schemaSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
@@ -317,6 +321,8 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	payoutHandler.RegisterRoutesWithAuth(mux, protected)
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
 	disputeHandler.RegisterRoutesWithAuth(mux, protected)
+	holdHandler.RegisterRoutesWithAuth(mux, protected)
+	schemaHandler.RegisterRoutesWithAuth(mux, protected)
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := httpx.PrincipalFromContext(r.Context())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})

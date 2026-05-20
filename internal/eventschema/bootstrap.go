@@ -145,7 +145,7 @@ func loadFixtureVersion(subjectDir, version string) (Document, map[string]any, e
 	var document Document
 	var sample map[string]any
 
-	schemaRaw, err := os.ReadFile(filepath.Join(subjectDir, version+".schema.json"))
+	schemaRaw, err := fixtureReadFile(subjectDir, version+".schema.json")
 	if err != nil {
 		return Document{}, nil, err
 	}
@@ -153,7 +153,7 @@ func loadFixtureVersion(subjectDir, version string) (Document, map[string]any, e
 		return Document{}, nil, err
 	}
 
-	sampleRaw, err := os.ReadFile(filepath.Join(subjectDir, version+".sample.json"))
+	sampleRaw, err := fixtureReadFile(subjectDir, version+".sample.json")
 	if err != nil {
 		return Document{}, nil, err
 	}
@@ -162,6 +162,12 @@ func loadFixtureVersion(subjectDir, version string) (Document, map[string]any, e
 	}
 
 	return document, sample, nil
+}
+
+func fixtureReadFile(dir, name string) ([]byte, error) {
+	path := filepath.Join(dir, filepath.Clean(name))
+	// #nosec G304 -- schema fixtures are repo-local files resolved from controlled directories.
+	return os.ReadFile(path)
 }
 
 func compareVersions(a, b string) int {
