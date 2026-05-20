@@ -9,8 +9,11 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const integrationDBLockKey int64 = 840421
 
 func testDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -26,6 +29,20 @@ func testDB(t *testing.T) *pgxpool.Pool {
 	if err := db.Ping(ctx); err != nil {
 		t.Skipf("skip integration: db ping failed: %v", err)
 	}
+	conn, err := db.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire integration db lock connection: %v", err)
+	}
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, integrationDBLockKey); err != nil {
+		conn.Release()
+		t.Fatalf("acquire integration db advisory lock: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, integrationDBLockKey); err != nil && err != pgx.ErrNoRows {
+			t.Logf("release integration db advisory lock: %v", err)
+		}
+		conn.Release()
+	})
 	applyMigrations(t, db)
 	return db
 }
