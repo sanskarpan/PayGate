@@ -178,17 +178,17 @@ func (h *Handler) createRollout(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FromVersion     string `json:"from_version"`
 		ToVersion       string `json:"to_version"`
-		CutoverDeadline int64  `json:"cutover_deadline"`
+		CutoverDeadline any    `json:"cutover_deadline"`
 		Notes           string `json:"notes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST", Description: "invalid schema rollout request body"})
 		return
 	}
-	var deadlineTime *time.Time
-	if req.CutoverDeadline > 0 {
-		t := time.Unix(req.CutoverDeadline, 0).UTC()
-		deadlineTime = &t
+	deadlineTime, err := parseCutoverDeadline(req.CutoverDeadline)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST", Description: "invalid cutover_deadline"})
+		return
 	}
 	item, err := h.svc.CreateRollout(r.Context(), CreateRolloutInput{
 		Subject:         r.PathValue("subject"),
@@ -202,6 +202,34 @@ func (h *Handler) createRollout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, presentRollout(item))
+}
+
+func parseCutoverDeadline(raw any) (*time.Time, error) {
+	if raw == nil {
+		return nil, nil
+	}
+
+	switch value := raw.(type) {
+	case string:
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, nil
+		}
+		t, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return nil, err
+		}
+		utc := t.UTC()
+		return &utc, nil
+	case float64:
+		if value <= 0 {
+			return nil, nil
+		}
+		t := time.Unix(int64(value), 0).UTC()
+		return &t, nil
+	default:
+		return nil, errors.New("unsupported cutover deadline type")
+	}
 }
 
 func (h *Handler) getRollout(w http.ResponseWriter, r *http.Request) {
