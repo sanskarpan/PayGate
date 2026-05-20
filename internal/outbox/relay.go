@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	appmetrics "github.com/sanskarpan/PayGate/internal/common/metrics"
 )
 
 type Publisher interface {
@@ -143,7 +142,6 @@ FOR UPDATE SKIP LOCKED
 			if err := publishWithRetry(ctx, r.publisher, topic, rec.MerchantID, payload); err != nil {
 				return 0, err
 			}
-			appmetrics.EventSchemaPublishesTotal.WithLabelValues(topic, rec.EventType, schema.Subject, schema.Version).Inc()
 		}
 		if _, err := tx.Exec(ctx, `UPDATE public.outbox SET published_at = NOW() WHERE id = $1`, rec.ID); err != nil {
 			return 0, fmt.Errorf("mark outbox published: %w", err)
