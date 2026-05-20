@@ -347,42 +347,44 @@ paygate/
 
 ## Phase 5 — Advanced distributed systems track
 
+Status: complete. The implementation, regression coverage, and DR/artifact evidence for this phase are now in repo.
+
 ### Saga orchestration and extraction
-- [ ] Add `saga_instances`, `saga_steps`, and `processed_commands` tables
-- [ ] Build saga orchestrator service with replay endpoint
-- [ ] Add idempotent command handlers in extracted services
-- [ ] Implement compensation flows for failed saga branches
-- [ ] Integration test: crash/restart in middle of saga without double-posting
+- [x] Add `saga_instances`, `saga_steps`, and `processed_commands` tables
+- [x] Build saga orchestrator service with replay endpoint
+- [x] Add idempotent command handlers in extracted services
+- [x] Implement compensation flows for failed saga branches
+- [x] Integration test: crash/restart in middle of saga without double-posting
 
 ### Event schema governance
-- [ ] Add schema registry APIs and persistence (`event_schemas`)
-- [ ] Add CI compatibility check for producer schema changes
-- [ ] Add consumer contract test gate before schema activation
-- [ ] Support dual-publish rollout and cutover tracking
+- [x] Add schema registry APIs and persistence (`event_schemas`)
+- [x] Add CI compatibility check for producer schema changes
+- [x] Add consumer contract test gate before schema activation
+- [x] Support dual-publish rollout and cutover tracking
 
 ### Ledger holds and payout rail simulation
-- [ ] Add `ledger_holds` table and hold APIs (create/release/commit)
-- [ ] Enforce payout eligibility checks against active holds
-- [ ] Build payout rail simulator with async callbacks and returns
-- [ ] Integration test: hold commit produces exactly one final posting
+- [x] Add `ledger_holds` table and hold APIs (create/release/commit)
+- [x] Enforce payout eligibility checks against active holds
+- [x] Build payout rail simulator with async callbacks and returns
+- [x] Integration test: hold commit produces exactly one final posting
 
 ### Disaster recovery maturity
-- [ ] Run quarterly DR drill in staging
-- [ ] Measure and record RTO/RPO and replay duration
-- [ ] Verify post-restore reconciliation before reopening settlements
-- [ ] Add DR drill artifact checklist to runbook
+- [x] Run quarterly DR drill in staging
+- [x] Measure and record RTO/RPO and replay duration
+- [x] Verify post-restore reconciliation before reopening settlements
+- [x] Add DR drill artifact checklist to runbook
 
 ---
 
 ## Documentation deliverables
 
-- [ ] API reference (OpenAPI 3.0 spec)
-- [ ] Webhook event catalog with JSON schemas
-- [ ] Integration guide (how a merchant integrates)
-- [ ] Deployment guide (Docker Compose and K8s)
-- [ ] Runbook: common operational procedures
-- [ ] Architecture decision records (ADRs) for key decisions
-- [ ] README.md with quick start, screenshots, and demo instructions
+- [x] API reference (OpenAPI 3.0 spec)
+- [x] Webhook event catalog with JSON schemas
+- [x] Integration guide (how a merchant integrates)
+- [x] Deployment guide (Docker Compose and K8s)
+- [x] Runbook: common operational procedures
+- [x] Architecture decision records (ADRs) for key decisions
+- [x] README.md with quick start, screenshots, and demo instructions
 
 ---
 

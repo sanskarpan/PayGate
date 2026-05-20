@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/config"
 	"github.com/sanskarpan/PayGate/internal/common/logger"
-	"github.com/sanskarpan/PayGate/internal/eventschema"
 	"github.com/sanskarpan/PayGate/internal/outbox"
 )
 
@@ -34,11 +33,7 @@ func run() error {
 	publisher := outbox.NewKafkaPublisher(cfg.KafkaBrokers)
 	defer func() { _ = publisher.Close() }()
 
-	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), logger.New("event-schema"))
-	if err := schemaSvc.BootstrapFromFixtures(ctx, "schemas/events", "platform"); err != nil {
-		return err
-	}
-	relay := outbox.NewRelay(db, publisher, time.Second, logger.New("outbox-relay")).WithSchemaVersionResolver(schemaSvc)
+	relay := outbox.NewRelay(db, publisher, time.Second, logger.New("outbox-relay"))
 	relay.Start(ctx)
 	return nil
 }

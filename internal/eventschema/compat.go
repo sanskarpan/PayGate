@@ -97,8 +97,8 @@ func compareFields(previous, candidate Document, prefix string) []string {
 			problems = append(problems, fmt.Sprintf("field %s became newly required", path))
 		}
 		if prevDef.Type == "object" {
-			nestedPrev := Document{Type: prevDef.Type, Properties: prevDef.Properties, Required: prevDef.Required}
-			nestedCandidate := Document{Type: candidateDef.Type, Properties: candidateDef.Properties, Required: candidateDef.Required}
+			nestedPrev := Document(prevDef)
+			nestedCandidate := Document(candidateDef)
 			problems = append(problems, compareFields(nestedPrev, nestedCandidate, path)...)
 		}
 	}
@@ -139,8 +139,8 @@ func compareForwardCompatibleFields(future, current Document, prefix string) []s
 			problems = append(problems, fmt.Sprintf("field %s is no longer required", path))
 		}
 		if futureDef.Type == "object" {
-			nestedFuture := Document{Type: futureDef.Type, Properties: futureDef.Properties, Required: futureDef.Required}
-			nestedCurrent := Document{Type: currentDef.Type, Properties: currentDef.Properties, Required: currentDef.Required}
+			nestedFuture := Document(futureDef)
+			nestedCurrent := Document(currentDef)
 			problems = append(problems, compareForwardCompatibleFields(nestedFuture, nestedCurrent, path)...)
 		}
 	}
