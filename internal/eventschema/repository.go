@@ -17,11 +17,11 @@ var (
 )
 
 type CreateSchemaInput struct {
-	Subject    string
-	EventType  string
-	TopicName  string
-	Owner      string
-	ReviewLink string
+	Subject    string `json:"subject"`
+	EventType  string `json:"event_type"`
+	TopicName  string `json:"topic_name"`
+	Owner      string `json:"owner"`
+	ReviewLink string `json:"review_link"`
 }
 
 type CreateVersionInput struct {
