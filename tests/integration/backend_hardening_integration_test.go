@@ -26,6 +26,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/payment"
 	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/refund"
+	"github.com/sanskarpan/PayGate/internal/saga"
 	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
@@ -293,6 +294,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
 	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledgerSvc))
 	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
+	sagaSvc := saga.NewService(saga.NewPostgresRepository(db), nil)
 	disputeSvc := dispute.NewService(dispute.NewPostgresRepository(db))
 	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
 
@@ -303,6 +305,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	webhookHandler := webhook.NewHandler(webhookSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
 	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
+	sagaHandler := saga.NewHandler(sagaSvc)
 	disputeHandler := dispute.NewHandler(disputeSvc)
 	holdHandler := ledger.NewHoldHandler(ledgerSvc)
 	schemaHandler := eventschema.NewHandler(schemaSvc)
@@ -312,6 +315,17 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", httpx.Healthz)
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.Ping(r.Context()); err != nil {
+			httpx.WriteError(w, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVER_ERROR", Description: "database unavailable"})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"checks": map[string]any{"postgres": "ok"},
+		})
+	})
 	merchantHandler.RegisterRoutes(mux)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
@@ -319,6 +333,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	refundHandler.RegisterRoutesWithAuth(mux, protected)
 	settlementHandler.RegisterRoutesWithAuth(mux, protected)
 	payoutHandler.RegisterRoutesWithAuth(mux, protected)
+	sagaHandler.RegisterRoutesWithAuth(mux, protected)
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
 	disputeHandler.RegisterRoutesWithAuth(mux, protected)
 	holdHandler.RegisterRoutesWithAuth(mux, protected)
