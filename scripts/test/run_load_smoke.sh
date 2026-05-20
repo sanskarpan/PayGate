@@ -32,7 +32,7 @@ fi
 cd "${ROOT_DIR}"
 
 if [[ "${START_API}" == "true" ]]; then
-  scripts/dr/recreate_local_env.sh
+  "${ROOT_DIR}/scripts/test/prepare_local_stack.sh"
   env \
     PORT="${API_PORT}" \
     DATABASE_URL="${DATABASE_URL:-postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable}" \
