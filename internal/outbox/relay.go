@@ -30,6 +30,12 @@ type PublishSchemaVersion struct {
 	Version string
 }
 
+type PublishedEnvelope struct {
+	Topic   string
+	Key     string
+	Payload []byte
+}
+
 type SchemaVersionResolver interface {
 	ResolvePublishVersions(ctx context.Context, subject string) ([]PublishSchemaVersion, error)
 }
@@ -123,31 +129,12 @@ FOR UPDATE SKIP LOCKED
 	}
 
 	for _, rec := range records {
-		schemas, err := r.resolvePublishSchemas(ctx, rec.EventType)
+		envelopes, err := r.BuildPublishedEnvelopes(ctx, rec)
 		if err != nil {
 			return 0, err
 		}
-		topic := TopicForEvent(rec.EventType)
-		for _, schema := range schemas {
-			payload, err := json.Marshal(map[string]any{
-				"id":             rec.ID,
-				"event_id":       rec.ID,
-				"aggregate_type": rec.AggregateType,
-				"aggregate_id":   rec.AggregateID,
-				"event_type":     rec.EventType,
-				"merchant_id":    rec.MerchantID,
-				"payload":        json.RawMessage(rec.Payload),
-				"created_at":     rec.CreatedAt.Unix(),
-				"occurred_at":    rec.CreatedAt.UTC().Format(time.RFC3339),
-				"correlation_id": rec.AggregateID,
-				"causation_id":   rec.ID,
-				"schema_subject": schema.Subject,
-				"schema_version": schema.Version,
-			})
-			if err != nil {
-				return 0, fmt.Errorf("marshal outbox envelope: %w", err)
-			}
-			if err := publishWithRetry(ctx, r.publisher, topic, rec.MerchantID, payload); err != nil {
+		for _, envelope := range envelopes {
+			if err := publishWithRetry(ctx, r.publisher, envelope.Topic, envelope.Key, envelope.Payload); err != nil {
 				return 0, err
 			}
 		}
@@ -160,6 +147,41 @@ FOR UPDATE SKIP LOCKED
 		return 0, err
 	}
 	return len(records), nil
+}
+
+func (r *Relay) BuildPublishedEnvelopes(ctx context.Context, rec Record) ([]PublishedEnvelope, error) {
+	schemas, err := r.resolvePublishSchemas(ctx, rec.EventType)
+	if err != nil {
+		return nil, err
+	}
+	topic := TopicForEvent(rec.EventType)
+	envelopes := make([]PublishedEnvelope, 0, len(schemas))
+	for _, schema := range schemas {
+		payload, err := json.Marshal(map[string]any{
+			"id":             rec.ID,
+			"event_id":       rec.ID,
+			"aggregate_type": rec.AggregateType,
+			"aggregate_id":   rec.AggregateID,
+			"event_type":     rec.EventType,
+			"merchant_id":    rec.MerchantID,
+			"payload":        json.RawMessage(rec.Payload),
+			"created_at":     rec.CreatedAt.Unix(),
+			"occurred_at":    rec.CreatedAt.UTC().Format(time.RFC3339),
+			"correlation_id": rec.AggregateID,
+			"causation_id":   rec.ID,
+			"schema_subject": schema.Subject,
+			"schema_version": schema.Version,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal outbox envelope: %w", err)
+		}
+		envelopes = append(envelopes, PublishedEnvelope{
+			Topic:   topic,
+			Key:     rec.MerchantID,
+			Payload: payload,
+		})
+	}
+	return envelopes, nil
 }
 
 func (r *Relay) resolvePublishSchemas(ctx context.Context, eventType string) ([]PublishSchemaVersion, error) {
