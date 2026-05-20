@@ -8,7 +8,9 @@ import (
 
 var (
 	ErrSchemaNotFound        = errors.New("event schema not found")
+	ErrSchemaAlreadyExists   = errors.New("event schema already exists")
 	ErrSchemaVersionNotFound = errors.New("event schema version not found")
+	ErrSchemaVersionExists   = errors.New("event schema version already exists")
 	ErrIncompatibleSchema    = errors.New("schema is not compatible with the current baseline")
 	ErrNoActiveSchemaVersion = errors.New("no active schema version")
 	ErrSchemaRolloutNotFound = errors.New("schema rollout not found")
