@@ -22,6 +22,7 @@ type Relay struct {
 	logger    *slog.Logger
 	interval  time.Duration
 	resolver  SchemaVersionResolver
+	tableName string
 }
 
 type PublishSchemaVersion struct {
@@ -50,11 +51,18 @@ func NewRelay(db *pgxpool.Pool, publisher Publisher, interval time.Duration, log
 	if interval <= 0 {
 		interval = time.Second
 	}
-	return &Relay{db: db, publisher: publisher, logger: logger, interval: interval}
+	return &Relay{db: db, publisher: publisher, logger: logger, interval: interval, tableName: "public.outbox"}
 }
 
 func (r *Relay) WithSchemaVersionResolver(resolver SchemaVersionResolver) *Relay {
 	r.resolver = resolver
+	return r
+}
+
+func (r *Relay) WithTableName(tableName string) *Relay {
+	if tableName != "" {
+		r.tableName = tableName
+	}
 	return r
 }
 
@@ -89,14 +97,14 @@ func (r *Relay) PublishBatch(ctx context.Context, limit int) (int, error) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	rows, err := tx.Query(ctx, `
+	rows, err := tx.Query(ctx, fmt.Sprintf(`
 SELECT id, aggregate_type, aggregate_id, event_type, merchant_id, payload, created_at
-FROM public.outbox
+FROM %s
 WHERE published_at IS NULL
 ORDER BY created_at
 LIMIT $1
 FOR UPDATE SKIP LOCKED
-`, limit)
+`, r.tableName), limit)
 	if err != nil {
 		return 0, fmt.Errorf("query outbox batch: %w", err)
 	}
@@ -143,7 +151,7 @@ FOR UPDATE SKIP LOCKED
 				return 0, err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE public.outbox SET published_at = NOW() WHERE id = $1`, rec.ID); err != nil {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET published_at = NOW() WHERE id = $1`, r.tableName), rec.ID); err != nil {
 			return 0, fmt.Errorf("mark outbox published: %w", err)
 		}
 	}
@@ -169,10 +177,10 @@ func (r *Relay) resolvePublishSchemas(ctx context.Context, eventType string) ([]
 }
 
 func (r *Relay) CleanupPublished(ctx context.Context, olderThan time.Duration) (int64, error) {
-	cmd, err := r.db.Exec(ctx, `
-DELETE FROM public.outbox
+	cmd, err := r.db.Exec(ctx, fmt.Sprintf(`
+DELETE FROM %s
 WHERE published_at IS NOT NULL AND published_at < NOW() - ($1::interval)
-`, fmt.Sprintf("%f seconds", olderThan.Seconds()))
+`, r.tableName), fmt.Sprintf("%f seconds", olderThan.Seconds()))
 	if err != nil {
 		return 0, fmt.Errorf("cleanup outbox rows: %w", err)
 	}
@@ -181,11 +189,11 @@ WHERE published_at IS NOT NULL AND published_at < NOW() - ($1::interval)
 
 func (r *Relay) CountUnpublished(ctx context.Context) (int64, error) {
 	var count int64
-	if err := r.db.QueryRow(ctx, `
+	if err := r.db.QueryRow(ctx, fmt.Sprintf(`
 SELECT COUNT(*)
-FROM public.outbox
+FROM %s
 WHERE published_at IS NULL
-`).Scan(&count); err != nil {
+`, r.tableName)).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count unpublished outbox rows: %w", err)
 	}
 	return count, nil
