@@ -33,7 +33,7 @@ fi
 
 cd "${ROOT_DIR}"
 
-scripts/dr/recreate_local_env.sh
+"${ROOT_DIR}/scripts/test/prepare_local_stack.sh"
 
 docker rm -f "${TOXIPROXY_NAME}" >/dev/null 2>&1 || true
 docker run -d --name "${TOXIPROXY_NAME}" \
