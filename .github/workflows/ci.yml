@@ -111,6 +111,7 @@ jobs:
       API_BASE_URL: http://127.0.0.1:38090
       APP_BASE_URL: http://127.0.0.1:33001
       DATABASE_URL: postgres://paygate:${{ github.run_id }}@localhost:5435/paygate?sslmode=disable
+      PLAYWRIGHT_SKIP_BOOTSTRAP: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
