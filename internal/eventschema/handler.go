@@ -356,7 +356,7 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
 	case errors.Is(err, ErrInvalidSchemaDocument), errors.Is(err, ErrInvalidSchemaRollout):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST", Description: err.Error()})
-	case errors.Is(err, ErrIncompatibleSchema), errors.Is(err, ErrNoActiveSchemaVersion):
+	case errors.Is(err, ErrIncompatibleSchema), errors.Is(err, ErrNoActiveSchemaVersion), errors.Is(err, ErrSchemaAlreadyExists), errors.Is(err, ErrSchemaVersionExists):
 		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "CONFLICT", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error"})
