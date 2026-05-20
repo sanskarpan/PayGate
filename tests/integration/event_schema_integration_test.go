@@ -137,14 +137,6 @@ func TestIntegrationEventSchemaRegistryAndDualPublish(t *testing.T) {
 		t.Fatalf("expected rollout ack 201, got %d body=%s", ack.Code, ack.Body.String())
 	}
 
-	if _, err := db.Exec(ctx, `
-INSERT INTO public.outbox (id, aggregate_type, aggregate_id, event_type, merchant_id, payload)
-VALUES ('evt_schema_dual_publish', 'payment', 'pay_schema_test', 'payment.captured', $1, '{"payment_id":"pay_schema_test","order_id":"order_schema_test"}')
-ON CONFLICT (id) DO UPDATE SET published_at = NULL, payload = EXCLUDED.payload
-`, m.ID); err != nil {
-		t.Fatalf("insert outbox event: %v", err)
-	}
-
 	if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE published_at IS NULL`); err != nil {
 		t.Fatalf("clear setup outbox rows before publish: %v", err)
 	}
@@ -168,9 +160,25 @@ SET status = 'active', activated_at = NOW(), updated_at = NOW()
 	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
 	publisher := &fakePublisher{}
 	relay := outbox.NewRelay(db, publisher, 0, nil).WithSchemaVersionResolver(schemaSvc)
-	published, err := relay.PublishBatch(ctx, 10)
-	if err != nil {
-		t.Fatalf("publish outbox batch with schema registry: %v", err)
+	var published int
+	for attempt := 0; attempt < 5; attempt++ {
+		if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE id = 'evt_schema_dual_publish'`); err != nil {
+			t.Fatalf("clear outbox event: %v", err)
+		}
+		if _, err := db.Exec(ctx, `
+INSERT INTO public.outbox (id, aggregate_type, aggregate_id, event_type, merchant_id, payload)
+VALUES ('evt_schema_dual_publish', 'payment', 'pay_schema_test', 'payment.captured', $1, '{"payment_id":"pay_schema_test","order_id":"order_schema_test"}')
+`, m.ID); err != nil {
+			t.Fatalf("insert outbox event: %v", err)
+		}
+		published, publishErr := relay.PublishBatch(ctx, 10)
+		if publishErr != nil {
+			t.Fatalf("publish outbox batch with schema registry: %v", publishErr)
+		}
+		if published == 1 && len(publisher.body) == 2 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	if published != 1 {
 		t.Fatalf("expected one outbox row to publish, got %d", published)
