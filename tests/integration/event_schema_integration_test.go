@@ -137,8 +137,16 @@ func TestIntegrationEventSchemaRegistryAndDualPublish(t *testing.T) {
 		t.Fatalf("expected rollout ack 201, got %d body=%s", ack.Code, ack.Body.String())
 	}
 
-	if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE published_at IS NULL`); err != nil {
-		t.Fatalf("clear setup outbox rows before publish: %v", err)
+	if _, err := db.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS test_event_schema_outbox`); err != nil {
+		t.Fatalf("create private outbox schema: %v", err)
+	}
+	if _, err := db.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS test_event_schema_outbox.outbox (LIKE public.outbox INCLUDING ALL)
+`); err != nil {
+		t.Fatalf("create private outbox table: %v", err)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM test_event_schema_outbox.outbox`); err != nil {
+		t.Fatalf("clear private outbox table: %v", err)
 	}
 	if _, err := db.Exec(ctx, `
 INSERT INTO paygate_schema.event_schemas (id, subject, event_type, topic_name, owner, review_link)
@@ -159,14 +167,14 @@ SET status = 'active', activated_at = NOW(), updated_at = NOW()
 	}
 	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
 	publisher := &fakePublisher{}
-	relay := outbox.NewRelay(db, publisher, 0, nil).WithSchemaVersionResolver(schemaSvc)
+	relay := outbox.NewRelay(db, publisher, 0, nil).WithSchemaVersionResolver(schemaSvc).WithTableName("test_event_schema_outbox.outbox")
 	var published int
 	for attempt := 0; attempt < 5; attempt++ {
-		if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE id = 'evt_schema_dual_publish'`); err != nil {
+		if _, err := db.Exec(ctx, `DELETE FROM test_event_schema_outbox.outbox WHERE id = 'evt_schema_dual_publish'`); err != nil {
 			t.Fatalf("clear outbox event: %v", err)
 		}
 		if _, err := db.Exec(ctx, `
-INSERT INTO public.outbox (id, aggregate_type, aggregate_id, event_type, merchant_id, payload)
+INSERT INTO test_event_schema_outbox.outbox (id, aggregate_type, aggregate_id, event_type, merchant_id, payload)
 VALUES ('evt_schema_dual_publish', 'payment', 'pay_schema_test', 'payment.captured', $1, '{"payment_id":"pay_schema_test","order_id":"order_schema_test"}')
 `, m.ID); err != nil {
 			t.Fatalf("insert outbox event: %v", err)
