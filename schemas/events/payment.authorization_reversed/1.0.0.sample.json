@@ -1,0 +1,14 @@
+{
+  "event_id": "evt_payment_authorization_reversed_v1",
+  "event_type": "payment.authorization_reversed",
+  "occurred_at": "2026-05-17T10:00:00Z",
+  "correlation_id": "pay_auth_rev_123",
+  "causation_id": "evt_payment_authorization_reversed_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_auth_rev_123",
+  "payload": {
+    "payment_id": "pay_auth_rev_123",
+    "order_id": "order_auth_rev_123",
+    "reason": "operator_requested_reversal"
+  }
+}

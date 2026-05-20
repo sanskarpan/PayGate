@@ -1,0 +1,15 @@
+{
+  "event_id": "evt_refund_reversed_v1",
+  "event_type": "refund.reversed",
+  "occurred_at": "2026-05-17T10:05:00Z",
+  "correlation_id": "rfnd_123",
+  "causation_id": "evt_refund_reversed_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_refund_rev_123",
+  "payload": {
+    "refund_id": "rfnd_123",
+    "payment_id": "pay_refund_rev_123",
+    "amount": 2400,
+    "reason": "compensation_after_duplicate_refund"
+  }
+}

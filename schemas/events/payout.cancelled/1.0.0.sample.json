@@ -1,0 +1,13 @@
+{
+  "event_id": "evt_payout_cancelled_v1",
+  "event_type": "payout.cancelled",
+  "occurred_at": "2026-05-17T10:15:00Z",
+  "correlation_id": "payout_123",
+  "causation_id": "evt_payout_cancelled_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_payout_cancel_123",
+  "payload": {
+    "payout_id": "payout_123",
+    "reason": "operator_cancelled_before_bank_acceptance"
+  }
+}

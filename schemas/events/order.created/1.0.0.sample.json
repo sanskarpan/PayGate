@@ -1,0 +1,14 @@
+{
+  "event_id": "evt_order_created_v1",
+  "event_type": "order.created",
+  "occurred_at": "2026-05-13T10:00:00Z",
+  "correlation_id": "ord_123",
+  "causation_id": "evt_order_created_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "order_id": "ord_123",
+    "amount": "50000",
+    "currency": "INR"
+  }
+}

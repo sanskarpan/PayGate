@@ -1,0 +1,13 @@
+{
+  "event_id": "evt_settlement_rollback_marked_v1",
+  "event_type": "settlement.rollback_marked",
+  "occurred_at": "2026-05-17T10:10:00Z",
+  "correlation_id": "sttl_123",
+  "causation_id": "evt_settlement_rollback_marked_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_settlement_rev_123",
+  "payload": {
+    "settlement_id": "sttl_123",
+    "reason": "manual_reconciliation_failure"
+  }
+}

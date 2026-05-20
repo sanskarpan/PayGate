@@ -1,0 +1,15 @@
+{
+  "event_id": "evt_payout_created_v1",
+  "event_type": "payout.created",
+  "occurred_at": "2026-05-13T10:10:00Z",
+  "correlation_id": "payout_123",
+  "causation_id": "evt_payout_created_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "payout_id": "payout_123",
+    "settlement_id": "settl_123",
+    "amount": "49000",
+    "currency": "INR"
+  }
+}

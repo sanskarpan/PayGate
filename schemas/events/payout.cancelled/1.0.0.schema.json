@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "event_id": {"type": "string"},
+    "event_type": {"type": "string"},
+    "occurred_at": {"type": "string"},
+    "correlation_id": {"type": "string"},
+    "causation_id": {"type": "string"},
+    "schema_version": {"type": "string"},
+    "merchant_id": {"type": "string"},
+    "payload": {
+      "type": "object",
+      "properties": {
+        "payout_id": {"type": "string"},
+        "reason": {"type": "string"}
+      },
+      "required": ["payout_id"]
+    }
+  },
+  "required": ["event_id", "event_type", "occurred_at", "correlation_id", "causation_id", "schema_version", "merchant_id", "payload"]
+}

@@ -1,0 +1,14 @@
+{
+  "event_id": "evt_risk_alert_v1",
+  "event_type": "risk.alert",
+  "occurred_at": "2026-05-13T10:15:00Z",
+  "correlation_id": "pay_123",
+  "causation_id": "evt_risk_alert_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "payment_id": "pay_123",
+    "action": "hold",
+    "reason": "velocity spike"
+  }
+}

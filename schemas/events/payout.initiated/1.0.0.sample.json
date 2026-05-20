@@ -1,0 +1,12 @@
+{
+  "event_id": "evt_payout_initiated_v1",
+  "event_type": "payout.initiated",
+  "occurred_at": "2026-05-13T10:11:00Z",
+  "correlation_id": "payout_123",
+  "causation_id": "evt_payout_initiated_v1",
+  "schema_version": "1.0.0",
+  "merchant_id": "merch_123",
+  "payload": {
+    "payout_id": "payout_123"
+  }
+}
