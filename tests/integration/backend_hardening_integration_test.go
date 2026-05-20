@@ -300,7 +300,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	refundHandler := refund.NewHandler(refundSvc)
 	webhookHandler := webhook.NewHandler(webhookSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
 	disputeHandler := dispute.NewHandler(disputeSvc)
 	holdHandler := ledger.NewHoldHandler(ledgerSvc)
 
