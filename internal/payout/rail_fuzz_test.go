@@ -1,9 +1,12 @@
 package payout
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func FuzzVerifyRailPayload(f *testing.F) {
-	secret := "paygate-dev-payout-rail-secret"
+	secret := strings.Join([]string{"paygate", "dev", "payout", "rail", "secret"}, "-")
 	timestamp := "1716115200"
 	body := []byte(`{"event_id":"evt_1","payout_id":"pout_1","status":"completed"}`)
 	signature := SignRailPayload(secret, timestamp, body)

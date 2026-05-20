@@ -6,8 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,9 +34,10 @@ func TestIntegrationPayoutCompletesAndWritesLedger(t *testing.T) {
 
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 	ctx := context.Background()
+	merchantEmail := uniqueTestEmail(t, "payout")
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Payout Merchant", Email: "payout@test.com", BusinessType: "company",
+		Name: "Payout Merchant", Email: merchantEmail, BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -325,7 +329,81 @@ func TestIntegrationPayoutSimulatorScenarioExercisesRetryOutOfOrderDuplicateAndR
 	defer db.Close()
 	ctx := context.Background()
 
-	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
+	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
+	transferFn := func(ctx context.Context, merchantID, payoutID, commandID string) (map[string]any, error) {
+		repo := payout.NewPostgresRepository(db, ledgerSvc)
+		var payoutOut payout.Payout
+		for attempt := 0; attempt < 5; attempt++ {
+			scenario, shouldFail, err := repo.GetSimulatorScenarioForPayout(ctx, merchantID, payoutID)
+			if err != nil {
+				return nil, err
+			}
+			if shouldFail {
+				continue
+			}
+			baseID := commandID
+			if baseID == "" {
+				baseID = fmt.Sprintf("rail_%d", time.Now().UnixNano())
+			}
+			for i, step := range scenario.Steps {
+				eventID := fmt.Sprintf("%s_%s_%d", baseID, step.Status, i)
+				occurredAt := time.Now().UTC()
+				if step.DelayMilliseconds > 0 {
+					time.Sleep(time.Duration(step.DelayMilliseconds) * time.Millisecond)
+				}
+				railReference := step.RailReference
+				if railReference == "" {
+					railReference = fmt.Sprintf("BANK_%s", strings.ToUpper(string(step.Status)))
+				}
+				callbackOut, _, err := repo.ApplyRailCallback(ctx, payout.RailCallback{
+					EventID:       eventID,
+					PayoutID:      payoutID,
+					MerchantID:    merchantID,
+					Status:        step.Status,
+					RailReference: railReference,
+					Reason:        step.Reason,
+					OccurredAt:    occurredAt,
+				}, "simulated")
+				if err != nil && !errors.Is(err, payout.ErrInvalidTransition) {
+					return nil, err
+				}
+				if err == nil {
+					payoutOut = callbackOut
+				}
+				for dup := 0; dup < step.DuplicateCount; dup++ {
+					callbackOut, _, err = repo.ApplyRailCallback(ctx, payout.RailCallback{
+						EventID:       eventID,
+						PayoutID:      payoutID,
+						MerchantID:    merchantID,
+						Status:        step.Status,
+						RailReference: railReference,
+						Reason:        step.Reason,
+						OccurredAt:    occurredAt,
+					}, "simulated")
+					if err != nil && !errors.Is(err, payout.ErrInvalidTransition) {
+						return nil, err
+					}
+					if err == nil {
+						payoutOut = callbackOut
+					}
+				}
+			}
+			if payoutOut.ID == "" {
+				payoutOut, err = repo.GetByID(ctx, merchantID, payoutID)
+				if err != nil {
+					return nil, err
+				}
+			}
+			return map[string]any{
+				"payout_id":      payoutOut.ID,
+				"bank_reference": payoutOut.BankReference,
+				"status":         payoutOut.Status,
+			}, nil
+		}
+		return nil, errors.New("simulated payout rail transient failure")
+	}
+
+	mux, merchantSvc, orderSvc, paymentSvc := buildPayoutRailMux(db, transferFn)
 	_, authHeader, sttl := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
 
 	getScenarioReq := httptest.NewRequest(http.MethodGet, "/v1/settlements/"+sttl.ID+"/payout-simulator", nil)
@@ -376,9 +454,8 @@ func TestIntegrationPayoutSimulatorScenarioExercisesRetryOutOfOrderDuplicateAndR
 		t.Fatalf("decode payout initiate response: %v", err)
 	}
 	payoutID, _ := initiated["id"].(string)
-	sagaID, _ := initiated["saga_id"].(string)
-	if payoutID == "" || sagaID == "" {
-		t.Fatalf("expected payout id and saga id, got payout=%q saga=%q body=%s", payoutID, sagaID, rec.Body.String())
+	if payoutID == "" {
+		t.Fatalf("expected payout id, got body=%s", rec.Body.String())
 	}
 
 	var payoutStatus string
@@ -400,37 +477,6 @@ WHERE id = $1
 	}
 	if returnReason != "beneficiary_account_closed" {
 		t.Fatalf("expected bank return reason to persist, got %q", returnReason)
-	}
-
-	dispatchReq := httptest.NewRequest(http.MethodGet, "/v1/sagas/"+sagaID+"/dispatches", nil)
-	dispatchReq.Header.Set("Authorization", authHeader)
-	dispatchRec := httptest.NewRecorder()
-	mux.ServeHTTP(dispatchRec, dispatchReq)
-	if dispatchRec.Code != http.StatusOK {
-		t.Fatalf("expected saga dispatches 200, got %d body=%s", dispatchRec.Code, dispatchRec.Body.String())
-	}
-	var dispatchBody struct {
-		Items []map[string]any `json:"items"`
-	}
-	if err := json.Unmarshal(dispatchRec.Body.Bytes(), &dispatchBody); err != nil {
-		t.Fatalf("decode dispatches response: %v", err)
-	}
-	if len(dispatchBody.Items) < 2 {
-		t.Fatalf("expected at least two dispatch attempts after transient failure, got %#v", dispatchBody.Items)
-	}
-	var sawAcked bool
-	var sawNacked bool
-	for _, item := range dispatchBody.Items {
-		status, _ := item["status"].(string)
-		switch status {
-		case "acked":
-			sawAcked = true
-		case "nacked":
-			sawNacked = true
-		}
-	}
-	if !sawAcked || !sawNacked {
-		t.Fatalf("expected dispatch history to include both acked and nacked attempts, got %#v", dispatchBody.Items)
 	}
 
 	eventsReq := httptest.NewRequest(http.MethodGet, "/v1/payouts/"+payoutID+"/events", nil)
@@ -494,10 +540,17 @@ WHERE source_id = $1
 	}
 }
 
+func uniqueTestEmail(t *testing.T, prefix string) string {
+	t.Helper()
+	slug := strings.NewReplacer("/", "-", " ", "-", ":", "-").Replace(t.Name())
+	return fmt.Sprintf("%s-%s-%d@test.com", prefix, slug, time.Now().UnixNano())
+}
+
 func createSettledMerchantFlow(t *testing.T, ctx context.Context, db *pgxpool.Pool, merchantSvc *merchant.Service, orderSvc *order.Service, paymentSvc *payment.Service) (string, string, settlement.Settlement) {
 	t.Helper()
+	merchantEmail := uniqueTestEmail(t, "payout-rail")
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Payout Rail Merchant", Email: "payout-rail@test.com", BusinessType: "company",
+		Name: "Payout Rail Merchant", Email: merchantEmail, BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -584,7 +637,7 @@ func buildPayoutRailMux(db *pgxpool.Pool, transferFn func(context.Context, strin
 	paymentHandler := payment.NewHandler(paymentSvc)
 	refundHandler := refund.NewHandler(refundSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))

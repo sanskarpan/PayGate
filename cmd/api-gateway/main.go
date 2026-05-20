@@ -150,7 +150,7 @@ func run() error {
 	// Payout workflow
 	payoutRepo := payout.NewPostgresRepository(db, ledgerSvc)
 	payoutSvc := payout.NewService(payoutRepo, l)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", httpx.Healthz)
