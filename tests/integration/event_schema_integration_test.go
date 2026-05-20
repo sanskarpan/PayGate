@@ -145,10 +145,27 @@ ON CONFLICT (id) DO UPDATE SET published_at = NULL, payload = EXCLUDED.payload
 		t.Fatalf("insert outbox event: %v", err)
 	}
 
-	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
-	if err := schemaSvc.BootstrapFromFixtures(ctx, "../../schemas/events", "schema-bootstrap"); err != nil {
-		t.Fatalf("bootstrap schema fixtures: %v", err)
+	if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE published_at IS NULL`); err != nil {
+		t.Fatalf("clear setup outbox rows before publish: %v", err)
 	}
+	if _, err := db.Exec(ctx, `
+INSERT INTO paygate_schema.event_schemas (id, subject, event_type, topic_name, owner, review_link)
+VALUES ('esch_order_created', 'order.created', 'order.created', 'paygate.orders', 'schema-bootstrap', 'schemas/events/order.created')
+ON CONFLICT (subject) DO NOTHING
+`); err != nil {
+		t.Fatalf("seed order.created schema: %v", err)
+	}
+	if _, err := db.Exec(ctx, `
+INSERT INTO paygate_schema.schema_versions
+    (id, subject, version, status, schema_json, sample_payload, review_link, compatibility_summary, compatibility_details, activated_at)
+VALUES
+    ('esv_order_created_v1', 'order.created', '1.0.0', 'active', '{"type":"object"}', '{"order_id":"order_schema_bootstrap"}', 'schemas/events/order.created/1.0.0.schema.json', 'bootstrap', '{}', NOW())
+ON CONFLICT (subject, version) DO UPDATE
+SET status = 'active', activated_at = NOW(), updated_at = NOW()
+`); err != nil {
+		t.Fatalf("seed order.created schema version: %v", err)
+	}
+	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
 	publisher := &fakePublisher{}
 	relay := outbox.NewRelay(db, publisher, 0, nil).WithSchemaVersionResolver(schemaSvc)
 	published, err := relay.PublishBatch(ctx, 10)
