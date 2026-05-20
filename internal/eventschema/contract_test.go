@@ -20,7 +20,7 @@ func TestWebhookConsumerAcceptsSchemaFixtureEnvelope(t *testing.T) {
 
 	delivered := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode delivered webhook body: %v", err)
