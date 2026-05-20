@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,9 +33,10 @@ func TestIntegrationPayoutCompletesAndWritesLedger(t *testing.T) {
 
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 	ctx := context.Background()
+	merchantEmail := uniqueTestEmail(t, "payout")
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Payout Merchant", Email: "payout@test.com", BusinessType: "company",
+		Name: "Payout Merchant", Email: merchantEmail, BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -496,8 +499,9 @@ WHERE source_id = $1
 
 func createSettledMerchantFlow(t *testing.T, ctx context.Context, db *pgxpool.Pool, merchantSvc *merchant.Service, orderSvc *order.Service, paymentSvc *payment.Service) (string, string, settlement.Settlement) {
 	t.Helper()
+	merchantEmail := uniqueTestEmail(t, "payout-rail")
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Payout Rail Merchant", Email: "payout-rail@test.com", BusinessType: "company",
+		Name: "Payout Rail Merchant", Email: merchantEmail, BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -604,4 +608,10 @@ func buildPayoutRailMux(db *pgxpool.Pool, transferFn func(context.Context, strin
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})
 	})))
 	return mux, merchantSvc, orderSvc, paymentSvc
+}
+
+func uniqueTestEmail(t *testing.T, prefix string) string {
+	t.Helper()
+	slug := strings.NewReplacer("/", "-", " ", "-", ":", "-").Replace(t.Name())
+	return fmt.Sprintf("%s-%s-%d@test.com", prefix, slug, time.Now().UnixNano())
 }
