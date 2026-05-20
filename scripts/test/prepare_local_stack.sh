@@ -36,8 +36,12 @@ if [[ -z "${MIGRATE_BIN}" ]]; then
   MIGRATE_BIN="$(go env GOPATH)/bin/migrate"
 fi
 
-MIGRATE_OUTPUT="$("${MIGRATE_BIN}" -path ./migrations -database "${DATABASE_URL}" up 2>&1 || true)"
-if [[ -n "${MIGRATE_OUTPUT}" && "${MIGRATE_OUTPUT}" != *"no change"* ]]; then
+set +e
+MIGRATE_OUTPUT="$("${MIGRATE_BIN}" -path ./migrations -database "${DATABASE_URL}" up 2>&1)"
+MIGRATE_STATUS=$?
+set -e
+
+if [[ ${MIGRATE_STATUS} -ne 0 && "${MIGRATE_OUTPUT}" != *"no change"* ]]; then
   echo "${MIGRATE_OUTPUT}" >&2
   exit 1
 fi
