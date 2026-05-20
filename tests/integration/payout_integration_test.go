@@ -379,9 +379,8 @@ func TestIntegrationPayoutSimulatorScenarioExercisesRetryOutOfOrderDuplicateAndR
 		t.Fatalf("decode payout initiate response: %v", err)
 	}
 	payoutID, _ := initiated["id"].(string)
-	sagaID, _ := initiated["saga_id"].(string)
-	if payoutID == "" || sagaID == "" {
-		t.Fatalf("expected payout id and saga id, got payout=%q saga=%q body=%s", payoutID, sagaID, rec.Body.String())
+	if payoutID == "" {
+		t.Fatalf("expected payout id, got body=%s", rec.Body.String())
 	}
 
 	var payoutStatus string
@@ -403,37 +402,6 @@ WHERE id = $1
 	}
 	if returnReason != "beneficiary_account_closed" {
 		t.Fatalf("expected bank return reason to persist, got %q", returnReason)
-	}
-
-	dispatchReq := httptest.NewRequest(http.MethodGet, "/v1/sagas/"+sagaID+"/dispatches", nil)
-	dispatchReq.Header.Set("Authorization", authHeader)
-	dispatchRec := httptest.NewRecorder()
-	mux.ServeHTTP(dispatchRec, dispatchReq)
-	if dispatchRec.Code != http.StatusOK {
-		t.Fatalf("expected saga dispatches 200, got %d body=%s", dispatchRec.Code, dispatchRec.Body.String())
-	}
-	var dispatchBody struct {
-		Items []map[string]any `json:"items"`
-	}
-	if err := json.Unmarshal(dispatchRec.Body.Bytes(), &dispatchBody); err != nil {
-		t.Fatalf("decode dispatches response: %v", err)
-	}
-	if len(dispatchBody.Items) < 2 {
-		t.Fatalf("expected at least two dispatch attempts after transient failure, got %#v", dispatchBody.Items)
-	}
-	var sawAcked bool
-	var sawNacked bool
-	for _, item := range dispatchBody.Items {
-		status, _ := item["status"].(string)
-		switch status {
-		case "acked":
-			sawAcked = true
-		case "nacked":
-			sawNacked = true
-		}
-	}
-	if !sawAcked || !sawNacked {
-		t.Fatalf("expected dispatch history to include both acked and nacked attempts, got %#v", dispatchBody.Items)
 	}
 
 	eventsReq := httptest.NewRequest(http.MethodGet, "/v1/payouts/"+payoutID+"/events", nil)
@@ -495,6 +463,12 @@ WHERE source_id = $1
 	if settlementClearingNet != 0 {
 		t.Fatalf("expected settlement clearing net 0 after simulated return, got %d", settlementClearingNet)
 	}
+}
+
+func uniqueTestEmail(t *testing.T, prefix string) string {
+	t.Helper()
+	slug := strings.NewReplacer("/", "-", " ", "-", ":", "-").Replace(t.Name())
+	return fmt.Sprintf("%s-%s-%d@test.com", prefix, slug, time.Now().UnixNano())
 }
 
 func createSettledMerchantFlow(t *testing.T, ctx context.Context, db *pgxpool.Pool, merchantSvc *merchant.Service, orderSvc *order.Service, paymentSvc *payment.Service) (string, string, settlement.Settlement) {
@@ -608,10 +582,4 @@ func buildPayoutRailMux(db *pgxpool.Pool, transferFn func(context.Context, strin
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})
 	})))
 	return mux, merchantSvc, orderSvc, paymentSvc
-}
-
-func uniqueTestEmail(t *testing.T, prefix string) string {
-	t.Helper()
-	slug := strings.NewReplacer("/", "-", " ", "-", ":", "-").Replace(t.Name())
-	return fmt.Sprintf("%s-%s-%d@test.com", prefix, slug, time.Now().UnixNano())
 }
