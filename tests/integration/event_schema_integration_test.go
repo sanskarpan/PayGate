@@ -22,6 +22,9 @@ func TestIntegrationEventSchemaRegistryAndDualPublish(t *testing.T) {
 
 	mux, merchantSvc, _, _ := buildGatewayMux(db)
 	ctx := context.Background()
+	if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE published_at IS NULL`); err != nil {
+		t.Fatalf("clear unpublished outbox rows: %v", err)
+	}
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "Schema Merchant",
 		Email:        "schema@test.com",
@@ -143,6 +146,9 @@ ON CONFLICT (id) DO UPDATE SET published_at = NULL, payload = EXCLUDED.payload
 	}
 
 	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
+	if err := schemaSvc.BootstrapFromFixtures(ctx, "../../schemas/events", "schema-bootstrap"); err != nil {
+		t.Fatalf("bootstrap schema fixtures: %v", err)
+	}
 	publisher := &fakePublisher{}
 	relay := outbox.NewRelay(db, publisher, 0, nil).WithSchemaVersionResolver(schemaSvc)
 	published, err := relay.PublishBatch(ctx, 10)
