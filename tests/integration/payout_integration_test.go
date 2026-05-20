@@ -584,7 +584,7 @@ func buildPayoutRailMux(db *pgxpool.Pool, transferFn func(context.Context, strin
 	paymentHandler := payment.NewHandler(paymentSvc)
 	refundHandler := refund.NewHandler(refundSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
