@@ -347,6 +347,8 @@ paygate/
 
 ## Phase 5 — Advanced distributed systems track
 
+Status: complete. The implementation, regression coverage, and DR/artifact evidence for this phase are now in repo.
+
 ### Saga orchestration and extraction
 - [x] Define extraction boundaries and target service ownership before moving code out of the modular monolith
 - [x] Write ADRs for the first extracted flows: order orchestration, payment orchestration, refund orchestration, settlement finalization
