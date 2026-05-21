@@ -620,6 +620,13 @@ FOR UPDATE
 	}
 
 	if _, err := tx.Exec(ctx, `
+DELETE FROM paygate_sagas.saga_command_dispatches
+WHERE step_id = $1
+`, stepID); err != nil {
+		return Instance{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
 UPDATE paygate_sagas.saga_steps
 SET status = 'pending',
     command_id = $2,

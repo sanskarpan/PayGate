@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
@@ -26,7 +27,11 @@ INSERT INTO paygate_schema.event_schemas (id, subject, event_type, topic_name, o
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, subject, event_type, topic_name, owner, review_link, created_at, updated_at
 `, id, in.Subject, in.EventType, in.TopicName, in.Owner, in.ReviewLink)
-	return scanSchema(row)
+	item, err := scanSchema(row)
+	if isUniqueViolation(err) {
+		return Schema{}, ErrSchemaAlreadyExists
+	}
+	return item, err
 }
 
 func (r *PostgresRepository) ListSchemas(ctx context.Context) ([]Schema, error) {
@@ -103,6 +108,9 @@ RETURNING id, subject, version, status, schema_json, sample_payload, review_link
 
 	version, err := scanVersion(row)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return Version{}, ErrSchemaVersionExists
+		}
 		return Version{}, err
 	}
 
@@ -266,6 +274,11 @@ RETURNING id, subject, from_version, to_version, status, cutover_deadline, notes
 		return Rollout{}, err
 	}
 	return item, nil
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func (r *PostgresRepository) GetRollout(ctx context.Context, rolloutID string) (Rollout, error) {

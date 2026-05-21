@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	appmetrics "github.com/sanskarpan/PayGate/internal/common/metrics"
 )
 
 // KafkaConsumer is the minimal interface the Consumer needs from a Kafka driver.
@@ -129,10 +127,6 @@ func (c *Consumer) HandleMessage(ctx context.Context, topic, key string, payload
 	if env.SchemaVersion != "" {
 		innerPayload["schema_version"] = env.SchemaVersion
 	}
-	if env.SchemaSubject != "" && env.SchemaVersion != "" {
-		appmetrics.RecordConsumerSchemaVersion(c.consumerGroup, topic, env.SchemaSubject, env.SchemaVersion)
-	}
-
 	if err := c.svc.DeliverEvent(ctx, env.ID, env.MerchantID, env.EventType, innerPayload); err != nil {
 		return fmt.Errorf("webhook consumer: deliver event (id=%s): %w", env.ID, err)
 	}
