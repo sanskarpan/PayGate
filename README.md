@@ -1,10 +1,86 @@
-# PayGate — Documentation Index
+# PayGate
 
-> A production-grade, multi-tenant payment platform. Built for senior engineer portfolios.
+Production-grade, multi-tenant payment platform with explicit state machines, double-entry ledgering, transactional outbox, schema governance, saga orchestration, payout rail simulation, and an operator dashboard.
 
 ---
 
-## Documentation suite
+## Quick start
+
+```bash
+docker compose up -d
+go run ./cmd/api-gateway
+cd dashboard && pnpm install && pnpm dev
+```
+
+Optional extracted-worker mode:
+
+```bash
+SAGA_WORKER_ENABLED=false go run ./cmd/api-gateway &
+go run ./cmd/saga-orchestrator
+```
+
+## Demo flow
+
+1. Create a merchant and API key.
+2. Create an order.
+3. Authorize and capture a payment.
+4. Register a webhook.
+5. Process refund, settlement, payout, and dispute flows.
+6. Inspect saga dispatches, dead letters, payout timelines, reconciliation, and observability screens.
+
+## Screenshots
+
+Login
+
+![Dashboard login](./docs/screenshots/dashboard-login.png)
+
+Orders
+
+![Orders list](./docs/screenshots/dashboard-orders.png)
+
+Webhooks
+
+![Webhook operations](./docs/screenshots/dashboard-webhooks.png)
+
+Settlements
+
+![Settlement operations](./docs/screenshots/dashboard-settlements.png)
+
+Observability
+
+![Observability dashboard](./docs/screenshots/dashboard-observability.png)
+
+## Demo instructions
+
+1. Start infrastructure and apply migrations with `bash scripts/dr/recreate_local_env.sh`.
+2. Run the API with `DATABASE_URL=postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable REDIS_ADDR=localhost:6380 KAFKA_BROKERS=localhost:9092 go run ./cmd/api-gateway`.
+3. Run the dashboard with `cd dashboard && pnpm install && pnpm dev`.
+4. Create a merchant: `POST /v1/merchants`.
+5. Bootstrap the first admin API key: `POST /v1/merchants/{merchant_id}/keys`.
+6. Bootstrap the dashboard user: `POST /v1/merchants/{merchant_id}/users/bootstrap`.
+7. Log into `http://localhost:3001`, then create orders, authorize/capture payments, run settlements, initiate payouts, and inspect disputes, webhooks, reconciliation, and observability pages.
+
+## Verification
+
+Backend and browser verification now have first-class commands:
+
+```bash
+go test ./...
+go test -tags=integration ./tests/integration/...
+./scripts/test/run_full_verification.sh
+cd dashboard && pnpm lint && pnpm build && pnpm test:e2e
+```
+
+The Playwright suite seeds a real merchant, logs in through the dashboard, exercises the money flow through live APIs, and verifies webhook delivery through a local receiver route.
+
+For heavier local verification:
+
+```bash
+START_API=true ./scripts/test/run_load_smoke.sh
+START_API=true ./scripts/test/run_chaos_suite.sh
+```
+
+## Docs
 
 | Document | Purpose |
 |----------|---------|
@@ -19,6 +95,10 @@
 | [CHECKLIST.md](./CHECKLIST.md) | Phase-by-phase implementation checklist with concrete deliverables |
 | [PROMPT.md](./PROMPT.md) | Claude Code system prompt and task sequence for building the project |
 | [RUNBOOK.md](./docs/RUNBOOK.md) | Operational procedures, incident playbooks, monitoring dashboards, backup/recovery |
+| [openapi.yaml](./docs/openapi.yaml) | OpenAPI 3.0 reference for major endpoints |
+| [WEBHOOK-EVENT-CATALOG.md](./docs/WEBHOOK-EVENT-CATALOG.md) | Event subjects mapped to versioned JSON schema fixtures |
+| [INTEGRATION-GUIDE.md](./docs/INTEGRATION-GUIDE.md) | Merchant integration guidance |
+| [DEPLOYMENT-GUIDE.md](./docs/DEPLOYMENT-GUIDE.md) | Local and production deployment flow |
 | [FOUNDATION-REVIEW.md](./docs/FOUNDATION-REVIEW.md) | Direct assessment of what is solid, what was assumption-heavy, and what must be proven |
 
 ---
@@ -37,16 +117,10 @@ If built this way, the project is credible. If built as nine loosely coordinated
 
 ---
 
-## Quick start
+## Operations and DR tooling
 
-1. Read **docs/PRD.md** to understand what you're building and why
-2. Read **docs/ARCHITECTURE.md** to understand the system shape
-3. Open **CHECKLIST.md** and start with Phase 0 (project setup)
-4. Use **PROMPT.md** as your Claude Code context when implementing
-5. Reference **docs/SPEC.md**, **DATABASE.md**, and **docs/API-CONTRACTS.md** as you build each service
-6. Use **docs/TESTING-STRATEGY.md** to write tests alongside code
-7. Use **docs/FAILURE-MODES.md** to validate your error handling
-8. Use **docs/RUNBOOK.md** to build your operational dashboards
+- [`scripts/dr/verify_postgres_backup.sh`](./scripts/dr/verify_postgres_backup.sh): dump, restore, and verify a Postgres backup
+- [`scripts/dr/recreate_local_env.sh`](./scripts/dr/recreate_local_env.sh): recreate the local infrastructure stack and reapply migrations
 
 ---
 
