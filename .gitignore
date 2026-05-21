@@ -19,12 +19,22 @@ coverage.out
 # Node/dashboard
 node_modules/
 .next/
+dashboard/playwright/.auth/
+dashboard/tests/playwright/.auth/
+dashboard/playwright-report/
+dashboard/test-results/
 
 # Local infra data
 .pgdata/
 .minio/
 .kafka/
 .redis/
+.grafana_data/
+.prometheus_data/
+
+# Local workspace artifacts
+.claude/
+/api-gateway
 
 .gocache/
 .gomodcache/
