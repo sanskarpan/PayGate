@@ -233,7 +233,6 @@ func run() error {
 	ledgerHoldHandler.RegisterRoutesWithAuth(mux, protected)
 	settlementHandler.RegisterRoutesWithAuth(mux, protected)
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
-	payoutHandler.RegisterPublicRoutes(mux)
 	eventSchemaHandler.RegisterRoutesWithAuth(mux, protected)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	checkoutHandler.RegisterRoutes(mux)
