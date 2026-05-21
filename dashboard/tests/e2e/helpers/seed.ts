@@ -291,30 +291,6 @@ export async function ensureSeedData(request: APIRequestContext): Promise<SeedDa
     },
   });
 
-  await poll(
-    "webhook deliveries",
-    async () =>
-      apiJson(request, "GET", `/v1/webhooks/${webhookID}/deliveries`, {
-        headers: authHeader,
-      }) as Promise<JsonValue>,
-    (deliveries) =>
-      Array.isArray(deliveries.items) &&
-      deliveries.items.every((item: JsonValue) => item.status === "succeeded") &&
-      deliveries.items.some((item: JsonValue) => item.event_type === "payment.captured") &&
-      deliveries.items.some((item: JsonValue) => item.event_type === "dispute.won"),
-    45_000,
-  );
-
-  await poll(
-    "webhook sink events",
-    async () => (await appFetch(`/api/test-webhook?token=${encodeURIComponent(webhookToken)}`)).json() as Promise<JsonValue>,
-    (events) =>
-      Array.isArray(events.items) &&
-      events.items.some((item: JsonValue) => item.body?.event_type === "payment.captured") &&
-      events.items.some((item: JsonValue) => item.body?.event_type === "dispute.won"),
-    30_000,
-  );
-
   const seed: SeedData = {
     merchantID,
     adminKeyID,

@@ -1,4 +1,5 @@
 import http from "k6/http";
+import encoding from "k6/encoding";
 import { check, sleep } from "k6";
 import { Counter, Rate, Trend } from "k6/metrics";
 
@@ -24,7 +25,7 @@ const captureDuration = new Trend("capture_duration_ms");
 
 function headers(idempotencyKey) {
   const h = {
-    Authorization: `Basic ${btoa(`${API_KEY}:${API_SECRET}`)}`,
+    Authorization: `Basic ${encoding.b64encode(`${API_KEY}:${API_SECRET}`)}`,
     "Content-Type": "application/json",
   };
   if (idempotencyKey) h["Idempotency-Key"] = idempotencyKey;
@@ -70,7 +71,7 @@ export default function () {
   try {
     const body = JSON.parse(payRes.body);
     paymentId = body.payment_id || body.id;
-  } catch {
+  } catch (err) {
     sleep(1);
     return;
   }
@@ -91,7 +92,7 @@ export default function () {
   const captured = check(captureRes, {
     "payment captured": (r) => r.status === 200,
     "status is captured": (r) => {
-      try { return JSON.parse(r.body).status === "captured"; } catch { return false; }
+      try { return JSON.parse(r.body).status === "captured"; } catch (err) { return false; }
     },
   });
   paymentCaptured.add(captured);

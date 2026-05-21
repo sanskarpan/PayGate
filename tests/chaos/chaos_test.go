@@ -14,6 +14,13 @@ import (
 	"time"
 )
 
+func chaosAPIBase() string {
+	if base := os.Getenv("CHAOS_API_BASE_URL"); base != "" {
+		return base
+	}
+	return "http://localhost:8090"
+}
+
 // ToxiproxyClient wraps the Toxiproxy API.
 type ToxiproxyClient struct {
 	addr string
@@ -89,9 +96,9 @@ func (c *ToxiproxyClient) EnableProxy(proxy string) error {
 func TestRedisFailure_IdempotencyFallback(t *testing.T) {
 	const (
 		toxiproxyAddr = "localhost:8474"
-		apiBase       = "http://localhost:8090"
 		idempKey      = "chaos-test-redis-down-001"
 	)
+	apiBase := chaosAPIBase()
 
 	toxi := NewToxiproxyClient(toxiproxyAddr)
 
@@ -184,8 +191,8 @@ func chaosAuthHeader(t *testing.T) string {
 func TestKafkaFailure_OutboxReplay(t *testing.T) {
 	const (
 		toxiproxyAddr = "localhost:8474"
-		apiBase       = "http://localhost:8090"
 	)
+	apiBase := chaosAPIBase()
 
 	toxi := NewToxiproxyClient(toxiproxyAddr)
 

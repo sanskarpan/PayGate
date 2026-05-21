@@ -21,6 +21,7 @@
  */
 
 import http from 'k6/http';
+import encoding from 'k6/encoding';
 import { check, group, sleep } from 'k6';
 import { Rate, Trend, Counter } from 'k6/metrics';
 
@@ -55,10 +56,9 @@ export const options = {
 };
 
 function authHeaders() {
-  const creds = `${API_KEY}:${API_SECRET}`;
   return {
     'Content-Type': 'application/json',
-    'Authorization': `Basic ${__ENV.AUTH_B64 || btoa(creds)}`,
+    'Authorization': `Basic ${__ENV.AUTH_B64 || encoding.b64encode(`${API_KEY}:${API_SECRET}`)}`,
   };
 }
 

@@ -5,6 +5,9 @@ import { defineConfig, devices } from "@playwright/test";
 const rootDir = path.resolve(__dirname, "..");
 const apiBaseUrl = process.env.API_BASE_URL || "http://127.0.0.1:38090";
 const appBaseUrl = process.env.APP_BASE_URL || "http://127.0.0.1:33001";
+const databaseUrl = process.env.DATABASE_URL || "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable";
+const redisAddr = process.env.REDIS_ADDR || "localhost:6380";
+const kafkaBrokers = process.env.KAFKA_BROKERS || "localhost:19092";
 const authDir = path.join(__dirname, "playwright", ".auth");
 
 export default defineConfig({
@@ -44,10 +47,12 @@ export default defineConfig({
     {
       command: [
         "env",
+        "-u",
+        "NO_COLOR",
         "PORT=38090",
-        "DATABASE_URL=postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable",
-        "REDIS_ADDR=localhost:6380",
-        "KAFKA_BROKERS=localhost:19092",
+        `DATABASE_URL=${databaseUrl}`,
+        `REDIS_ADDR=${redisAddr}`,
+        `KAFKA_BROKERS=${kafkaBrokers}`,
         "DASHBOARD_ORIGIN=http://127.0.0.1:33001",
         "go",
         "run",
@@ -59,7 +64,7 @@ export default defineConfig({
       timeout: 180_000,
     },
     {
-      command: `sh -c 'pnpm build && API_BASE_URL=${apiBaseUrl} APP_BASE_URL=${appBaseUrl} pnpm start -p 33001'`,
+      command: `env -u NO_COLOR sh -c 'pnpm build && API_BASE_URL=${apiBaseUrl} APP_BASE_URL=${appBaseUrl} pnpm start -p 33001'`,
       cwd: __dirname,
       url: `${appBaseUrl}/`,
       reuseExistingServer: !process.env.CI,

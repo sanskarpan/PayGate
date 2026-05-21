@@ -1,4 +1,5 @@
 import http from "k6/http";
+import encoding from "k6/encoding";
 import { check, sleep } from "k6";
 
 export const options = {
@@ -15,7 +16,7 @@ const API_KEY = __ENV.API_KEY || "";
 const API_SECRET = __ENV.API_SECRET || "";
 
 function authHeader() {
-  return { Authorization: `Basic ${btoa(`${API_KEY}:${API_SECRET}`)}` };
+  return { Authorization: `Basic ${encoding.b64encode(`${API_KEY}:${API_SECRET}`)}` };
 }
 
 export default function () {

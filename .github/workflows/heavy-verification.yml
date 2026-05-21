@@ -1,0 +1,59 @@
+name: Heavy Verification
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run targeted fuzz smoke
+        run: |
+          go test ./internal/merchant -run=^$ -fuzz=FuzzSessionManagerParse -fuzztime=5s
+          go test ./internal/payout -run=^$ -fuzz=FuzzVerifyRailPayload -fuzztime=5s
+          go test ./internal/eventschema -run=^$ -fuzz=FuzzValidateDocument -fuzztime=5s
+
+  chaos-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install jq and PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y jq postgresql-client
+      - name: Run chaos smoke suite
+        run: START_API=true ./scripts/test/run_chaos_suite.sh
+      - name: Upload chaos API log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-api-log
+          path: /tmp/paygate-chaos-api.log
+
+  load-spike:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install jq and PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y jq postgresql-client
+      - name: Run k6 spike smoke
+        run: START_API=true LOAD_SCRIPT=tests/load/spike.js ./scripts/test/run_load_smoke.sh
+      - name: Upload load spike API log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-spike-api-log
+          path: /tmp/paygate-load-api.log

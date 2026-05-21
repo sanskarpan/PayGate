@@ -31,6 +31,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Schema governance tests
+        run: go test ./internal/eventschema -run 'TestSchemaFixturesValidateAndHaveSamples|TestCheckCompatibilityAllowsAdditiveOptionalFields|TestWebhookConsumerAcceptsSchemaFixtureEnvelope'
       - name: Unit tests
         run: go test ./...
       - name: Build
@@ -44,7 +46,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: paygate
-          POSTGRES_PASSWORD: paygate
+          POSTGRES_PASSWORD: ${{ github.run_id }}
           POSTGRES_DB: paygate
         ports:
           - 5432:5432
@@ -54,7 +56,7 @@ jobs:
           --health-timeout=5s
           --health-retries=5
     env:
-      PAYGATE_TEST_DB_URL: postgres://paygate:paygate@localhost:5432/paygate?sslmode=disable
+      PAYGATE_TEST_DB_URL: postgres://paygate:${{ github.run_id }}@localhost:5432/paygate?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -67,3 +69,103 @@ jobs:
         run: migrate -path ./migrations -database "$PAYGATE_TEST_DB_URL" up
       - name: Integration tests
         run: go test -tags=integration ./...
+
+  frontend:
+    needs: unit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable corepack
+        run: corepack enable
+      - name: Install dashboard dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint dashboard
+        run: pnpm lint
+      - name: Build dashboard
+        run: pnpm build
+
+  frontend-e2e:
+    needs: [integration, frontend]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: paygate
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+          POSTGRES_DB: paygate
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd="pg_isready -U paygate -d paygate"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      API_BASE_URL: http://127.0.0.1:38090
+      APP_BASE_URL: http://127.0.0.1:33001
+      DATABASE_URL: postgres://paygate:${{ github.run_id }}@localhost:5435/paygate?sslmode=disable
+      PLAYWRIGHT_SKIP_BOOTSTRAP: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable corepack
+        run: corepack enable
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install golang-migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
+      - name: Run database migrations
+        run: migrate -path ./migrations -database "$DATABASE_URL" up
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: pnpm install --frozen-lockfile
+      - name: Build dashboard
+        working-directory: dashboard
+        run: pnpm build
+      - name: Install Playwright Chromium
+        working-directory: dashboard
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run Playwright E2E suite
+        working-directory: dashboard
+        run: pnpm test:e2e
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            dashboard/playwright-report
+            dashboard/test-results
+
+  load-smoke:
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install jq and PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y jq postgresql-client
+      - name: Run load smoke verification
+        run: START_API=true ./scripts/test/run_load_smoke.sh
+      - name: Upload load smoke API log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-smoke-api-log
+          path: /tmp/paygate-load-api.log

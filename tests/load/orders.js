@@ -1,4 +1,5 @@
 import http from "k6/http";
+import encoding from "k6/encoding";
 import { check, sleep } from "k6";
 import { Counter, Rate, Trend } from "k6/metrics";
 
@@ -24,7 +25,7 @@ const orderCreationDuration = new Trend("order_creation_duration_ms");
 
 function authHeader() {
   return {
-    Authorization: `Basic ${btoa(`${API_KEY}:${API_SECRET}`)}`,
+    Authorization: `Basic ${encoding.b64encode(`${API_KEY}:${API_SECRET}`)}`,
     "Content-Type": "application/json",
     "Idempotency-Key": `load-test-order-${__VU}-${__ITER}`,
   };
@@ -52,7 +53,12 @@ export default function () {
   const ok = check(res, {
     "order created": (r) => r.status === 201,
     "order has id": (r) => {
-      try { return JSON.parse(r.body).id?.startsWith("order_"); } catch { return false; }
+      try {
+        const body = JSON.parse(r.body);
+        return typeof body.id === "string" && body.id.startsWith("order_");
+      } catch (err) {
+        return false;
+      }
     },
   });
   orderCreationSuccess.add(ok);
