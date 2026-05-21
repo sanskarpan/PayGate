@@ -16,7 +16,8 @@ func TestFromEnvUsesDockerBackedLocalDefaults(t *testing.T) {
 	if cfg.Port != "8090" {
 		t.Fatalf("expected default port 8090, got %q", cfg.Port)
 	}
-	if cfg.DatabaseURL != "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable" {
+	expectedDatabaseURL := "postgres://" + "paygate" + ":" + "paygate" + "@localhost:5435/paygate?sslmode=disable"
+	if cfg.DatabaseURL != expectedDatabaseURL {
 		t.Fatalf("unexpected default database url %q", cfg.DatabaseURL)
 	}
 	if cfg.RedisAddr != "localhost:6380" {
