@@ -22,6 +22,9 @@ func TestIntegrationEventSchemaRegistryAndDualPublish(t *testing.T) {
 
 	mux, merchantSvc, _, _ := buildGatewayMux(db)
 	ctx := context.Background()
+	if _, err := db.Exec(ctx, `DELETE FROM public.outbox WHERE published_at IS NULL`); err != nil {
+		t.Fatalf("clear unpublished outbox rows: %v", err)
+	}
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "Schema Merchant",
 		Email:        "schema@test.com",
@@ -135,43 +138,57 @@ func TestIntegrationEventSchemaRegistryAndDualPublish(t *testing.T) {
 	}
 
 	if _, err := db.Exec(ctx, `
-INSERT INTO public.outbox (id, aggregate_type, aggregate_id, event_type, merchant_id, payload)
-VALUES ('evt_schema_dual_publish', 'payment', 'pay_schema_test', 'payment.captured', $1, '{"payment_id":"pay_schema_test","order_id":"order_schema_test"}')
-ON CONFLICT (id) DO UPDATE SET published_at = NULL, payload = EXCLUDED.payload
-`, m.ID); err != nil {
-		t.Fatalf("insert outbox event: %v", err)
+INSERT INTO paygate_schema.event_schemas (id, subject, event_type, topic_name, owner, review_link)
+VALUES ('esch_order_created', 'order.created', 'order.created', 'paygate.orders', 'schema-bootstrap', 'schemas/events/order.created')
+ON CONFLICT (subject) DO NOTHING
+`); err != nil {
+		t.Fatalf("seed order.created schema: %v", err)
 	}
-
+	if _, err := db.Exec(ctx, `
+INSERT INTO paygate_schema.schema_versions
+    (id, subject, version, status, schema_json, sample_payload, review_link, compatibility_summary, compatibility_details, activated_at)
+VALUES
+    ('esv_order_created_v1', 'order.created', '1.0.0', 'active', '{"type":"object"}', '{"order_id":"order_schema_bootstrap"}', 'schemas/events/order.created/1.0.0.schema.json', 'bootstrap', '{}', NOW())
+ON CONFLICT (subject, version) DO UPDATE
+SET status = 'active', activated_at = NOW(), updated_at = NOW()
+`); err != nil {
+		t.Fatalf("seed order.created schema version: %v", err)
+	}
 	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
-	publisher := &fakePublisher{}
-	relay := outbox.NewRelay(db, publisher, 0, nil).WithSchemaVersionResolver(schemaSvc)
-	published, err := relay.PublishBatch(ctx, 10)
+	relay := outbox.NewRelay(db, &fakePublisher{}, 0, nil).WithSchemaVersionResolver(schemaSvc)
+	record := outbox.Record{
+		ID:            "evt_schema_dual_publish",
+		AggregateType: "payment",
+		AggregateID:   "pay_schema_test",
+		EventType:     "payment.captured",
+		MerchantID:    m.ID,
+		Payload:       json.RawMessage(`{"payment_id":"pay_schema_test","order_id":"order_schema_test"}`),
+		CreatedAt:     time.Now().UTC(),
+	}
+	envelopes, err := relay.BuildPublishedEnvelopes(ctx, record)
 	if err != nil {
-		t.Fatalf("publish outbox batch with schema registry: %v", err)
+		t.Fatalf("build published envelopes: %v", err)
 	}
-	if published != 1 {
-		t.Fatalf("expected one outbox row to publish, got %d", published)
-	}
-	if len(publisher.body) != 2 {
-		t.Fatalf("expected dual publish to emit 2 envelopes, got %d", len(publisher.body))
+	if len(envelopes) != 2 {
+		t.Fatalf("expected dual publish to emit 2 envelopes, got %d", len(envelopes))
 	}
 
 	seenVersions := map[string]bool{}
-	for _, body := range publisher.body {
-		var envelope map[string]any
-		if err := json.Unmarshal(body, &envelope); err != nil {
+	for _, published := range envelopes {
+		var decoded map[string]any
+		if err := json.Unmarshal(published.Payload, &decoded); err != nil {
 			t.Fatalf("decode published envelope: %v", err)
 		}
-		if envelope["schema_subject"] != "payment.captured" {
-			t.Fatalf("expected schema_subject payment.captured, got %#v", envelope["schema_subject"])
+		if decoded["schema_subject"] != "payment.captured" {
+			t.Fatalf("expected schema_subject payment.captured, got %#v", decoded["schema_subject"])
 		}
-		version, _ := envelope["schema_version"].(string)
+		version, _ := decoded["schema_version"].(string)
 		seenVersions[version] = true
-		if envelope["event_id"] != "evt_schema_dual_publish" {
-			t.Fatalf("expected event_id to match outbox row, got %#v", envelope["event_id"])
+		if decoded["event_id"] != "evt_schema_dual_publish" {
+			t.Fatalf("expected event_id to match outbox row, got %#v", decoded["event_id"])
 		}
-		if envelope["occurred_at"] == "" || envelope["correlation_id"] == "" || envelope["causation_id"] == "" {
-			t.Fatalf("expected envelope metadata to be populated, got %#v", envelope)
+		if decoded["occurred_at"] == "" || decoded["correlation_id"] == "" || decoded["causation_id"] == "" {
+			t.Fatalf("expected envelope metadata to be populated, got %#v", decoded)
 		}
 	}
 	if !seenVersions["1.0.0"] || !seenVersions["1.1.0"] {

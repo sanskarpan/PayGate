@@ -20,11 +20,12 @@ import (
 type Handler struct {
 	svc        *Service
 	settlement *settlement.Service
+	ledger     *ledger.Service
 }
 
 // NewHandler creates a Handler.
-func NewHandler(svc *Service, settlementSvc *settlement.Service) *Handler {
-	return &Handler{svc: svc, settlement: settlementSvc}
+func NewHandler(svc *Service, settlementSvc *settlement.Service, ledgerSvc *ledger.Service) *Handler {
+	return &Handler{svc: svc, settlement: settlementSvc, ledger: ledgerSvc}
 }
 
 func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
@@ -63,6 +64,12 @@ func (h *Handler) initiate(w http.ResponseWriter, r *http.Request) {
 	if sttl.RollbackMarkedAt != nil {
 		handleError(w, settlement.ErrSettlementRollbackMarked)
 		return
+	}
+	if h.ledger != nil {
+		if err := h.ledger.CanReserveForPayout(r.Context(), p.MerchantID, sttl.Currency, sttl.NetAmount); err != nil {
+			handleError(w, err)
+			return
+		}
 	}
 
 	pout, err := h.svc.InitiatePayoutForSettlement(r.Context(), p.MerchantID, settlementID, sttl.NetAmount, sttl.Currency)

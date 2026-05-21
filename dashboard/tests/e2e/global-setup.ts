@@ -19,7 +19,7 @@ async function main() {
     return;
   }
 
-  execFileSync("bash", ["scripts/dr/recreate_local_env.sh"], {
+  execFileSync("bash", ["scripts/test/prepare_local_stack.sh"], {
     cwd: repoRoot,
     stdio: "inherit",
     env: {

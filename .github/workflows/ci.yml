@@ -46,7 +46,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: paygate
-          POSTGRES_PASSWORD: paygate
+          POSTGRES_PASSWORD: ${{ github.run_id }}
           POSTGRES_DB: paygate
         ports:
           - 5432:5432
@@ -56,7 +56,7 @@ jobs:
           --health-timeout=5s
           --health-retries=5
     env:
-      PAYGATE_TEST_DB_URL: postgres://paygate:paygate@localhost:5432/paygate?sslmode=disable
+      PAYGATE_TEST_DB_URL: postgres://paygate:${{ github.run_id }}@localhost:5432/paygate?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -93,10 +93,25 @@ jobs:
   frontend-e2e:
     needs: [integration, frontend]
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: paygate
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+          POSTGRES_DB: paygate
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd="pg_isready -U paygate -d paygate"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     env:
       API_BASE_URL: http://127.0.0.1:38090
       APP_BASE_URL: http://127.0.0.1:33001
-      DATABASE_URL: postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable
+      DATABASE_URL: postgres://paygate:${{ github.run_id }}@localhost:5435/paygate?sslmode=disable
+      PLAYWRIGHT_SKIP_BOOTSTRAP: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
@@ -110,6 +125,10 @@ jobs:
         run: corepack enable
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install golang-migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
+      - name: Run database migrations
+        run: migrate -path ./migrations -database "$DATABASE_URL" up
       - name: Install dashboard dependencies
         working-directory: dashboard
         run: pnpm install --frozen-lockfile

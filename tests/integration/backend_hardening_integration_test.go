@@ -301,7 +301,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	payoutSvc.EnableSagaOrchestration(sagaSvc)
 	payoutSvc.RegisterSagaHandlers(sagaSvc)
 	disputeSvc := dispute.NewService(dispute.NewPostgresRepository(db))
-	eventSchemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
+	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
 
 	merchantHandler := merchant.NewHandler(merchantSvc)
 	orderHandler := order.NewHandler(orderSvc)
@@ -310,16 +310,28 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	ledgerHoldHandler := ledger.NewHoldHandler(ledgerSvc)
 	webhookHandler := webhook.NewHandler(webhookSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
-	disputeHandler := dispute.NewHandler(disputeSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
 	sagaHandler := saga.NewHandler(sagaSvc)
-	eventSchemaHandler := eventschema.NewHandler(eventSchemaSvc)
+	disputeHandler := dispute.NewHandler(disputeSvc)
+	holdHandler := ledger.NewHoldHandler(ledgerSvc)
+	schemaHandler := eventschema.NewHandler(schemaSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", httpx.Healthz)
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.Ping(r.Context()); err != nil {
+			httpx.WriteError(w, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVER_ERROR", Description: "database unavailable"})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"checks": map[string]any{"postgres": "ok"},
+		})
+	})
 	merchantHandler.RegisterRoutes(mux)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
@@ -329,10 +341,11 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	settlementHandler.RegisterRoutesWithAuth(mux, protected)
 	payoutHandler.RegisterRoutesWithAuth(mux, protected)
 	payoutHandler.RegisterPublicRoutes(mux)
+	sagaHandler.RegisterRoutesWithAuth(mux, protected)
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
 	disputeHandler.RegisterRoutesWithAuth(mux, protected)
-	sagaHandler.RegisterRoutesWithAuth(mux, protected)
-	eventSchemaHandler.RegisterRoutesWithAuth(mux, protected)
+	holdHandler.RegisterRoutesWithAuth(mux, protected)
+	schemaHandler.RegisterRoutesWithAuth(mux, protected)
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := httpx.PrincipalFromContext(r.Context())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})

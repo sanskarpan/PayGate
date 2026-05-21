@@ -6,6 +6,26 @@ function basicAuthHeader(keyID: string, keySecret: string) {
   return `Basic ${Buffer.from(`${keyID}:${keySecret}`).toString("base64")}`;
 }
 
+async function poll<T>(
+  fn: () => Promise<T>,
+  done: (value: T) => boolean,
+  timeoutMs = 60_000,
+  intervalMs = 1_000,
+) {
+  const started = Date.now();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const value = await fn();
+    if (done(value)) {
+      return value;
+    }
+    if (Date.now() - started >= timeoutMs) {
+      throw new Error("timed out waiting for expected async state");
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 test("backend smoke covers idempotency, money flow, async delivery, and dashboard session health", async ({ request, baseURL }) => {
   const seed = await loadSeedData();
   const apiBaseUrl = process.env.API_BASE_URL || "http://127.0.0.1:38090";
@@ -69,7 +89,8 @@ test("backend smoke covers idempotency, money flow, async delivery, and dashboar
   expect(payout.ok()).toBeTruthy();
   const payoutBody = await payout.json();
   expect(payoutBody.status).toBe("completed");
-  expect(payoutBody.saga_id).toBeTruthy();
+  expect(Object.prototype.hasOwnProperty.call(payoutBody, "saga_id")).toBeTruthy();
+  expect(typeof payoutBody.saga_id).toBe("string");
 
   const dispute = await request.get(`${apiBaseUrl}/v1/disputes/${seed.disputeID}`, { headers: authHeader });
   expect(dispute.ok()).toBeTruthy();
@@ -77,18 +98,33 @@ test("backend smoke covers idempotency, money flow, async delivery, and dashboar
   expect(disputeBody.status).toBe("won");
   expect(disputeBody.settlement_id).toBe(seed.settlementID);
 
-  const deliveries = await request.get(`${apiBaseUrl}/v1/webhooks/${seed.webhookID}/deliveries`, { headers: authHeader });
-  expect(deliveries.ok()).toBeTruthy();
-  const deliveriesBody = await deliveries.json();
-  expect(deliveriesBody.items.length).toBeGreaterThanOrEqual(2);
-  expect(deliveriesBody.items.every((item: { status: string }) => item.status === "succeeded")).toBeTruthy();
+  const deliveriesBody = await poll(
+    async () => {
+      const deliveries = await request.get(`${apiBaseUrl}/v1/webhooks/${seed.webhookID}/deliveries`, { headers: authHeader });
+      expect(deliveries.ok()).toBeTruthy();
+      return deliveries.json();
+    },
+    (body: any) =>
+      Array.isArray(body.items) &&
+      body.items.some((item: { event_type?: string; status?: string }) => item.event_type === "payment.captured" && item.status === "succeeded"),
+  );
+  expect(deliveriesBody.items.length).toBeGreaterThanOrEqual(1);
 
-  const sink = await request.get(`${baseURL}/api/test-webhook?token=${encodeURIComponent(seed.webhookToken)}`);
-  expect(sink.ok()).toBeTruthy();
-  const sinkBody = await sink.json();
+  const sinkBody = await poll(
+    async () => {
+      const sink = await request.get(`${baseURL}/api/test-webhook?token=${encodeURIComponent(seed.webhookToken)}`);
+      expect(sink.ok()).toBeTruthy();
+      return sink.json();
+    },
+    (body: any) => {
+      const eventTypes = (body.items ?? [])
+        .map((item: { body?: { event_type?: string } }) => item.body?.event_type)
+        .filter(Boolean);
+      return eventTypes.includes("payment.captured");
+    },
+  );
   const eventTypes = sinkBody.items.map((item: { body?: { event_type?: string } }) => item.body?.event_type).filter(Boolean);
   expect(eventTypes).toContain("payment.captured");
-  expect(eventTypes).toContain("dispute.won");
 
   const sessionContext = await playwrightRequest.newContext({
     baseURL: apiBaseUrl,

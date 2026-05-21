@@ -152,11 +152,18 @@ func run() error {
 	reconWorker := recon.NewWorker(db, l)
 	go reconWorker.Start(ctx)
 	reconHandler := recon.NewHandler(reconWorker)
-	sagaSvc := saga.NewService(saga.NewPostgresRepository(db), l)
+	sagaRepo := saga.NewPostgresRepository(db)
+	sagaSvc := saga.NewService(sagaRepo, l)
 	sagaHandler := saga.NewHandler(sagaSvc)
 	if cfg.SagaWorkerEnabled {
 		go saga.NewWorker(sagaSvc, time.Second, l).Start(ctx)
 	}
+
+	schemaRepo := eventschema.NewPostgresRepository(db)
+	schemaSvc := eventschema.NewService(schemaRepo, nil)
+	schemaHandler := eventschema.NewHandler(schemaSvc)
+
+	holdHandler := ledger.NewHoldHandler(ledgerSvc)
 
 	// Dispute management
 	disputeRepo := dispute.NewPostgresRepository(db)
@@ -170,7 +177,7 @@ func run() error {
 	payoutSvc.SetRailCallbackSecret(cfg.PayoutRailSecret)
 	payoutSvc.EnableSagaOrchestration(sagaSvc)
 	payoutSvc.RegisterSagaHandlers(sagaSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", httpx.Healthz)
@@ -240,13 +247,14 @@ func run() error {
 	reconHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
 		return authMw.RequireScope(merchant.APIKeyScopeRead, next)
 	})
-	sagaHandler.RegisterRoutesWithAuth(mux, protected)
+	registerAdvancedPlatformRoutes(mux, protected, sagaHandler, schemaHandler, holdHandler)
 
 	// Disputes
 	disputeHandler.RegisterRoutesWithAuth(mux, protected)
 
 	// Payouts
 	payoutHandler.RegisterRoutesWithAuth(mux, protected)
+	payoutHandler.RegisterPublicRoutes(mux)
 
 	// Gateway simulator control panel (no merchant auth - admin endpoint)
 	gatewayAdminHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
@@ -348,4 +356,29 @@ func (a *riskAdapter) EvaluateAuthorize(ctx context.Context, merchantID, payment
 		return string(risk.RiskActionAllow), err
 	}
 	return string(ev.Action), nil
+}
+
+func registerAdvancedPlatformRoutes(
+	mux *http.ServeMux,
+	wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler,
+	sagaHandler *saga.Handler,
+	schemaHandler *eventschema.Handler,
+	holdHandler *ledger.HoldHandler,
+) {
+	advancedMux := http.NewServeMux()
+	sagaHandler.RegisterRoutesWithAuth(advancedMux, wrap)
+	schemaHandler.RegisterRoutesWithAuth(advancedMux, wrap)
+	holdHandler.RegisterRoutesWithAuth(advancedMux, wrap)
+
+	for _, pattern := range []string{
+		"/v1/sagas",
+		"/v1/sagas/",
+		"/v1/event-schemas",
+		"/v1/event-schemas/",
+		"/v1/event-schema-rollouts/",
+		"/v1/ledger/holds",
+		"/v1/ledger/holds/",
+	} {
+		mux.Handle(pattern, advancedMux)
+	}
 }
