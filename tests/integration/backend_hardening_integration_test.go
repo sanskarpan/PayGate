@@ -16,6 +16,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/auth"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/dispute"
+	"github.com/sanskarpan/PayGate/internal/eventschema"
 	"github.com/sanskarpan/PayGate/internal/gateway"
 	"github.com/sanskarpan/PayGate/internal/idempotency"
 	"github.com/sanskarpan/PayGate/internal/ledger"
@@ -25,6 +26,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/payment"
 	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/refund"
+	"github.com/sanskarpan/PayGate/internal/saga"
 	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
@@ -292,7 +294,9 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
 	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledgerSvc))
 	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
+	sagaSvc := saga.NewService(saga.NewPostgresRepository(db), nil)
 	disputeSvc := dispute.NewService(dispute.NewPostgresRepository(db))
+	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
 
 	merchantHandler := merchant.NewHandler(merchantSvc)
 	orderHandler := order.NewHandler(orderSvc)
@@ -300,14 +304,28 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	refundHandler := refund.NewHandler(refundSvc)
 	webhookHandler := webhook.NewHandler(webhookSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
+	sagaHandler := saga.NewHandler(sagaSvc)
 	disputeHandler := dispute.NewHandler(disputeSvc)
+	holdHandler := ledger.NewHoldHandler(ledgerSvc)
+	schemaHandler := eventschema.NewHandler(schemaSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", httpx.Healthz)
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.Ping(r.Context()); err != nil {
+			httpx.WriteError(w, http.StatusServiceUnavailable, httpx.APIError{Code: "SERVER_ERROR", Description: "database unavailable"})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"checks": map[string]any{"postgres": "ok"},
+		})
+	})
 	merchantHandler.RegisterRoutes(mux)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
@@ -315,8 +333,11 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	refundHandler.RegisterRoutesWithAuth(mux, protected)
 	settlementHandler.RegisterRoutesWithAuth(mux, protected)
 	payoutHandler.RegisterRoutesWithAuth(mux, protected)
+	sagaHandler.RegisterRoutesWithAuth(mux, protected)
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
 	disputeHandler.RegisterRoutesWithAuth(mux, protected)
+	holdHandler.RegisterRoutesWithAuth(mux, protected)
+	schemaHandler.RegisterRoutesWithAuth(mux, protected)
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := httpx.PrincipalFromContext(r.Context())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})

@@ -62,6 +62,7 @@ func TestCheckCompatibilityAllowsAdditiveOptionalFields(t *testing.T) {
 
 func loadFixturePair(t *testing.T, schemaPath string) (Document, map[string]any, string) {
 	t.Helper()
+	// #nosec G304 -- schema fixtures are checked-in test assets under the repo.
 	rawSchema, err := os.ReadFile(schemaPath)
 	if err != nil {
 		t.Fatalf("read schema fixture: %v", err)
@@ -72,6 +73,7 @@ func loadFixturePair(t *testing.T, schemaPath string) (Document, map[string]any,
 	}
 
 	samplePath := strings.TrimSuffix(schemaPath, ".schema.json") + ".sample.json"
+	// #nosec G304 -- sample fixtures are checked-in test assets under the repo.
 	rawSample, err := os.ReadFile(samplePath)
 	if err != nil {
 		t.Fatalf("read sample fixture: %v", err)
@@ -131,11 +133,7 @@ func validateSampleAgainstRequiredFields(t *testing.T, schema Document, sample m
 			if !ok {
 				t.Fatalf("sample field %s must be object", joinPath(prefix, field))
 			}
-			validateSampleAgainstRequiredFields(t, Document{
-				Type:       fieldSchema.Type,
-				Properties: fieldSchema.Properties,
-				Required:   fieldSchema.Required,
-			}, nested, joinPath(prefix, field))
+			validateSampleAgainstRequiredFields(t, Document(fieldSchema), nested, joinPath(prefix, field))
 		}
 	}
 }

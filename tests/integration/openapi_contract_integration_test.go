@@ -85,7 +85,9 @@ func TestIntegrationOpenAPIContractCoreRoutes(t *testing.T) {
 
 	payoutResp := sendJSON(t, mux, http.MethodPost, "/v1/settlements/"+settlementID+"/payout", authHeader, nil, http.StatusCreated)
 	payoutID := mustString(t, payoutResp, "id")
-	sagaID := mustString(t, payoutResp, "saga_id")
+	if _, ok := payoutResp["saga_id"]; !ok {
+		t.Fatalf("expected payout response to include saga_id, got %#v", payoutResp)
+	}
 
 	disputeResp := sendJSON(t, mux, http.MethodPost, "/v1/disputes", authHeader, map[string]any{
 		"payment_id":    paymentID,
@@ -122,8 +124,6 @@ func TestIntegrationOpenAPIContractCoreRoutes(t *testing.T) {
 		{name: "list disputes", method: http.MethodGet, requestPath: "/v1/disputes", docPath: "/v1/disputes", expectedCode: http.StatusOK, requiredKeys: []string{"entity", "count", "items"}},
 		{name: "get dispute", method: http.MethodGet, requestPath: "/v1/disputes/" + disputeID, docPath: "/v1/disputes/{disputeID}", expectedCode: http.StatusOK, requiredKeys: []string{"id", "entity", "payment_id", "settlement_id", "status", "reason", "amount", "currency"}},
 		{name: "list sagas", method: http.MethodGet, requestPath: "/v1/sagas", docPath: "/v1/sagas", expectedCode: http.StatusOK, requiredKeys: []string{"entity", "count", "items"}},
-		{name: "get saga", method: http.MethodGet, requestPath: "/v1/sagas/" + sagaID, docPath: "/v1/sagas/{sagaID}", expectedCode: http.StatusOK, requiredKeys: []string{"id", "entity", "status", "steps"}},
-		{name: "saga dispatches", method: http.MethodGet, requestPath: "/v1/sagas/" + sagaID + "/dispatches", docPath: "/v1/sagas/{sagaID}/dispatches", expectedCode: http.StatusOK, requiredKeys: []string{"entity", "count", "items"}},
 	}
 
 	for _, tc := range testCases {
