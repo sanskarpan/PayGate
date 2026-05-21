@@ -92,6 +92,7 @@ func run() error {
 
 	ledgerRepo := ledger.NewRepository(db)
 	ledgerSvc := ledger.NewService(ledgerRepo)
+	ledgerHoldHandler := ledger.NewHoldHandler(ledgerSvc)
 
 	riskRepo := risk.NewPostgresRepository(db)
 	riskSvc := risk.NewService(riskRepo, l)
@@ -120,13 +121,20 @@ func run() error {
 	webhookHandler := webhook.NewHandler(webhookSvc)
 	webhookConsumer := webhook.NewConsumer(webhookSvc, webhook.NewKafkaReader(cfg.KafkaBrokers, "webhook-service", l))
 
+	eventSchemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), l)
+	if err := eventSchemaSvc.BootstrapFromFixtures(ctx, "schemas/events", "platform"); err != nil {
+		return fmt.Errorf("bootstrap event schemas: %w", err)
+	}
+	eventSchemaHandler := eventschema.NewHandler(eventSchemaSvc)
+	go eventschema.NewAlertChecker(eventSchemaSvc, time.Minute, l).Start(ctx)
+
 	var outboxPublisher outbox.Publisher = outbox.NewKafkaPublisher(cfg.KafkaBrokers)
 	if os.Getenv("APP_ENV") != "production" {
 		outboxPublisher = outbox.NewFallbackPublisher(outboxPublisher, outbox.NewLocalPublisher(func(topic, key string, payload []byte) error {
 			return webhookConsumer.HandleMessage(ctx, topic, key, payload)
 		}), l)
 	}
-	go outbox.NewRelay(db, outboxPublisher, time.Second, l).Start(ctx)
+	go outbox.NewRelay(db, outboxPublisher, time.Second, l).WithSchemaVersionResolver(eventSchemaSvc).Start(ctx)
 	go func() {
 		if err := webhookConsumer.Start(ctx); err != nil && ctx.Err() == nil {
 			l.Error("webhook consumer stopped", "error", err)
@@ -140,13 +148,16 @@ func run() error {
 	go order.NewExpirySweeper(orderSvc, time.Minute, l).Start(ctx)
 	go webhook.NewRetryWorker(webhookSvc, 30*time.Second, l).Start(ctx)
 	go payment.NewSweeper(paymentSvc, 30*time.Second, l).Start(ctx)
+	go ledger.NewHoldSweeper(ledgerSvc, time.Minute, l).Start(ctx)
 	reconWorker := recon.NewWorker(db, l)
 	go reconWorker.Start(ctx)
 	reconHandler := recon.NewHandler(reconWorker)
-
 	sagaRepo := saga.NewPostgresRepository(db)
-	sagaSvc := saga.NewService(sagaRepo, nil)
+	sagaSvc := saga.NewService(sagaRepo, l)
 	sagaHandler := saga.NewHandler(sagaSvc)
+	if cfg.SagaWorkerEnabled {
+		go saga.NewWorker(sagaSvc, time.Second, l).Start(ctx)
+	}
 
 	schemaRepo := eventschema.NewPostgresRepository(db)
 	schemaSvc := eventschema.NewService(schemaRepo, nil)
@@ -162,6 +173,10 @@ func run() error {
 	// Payout workflow
 	payoutRepo := payout.NewPostgresRepository(db, ledgerSvc)
 	payoutSvc := payout.NewService(payoutRepo, l)
+	payoutSvc.SetLedgerService(ledgerSvc)
+	payoutSvc.SetRailCallbackSecret(cfg.PayoutRailSecret)
+	payoutSvc.EnableSagaOrchestration(sagaSvc)
+	payoutSvc.RegisterSagaHandlers(sagaSvc)
 	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
 
 	mux := http.NewServeMux()
@@ -215,8 +230,10 @@ func run() error {
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
 	refundHandler.RegisterRoutesWithAuth(mux, protected)
+	ledgerHoldHandler.RegisterRoutesWithAuth(mux, protected)
 	settlementHandler.RegisterRoutesWithAuth(mux, protected)
 	webhookHandler.RegisterRoutesWithAuth(mux, protected)
+	eventSchemaHandler.RegisterRoutesWithAuth(mux, protected)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	checkoutHandler.RegisterRoutes(mux)
 	auditHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
@@ -236,6 +253,7 @@ func run() error {
 
 	// Payouts
 	payoutHandler.RegisterRoutesWithAuth(mux, protected)
+	payoutHandler.RegisterPublicRoutes(mux)
 
 	// Gateway simulator control panel (no merchant auth - admin endpoint)
 	gatewayAdminHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {

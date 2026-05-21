@@ -16,6 +16,8 @@ type Config struct {
 	DashboardSessionSecret string
 	DashboardOrigin        string
 	TrustedProxyCIDRs      []string
+	PayoutRailSecret       string
+	SagaWorkerEnabled      bool
 }
 
 func FromEnv() Config {
@@ -49,6 +51,12 @@ func FromEnv() Config {
 	if trustedProxyCIDRs == "" {
 		trustedProxyCIDRs = "127.0.0.1/32,::1/128"
 	}
+	payoutRailSecret := os.Getenv("PAYOUT_RAIL_SECRET")
+	if payoutRailSecret == "" {
+		// #nosec G101 -- development-only fallback secret for local payout rail simulator callbacks
+		payoutRailSecret = "paygate-dev-payout-rail-secret"
+	}
+	sagaWorkerEnabled := os.Getenv("SAGA_WORKER_ENABLED")
 	return Config{
 		Port:                   port,
 		DatabaseURL:            dbURL,
@@ -57,6 +65,8 @@ func FromEnv() Config {
 		DashboardSessionSecret: sessionSecret,
 		DashboardOrigin:        dashboardOrigin,
 		TrustedProxyCIDRs:      splitCSV(trustedProxyCIDRs),
+		PayoutRailSecret:       payoutRailSecret,
+		SagaWorkerEnabled:      sagaWorkerEnabled != "false",
 	}
 }
 
@@ -73,6 +83,12 @@ func (c Config) Validate() error {
 	}
 	if len(c.DashboardSessionSecret) < 32 {
 		errs = append(errs, fmt.Errorf("DASHBOARD_SESSION_SECRET must be at least 32 characters"))
+	}
+	if c.PayoutRailSecret == "paygate-dev-payout-rail-secret" {
+		errs = append(errs, fmt.Errorf("PAYOUT_RAIL_SECRET must be changed from the default in production"))
+	}
+	if len(c.PayoutRailSecret) < 24 {
+		errs = append(errs, fmt.Errorf("PAYOUT_RAIL_SECRET must be at least 24 characters"))
 	}
 	for _, raw := range c.TrustedProxyCIDRs {
 		if _, err := netip.ParsePrefix(raw); err != nil {
