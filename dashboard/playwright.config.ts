@@ -47,6 +47,8 @@ export default defineConfig({
     {
       command: [
         "env",
+        "-u",
+        "NO_COLOR",
         "PORT=38090",
         `DATABASE_URL=${databaseUrl}`,
         `REDIS_ADDR=${redisAddr}`,
@@ -62,7 +64,7 @@ export default defineConfig({
       timeout: 180_000,
     },
     {
-      command: `sh -c 'pnpm build && API_BASE_URL=${apiBaseUrl} APP_BASE_URL=${appBaseUrl} pnpm start -p 33001'`,
+      command: `env -u NO_COLOR sh -c 'pnpm build && API_BASE_URL=${apiBaseUrl} APP_BASE_URL=${appBaseUrl} pnpm start -p 33001'`,
       cwd: __dirname,
       url: `${appBaseUrl}/`,
       reuseExistingServer: !process.env.CI,

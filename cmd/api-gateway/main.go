@@ -22,6 +22,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/common/middleware"
 	"github.com/sanskarpan/PayGate/internal/common/telemetry"
 	"github.com/sanskarpan/PayGate/internal/dispute"
+	"github.com/sanskarpan/PayGate/internal/eventschema"
 	"github.com/sanskarpan/PayGate/internal/gateway"
 	"github.com/sanskarpan/PayGate/internal/idempotency"
 	"github.com/sanskarpan/PayGate/internal/ledger"
@@ -33,6 +34,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/recon"
 	"github.com/sanskarpan/PayGate/internal/refund"
 	"github.com/sanskarpan/PayGate/internal/risk"
+	"github.com/sanskarpan/PayGate/internal/saga"
 	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
@@ -142,6 +144,16 @@ func run() error {
 	go reconWorker.Start(ctx)
 	reconHandler := recon.NewHandler(reconWorker)
 
+	sagaRepo := saga.NewPostgresRepository(db)
+	sagaSvc := saga.NewService(sagaRepo, nil)
+	sagaHandler := saga.NewHandler(sagaSvc)
+
+	schemaRepo := eventschema.NewPostgresRepository(db)
+	schemaSvc := eventschema.NewService(schemaRepo, nil)
+	schemaHandler := eventschema.NewHandler(schemaSvc)
+
+	holdHandler := ledger.NewHoldHandler(ledgerSvc)
+
 	// Dispute management
 	disputeRepo := dispute.NewPostgresRepository(db)
 	disputeSvc := dispute.NewService(disputeRepo)
@@ -217,6 +229,7 @@ func run() error {
 	reconHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
 		return authMw.RequireScope(merchant.APIKeyScopeRead, next)
 	})
+	registerAdvancedPlatformRoutes(mux, protected, sagaHandler, schemaHandler, holdHandler)
 
 	// Disputes
 	disputeHandler.RegisterRoutesWithAuth(mux, protected)
@@ -324,4 +337,29 @@ func (a *riskAdapter) EvaluateAuthorize(ctx context.Context, merchantID, payment
 		return string(risk.RiskActionAllow), err
 	}
 	return string(ev.Action), nil
+}
+
+func registerAdvancedPlatformRoutes(
+	mux *http.ServeMux,
+	wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler,
+	sagaHandler *saga.Handler,
+	schemaHandler *eventschema.Handler,
+	holdHandler *ledger.HoldHandler,
+) {
+	advancedMux := http.NewServeMux()
+	sagaHandler.RegisterRoutesWithAuth(advancedMux, wrap)
+	schemaHandler.RegisterRoutesWithAuth(advancedMux, wrap)
+	holdHandler.RegisterRoutesWithAuth(advancedMux, wrap)
+
+	for _, pattern := range []string{
+		"/v1/sagas",
+		"/v1/sagas/",
+		"/v1/event-schemas",
+		"/v1/event-schemas/",
+		"/v1/event-schema-rollouts/",
+		"/v1/ledger/holds",
+		"/v1/ledger/holds/",
+	} {
+		mux.Handle(pattern, advancedMux)
+	}
 }

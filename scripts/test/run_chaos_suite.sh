@@ -8,6 +8,32 @@ TOXIPROXY_NAME="${TOXIPROXY_NAME:-paygate-toxiproxy}"
 TOXIPROXY_API="${TOXIPROXY_API:-http://127.0.0.1:8474}"
 START_API="${START_API:-false}"
 API_PID=""
+API_LOG_FILE="${API_LOG_FILE:-/tmp/paygate-chaos-api.log}"
+
+wait_for_api() {
+  local attempts="${1:-60}"
+  local delay_seconds="${2:-1}"
+
+  for ((i = 0; i < attempts; i++)); do
+    if curl -fsS "${API_BASE_URL}/readyz" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -n "${API_PID}" ]] && ! kill -0 "${API_PID}" >/dev/null 2>&1; then
+      echo "api-gateway exited before becoming ready" >&2
+      if [[ -f "${API_LOG_FILE}" ]]; then
+        cat "${API_LOG_FILE}" >&2
+      fi
+      return 1
+    fi
+    sleep "${delay_seconds}"
+  done
+
+  echo "timed out waiting for api-gateway readiness at ${API_BASE_URL}/readyz" >&2
+  if [[ -f "${API_LOG_FILE}" ]]; then
+    cat "${API_LOG_FILE}" >&2
+  fi
+  return 1
+}
 
 cleanup() {
   if [[ -n "${API_PID}" ]] && kill -0 "${API_PID}" >/dev/null 2>&1; then
@@ -42,7 +68,7 @@ docker run -d --name "${TOXIPROXY_NAME}" \
   -p 29092:29092 \
   ghcr.io/shopify/toxiproxy >/dev/null
 
-until curl -fsS "${TOXIPROXY_API}/version" >/dev/null; do
+until curl -fsS "${TOXIPROXY_API}/version" >/dev/null 2>&1; do
   sleep 1
 done
 
@@ -73,11 +99,9 @@ if [[ "${START_API}" == "true" ]]; then
     REDIS_ADDR=127.0.0.1:26379 \
     KAFKA_BROKERS=127.0.0.1:29092 \
     OTEL_EXPORTER_STDOUT=false \
-    go run ./cmd/api-gateway >/tmp/paygate-chaos-api.log 2>&1 &
+    go run ./cmd/api-gateway >"${API_LOG_FILE}" 2>&1 &
   API_PID=$!
-  until curl -fsS "${API_BASE_URL}/readyz" >/dev/null; do
-    sleep 2
-  done
+  wait_for_api
 fi
 
 if [[ -z "${CHAOS_API_KEY_ID:-}" || -z "${CHAOS_API_KEY_SECRET:-}" ]]; then

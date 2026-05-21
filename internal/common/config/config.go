@@ -26,11 +26,11 @@ func FromEnv() Config {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		// #nosec G101 -- local development default DSN
-		dbURL = "postgres://paygate:paygate@localhost:5432/paygate?sslmode=disable"
+		dbURL = "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable"
 	}
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
-		redisAddr = "localhost:6379"
+		redisAddr = "localhost:6380"
 	}
 	kafkaBrokers := strings.TrimSpace(os.Getenv("KAFKA_BROKERS"))
 	if kafkaBrokers == "" {
