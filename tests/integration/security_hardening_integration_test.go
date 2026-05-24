@@ -271,6 +271,14 @@ func TestIntegrationPayoutRejectedWhileSettlementOnHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create api key: %v", err)
 	}
+	authHeader := basicAuth(key.KeyID, key.KeySecret)
+	adminKey, err := merchantSvc.CreateAPIKey(ctx, m.ID, merchant.CreateAPIKeyInput{
+		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeAdmin,
+	})
+	if err != nil {
+		t.Fatalf("create admin api key: %v", err)
+	}
+	adminAuthHeader := basicAuth(adminKey.KeyID, adminKey.KeySecret)
 
 	o, err := orderSvc.Create(ctx, order.CreateInput{
 		MerchantID: m.ID, Amount: 5000, Currency: "INR", Receipt: "payout-hold-order",
@@ -278,8 +286,14 @@ func TestIntegrationPayoutRejectedWhileSettlementOnHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 	authz, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: m.ID, OrderID: o.ID, Amount: o.Amount, Currency: o.Currency, Method: "card",
+		MerchantID:           m.ID,
+		OrderID:              o.ID,
+		Amount:               o.Amount,
+		Currency:             o.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize payment: %v", err)
@@ -298,8 +312,10 @@ func TestIntegrationPayoutRejectedWhileSettlementOnHold(t *testing.T) {
 		t.Fatalf("hold settlement: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
-	req.Header.Set("Authorization", basicAuth(key.KeyID, key.KeySecret))
+	beneficiaryID := createApprovedBeneficiary(t, mux, adminAuthHeader)
+	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authHeader)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 

@@ -30,7 +30,7 @@ func NewPostgresRepository(db *pgxpool.Pool, ledgerSvc *ledger.Service) *Postgre
 
 // CreateForSettlement inserts a payout in pending state for the given settlement
 // and writes a payout.created outbox event.
-func (r *PostgresRepository) CreateForSettlement(ctx context.Context, merchantID, settlementID string, amount int64, currency string) (Payout, error) {
+func (r *PostgresRepository) CreateForSettlement(ctx context.Context, merchantID, settlementID, beneficiaryID string, amount int64, currency string, approvalStatus ApprovalStatus, batchID string) (Payout, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return Payout{}, err
@@ -40,9 +40,9 @@ func (r *PostgresRepository) CreateForSettlement(ctx context.Context, merchantID
 	id := idgen.New("payout")
 	if _, err := tx.Exec(ctx, `
 INSERT INTO paygate_payouts.payouts
-    (id, merchant_id, settlement_id, status, amount, currency)
-VALUES ($1, $2, $3, 'pending', $4, $5)
-`, id, merchantID, settlementID, amount, currency); err != nil {
+    (id, merchant_id, settlement_id, beneficiary_id, approval_status, batch_id, status, amount, currency)
+VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), 'pending', $7, $8)
+`, id, merchantID, settlementID, beneficiaryID, approvalStatus, batchID, amount, currency); err != nil {
 		return Payout{}, fmt.Errorf("insert payout: %w", err)
 	}
 	if err := r.recordEventTx(ctx, tx, TimelineEvent{
@@ -53,9 +53,11 @@ VALUES ($1, $2, $3, 'pending', $4, $5)
 		StatusBefore: StatePending,
 		StatusAfter:  StatePending,
 		Payload: map[string]any{
-			"settlement_id": settlementID,
-			"amount":        amount,
-			"currency":      currency,
+			"settlement_id":   settlementID,
+			"beneficiary_id":  beneficiaryID,
+			"amount":          amount,
+			"currency":        currency,
+			"approval_status": approvalStatus,
 		},
 	}); err != nil {
 		return Payout{}, fmt.Errorf("record payout.created event: %w", err)
@@ -67,10 +69,12 @@ VALUES ($1, $2, $3, 'pending', $4, $5)
 		EventType:     "payout.created",
 		MerchantID:    merchantID,
 		Payload: map[string]any{
-			"payout_id":     id,
-			"settlement_id": settlementID,
-			"amount":        amount,
-			"currency":      currency,
+			"payout_id":       id,
+			"settlement_id":   settlementID,
+			"beneficiary_id":  beneficiaryID,
+			"amount":          amount,
+			"currency":        currency,
+			"approval_status": approvalStatus,
 		},
 	}); err != nil {
 		return Payout{}, fmt.Errorf("write payout.created outbox: %w", err)
@@ -707,7 +711,7 @@ VALUES
 }
 
 const selectPayoutSQL = `
-SELECT id, merchant_id, settlement_id, status, amount, currency,
+SELECT id, merchant_id, settlement_id, beneficiary_id, status, approval_status, amount, currency,
        saga_id, bank_reference, rail_reference, failure_reason, return_reason, cancel_reason,
        initiated_at, completed_at, failed_at, returned_at, reversed_at, cancelled_at, created_at, updated_at
 FROM paygate_payouts.payouts`
@@ -719,6 +723,8 @@ type scannable interface {
 
 func scanPayout(row scannable) (Payout, error) {
 	var p Payout
+	var beneficiaryID *string
+	var approvalStatus *string
 	var sagaID *string
 	var bankRef *string
 	var railRef *string
@@ -726,7 +732,7 @@ func scanPayout(row scannable) (Payout, error) {
 	var returnReason *string
 	var cancelReason *string
 	err := row.Scan(
-		&p.ID, &p.MerchantID, &p.SettlementID, &p.Status,
+		&p.ID, &p.MerchantID, &p.SettlementID, &beneficiaryID, &p.Status, &approvalStatus,
 		&p.Amount, &p.Currency,
 		&sagaID, &bankRef, &railRef, &failureReason, &returnReason, &cancelReason,
 		&p.InitiatedAt, &p.CompletedAt, &p.FailedAt, &p.ReturnedAt, &p.ReversedAt, &p.CancelledAt,
@@ -734,6 +740,12 @@ func scanPayout(row scannable) (Payout, error) {
 	)
 	if err != nil {
 		return Payout{}, err
+	}
+	if beneficiaryID != nil {
+		p.BeneficiaryID = *beneficiaryID
+	}
+	if approvalStatus != nil {
+		p.ApprovalStatus = ApprovalStatus(*approvalStatus)
 	}
 	if sagaID != nil {
 		p.SagaID = *sagaID

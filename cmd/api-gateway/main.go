@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/sanskarpan/PayGate/internal/audit"
 	"github.com/sanskarpan/PayGate/internal/auth"
+	"github.com/sanskarpan/PayGate/internal/billing"
 	"github.com/sanskarpan/PayGate/internal/common/config"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/common/logger"
@@ -33,9 +35,12 @@ import (
 	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/recon"
 	"github.com/sanskarpan/PayGate/internal/refund"
+	"github.com/sanskarpan/PayGate/internal/reporting"
+	"github.com/sanskarpan/PayGate/internal/retention"
 	"github.com/sanskarpan/PayGate/internal/risk"
 	"github.com/sanskarpan/PayGate/internal/saga"
 	"github.com/sanskarpan/PayGate/internal/settlement"
+	"github.com/sanskarpan/PayGate/internal/tokenization"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
 
@@ -94,25 +99,43 @@ func run() error {
 	ledgerSvc := ledger.NewService(ledgerRepo)
 	ledgerHoldHandler := ledger.NewHoldHandler(ledgerSvc)
 
-	riskRepo := risk.NewPostgresRepository(db)
-	riskSvc := risk.NewService(riskRepo, l)
-	riskHandler := risk.NewHandler(riskSvc)
-
 	scenarioStore := gateway.NewScenarioStore(db)
 	methodStore := gateway.NewMethodConfigStore(db)
 	gatewayClient := gateway.NewSimulatorWithStores(scenarioStore, methodStore)
 	gatewayAdminHandler := gateway.NewAdminHandler(scenarioStore)
 	methodHandler := gateway.NewMethodHandler(methodStore)
+	cardTokenRepo := tokenization.NewPostgresRepository(db)
+	cardTokenSvc := tokenization.NewService(cardTokenRepo)
+	cardTokenHandler := tokenization.NewHandler(cardTokenSvc)
 	paymentRepo := payment.NewPostgresRepository(db, ledgerSvc, orderSvc)
-	paymentSvc := payment.NewService(paymentRepo, gatewayClient)
-	paymentHandler := payment.NewHandler(paymentSvc, payment.WithRiskEvaluator(&riskAdapter{svc: riskSvc}))
-	checkoutHandler := gateway.NewCheckoutHandler(paymentSvc, orderSvc)
+	paymentSvc := payment.NewService(paymentRepo, gatewayClient, payment.WithCardTokenAuthorizer(cardTokenSvc))
+	riskRepo := risk.NewPostgresRepository(db)
+	riskSvc := risk.NewService(riskRepo, l,
+		risk.WithPaymentService(paymentSvc),
+		risk.WithReserveEscalator(func(ctx context.Context, ev risk.RiskEvent) error {
+			_, err := merchantSvc.QueueReserveEscalation(ctx, merchant.QueueReserveEscalationInput{
+				MerchantID:       ev.MerchantID,
+				RiskEventID:      ev.ID,
+				TriggerScore:     ev.Score,
+				TriggeredRules:   ev.TriggeredRules,
+				SuggestedBaseBPS: 1000,
+				Rationale:        "risk event exceeded reserve escalation threshold",
+			})
+			return err
+		}),
+	)
+	riskHandler := risk.NewHandler(riskSvc)
+	paymentHandler := payment.NewHandler(paymentSvc, payment.WithRiskEvaluator(&riskAdapter{svc: riskSvc}), payment.WithCapabilityChecker(merchantSvc))
+	checkoutHandler := gateway.NewCheckoutHandler(paymentSvc, orderSvc, gateway.WithCardTokenizer(cardTokenSvc))
+	billingSvc := billing.NewService(billing.NewPostgresRepository(db), orderSvc, paymentSvc, cardTokenSvc)
+	billingHandler := billing.NewHandler(billingSvc)
 
 	refundRepo := refund.NewPostgresRepository(db, ledgerSvc)
 	refundSvc := refund.NewService(refundRepo)
-	refundHandler := refund.NewHandler(refundSvc)
+	refundHandler := refund.NewHandler(refundSvc, merchantSvc)
 
 	settlementRepo := settlement.NewPostgresRepository(db, ledgerSvc)
+	settlementRepo.SetReservePolicyResolver(merchantSvc)
 	settlementSvc := settlement.NewService(settlementRepo)
 	settlementHandler := settlement.NewHandler(settlementSvc)
 
@@ -127,8 +150,9 @@ func run() error {
 	}
 	eventSchemaHandler := eventschema.NewHandler(eventSchemaSvc)
 	go eventschema.NewAlertChecker(eventSchemaSvc, time.Minute, l).Start(ctx)
-
-	var outboxPublisher outbox.Publisher = outbox.NewKafkaPublisher(cfg.KafkaBrokers)
+	kafkaPublishTimeout := envDurationMillis("KAFKA_PUBLISH_TIMEOUT_MS", 5000)
+	kafkaIOTimeout := envDurationMillis("KAFKA_IO_TIMEOUT_MS", 5000)
+	var outboxPublisher outbox.Publisher = outbox.NewKafkaPublisherWithTimeouts(cfg.KafkaBrokers, kafkaPublishTimeout, kafkaIOTimeout)
 	if os.Getenv("APP_ENV") != "production" {
 		outboxPublisher = outbox.NewFallbackPublisher(outboxPublisher, outbox.NewLocalPublisher(func(topic, key string, payload []byte) error {
 			return webhookConsumer.HandleMessage(ctx, topic, key, payload)
@@ -152,6 +176,11 @@ func run() error {
 	reconWorker := recon.NewWorker(db, l)
 	go reconWorker.Start(ctx)
 	reconHandler := recon.NewHandler(reconWorker)
+	reportingSvc := reporting.NewService(reporting.NewRepository(db))
+	reportingHandler := reporting.NewHandler(reportingSvc)
+	retentionSvc := retention.NewService(retention.NewPostgresRepository(db))
+	retentionHandler := retention.NewHandler(retentionSvc)
+	go retention.NewWorker(retentionSvc, 6*time.Hour).Start(ctx)
 	sagaRepo := saga.NewPostgresRepository(db)
 	sagaSvc := saga.NewService(sagaRepo, l)
 	sagaHandler := saga.NewHandler(sagaSvc)
@@ -177,7 +206,7 @@ func run() error {
 	payoutSvc.SetRailCallbackSecret(cfg.PayoutRailSecret)
 	payoutSvc.EnableSagaOrchestration(sagaSvc)
 	payoutSvc.RegisterSagaHandlers(sagaSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc, merchantSvc)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", httpx.Healthz)
@@ -224,10 +253,13 @@ func run() error {
 	})
 
 	merchantHandler.RegisterRoutes(mux)
+	paymentHandler.RegisterRoutes(mux)
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(auditSvc.Middleware(next)))
 	}
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
+	cardTokenHandler.RegisterRoutesWithAuth(mux, protected)
+	billingHandler.RegisterRoutesWithAuth(mux, protected)
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
 	refundHandler.RegisterRoutesWithAuth(mux, protected)
 	ledgerHoldHandler.RegisterRoutesWithAuth(mux, protected)
@@ -246,6 +278,8 @@ func run() error {
 	reconHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
 		return authMw.RequireScope(merchant.APIKeyScopeRead, next)
 	})
+	reportingHandler.RegisterRoutesWithAuth(mux, protected)
+	retentionHandler.RegisterRoutesWithAuth(mux, protected)
 	registerAdvancedPlatformRoutes(mux, protected, sagaHandler, schemaHandler, holdHandler)
 
 	// Disputes
@@ -338,18 +372,39 @@ func run() error {
 	return server.Shutdown(shutdownCtx)
 }
 
+func envDurationMillis(name string, defaultMs int) time.Duration {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return time.Duration(defaultMs) * time.Millisecond
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms <= 0 {
+		return time.Duration(defaultMs) * time.Millisecond
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
 // riskAdapter bridges the risk.Service to the payment.RiskEvaluator interface.
 type riskAdapter struct {
 	svc *risk.Service
 }
 
-func (a *riskAdapter) EvaluateAuthorize(ctx context.Context, merchantID, paymentID string, amount int64, ipAddress string) (string, error) {
+func (a *riskAdapter) EvaluateAuthorize(ctx context.Context, in payment.AuthorizeRiskInput) (string, error) {
 	ev, err := a.svc.EvaluatePayment(ctx, risk.EvalInput{
-		MerchantID: merchantID,
-		PaymentID:  paymentID,
-		Amount:     amount,
-		Currency:   "INR",
-		IPAddress:  ipAddress,
+		MerchantID:        in.MerchantID,
+		PaymentID:         in.PaymentID,
+		Amount:            in.Amount,
+		Currency:          in.Currency,
+		IPAddress:         in.IPAddress,
+		DeviceFingerprint: in.RiskContext.DeviceFingerprint,
+		BrowserLanguage:   in.RiskContext.BrowserLanguage,
+		UserAgent:         in.RiskContext.UserAgent,
+		CardBIN:           in.RiskContext.CardBIN,
+		CardNetwork:       in.RiskContext.CardNetwork,
+		IssuerCountry:     in.RiskContext.IssuerCountry,
+		CardCountry:       in.RiskContext.CardCountry,
+		FundingType:       in.RiskContext.FundingType,
+		MerchantCountry:   in.RiskContext.MerchantCountry,
 	})
 	if err != nil {
 		return string(risk.RiskActionAllow), err

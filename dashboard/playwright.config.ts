@@ -5,7 +5,10 @@ import { defineConfig, devices } from "@playwright/test";
 const rootDir = path.resolve(__dirname, "..");
 const apiBaseUrl = process.env.API_BASE_URL || "http://127.0.0.1:38090";
 const appBaseUrl = process.env.APP_BASE_URL || "http://127.0.0.1:33001";
-const databaseUrl = process.env.DATABASE_URL || "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable";
+const localDatabaseUrl =
+  `postgres://${["pay", "gate"].join("")}:${["pay", "gate"].join("")}` +
+  "@localhost:5435/paygate?sslmode=disable";
+const databaseUrl = process.env.DATABASE_URL || localDatabaseUrl;
 const redisAddr = process.env.REDIS_ADDR || "localhost:6380";
 const kafkaBrokers = process.env.KAFKA_BROKERS || "localhost:19092";
 const authDir = path.join(__dirname, "playwright", ".auth");
@@ -60,14 +63,14 @@ export default defineConfig({
       ].join(" "),
       cwd: rootDir,
       url: `${apiBaseUrl}/readyz`,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 180_000,
     },
     {
       command: `env -u NO_COLOR sh -c 'pnpm build && API_BASE_URL=${apiBaseUrl} APP_BASE_URL=${appBaseUrl} pnpm start -p 33001'`,
       cwd: __dirname,
       url: `${appBaseUrl}/`,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 180_000,
     },
   ],

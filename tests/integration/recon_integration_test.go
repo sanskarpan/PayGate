@@ -20,7 +20,7 @@ func TestIntegrationReconLedgerBalanceHappyPath(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	_, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
+	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name: "Recon Merchant", Email: "recon@test.com", BusinessType: "company",
@@ -28,6 +28,11 @@ func TestIntegrationReconLedgerBalanceHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
 	}
+	key, err := merchantSvc.CreateAPIKey(ctx, createdMerchant.ID, merchant.CreateAPIKeyInput{Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite})
+	if err != nil {
+		t.Fatalf("create api key: %v", err)
+	}
+	authHeader := basicAuth(key.KeyID, key.KeySecret)
 
 	// Capture a payment to create balanced ledger entries.
 	o, err := orderSvc.Create(ctx, order.CreateInput{
@@ -36,9 +41,14 @@ func TestIntegrationReconLedgerBalanceHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 	auth, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID, OrderID: o.ID,
-		Amount: o.Amount, Currency: o.Currency, Method: "card",
+		MerchantID:           createdMerchant.ID,
+		OrderID:              o.ID,
+		Amount:               o.Amount,
+		Currency:             o.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
@@ -63,7 +73,7 @@ func TestIntegrationReconPaymentLedgerHappyPath(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	_, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
+	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name: "Recon PL Merchant", Email: "recon-pl@test.com", BusinessType: "company",
@@ -71,6 +81,11 @@ func TestIntegrationReconPaymentLedgerHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
 	}
+	key, err := merchantSvc.CreateAPIKey(ctx, createdMerchant.ID, merchant.CreateAPIKeyInput{Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite})
+	if err != nil {
+		t.Fatalf("create api key: %v", err)
+	}
+	authHeader := basicAuth(key.KeyID, key.KeySecret)
 
 	o, err := orderSvc.Create(ctx, order.CreateInput{
 		MerchantID: createdMerchant.ID, Amount: 6000, Currency: "INR", Receipt: "recon-pl-1",
@@ -78,9 +93,14 @@ func TestIntegrationReconPaymentLedgerHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 	auth, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID, OrderID: o.ID,
-		Amount: o.Amount, Currency: o.Currency, Method: "card",
+		MerchantID:           createdMerchant.ID,
+		OrderID:              o.ID,
+		Amount:               o.Amount,
+		Currency:             o.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
@@ -106,7 +126,7 @@ func TestIntegrationReconThreeWayHappyPath(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	_, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
+	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name: "Recon TW Merchant", Email: "recon-tw@test.com", BusinessType: "company",
@@ -114,6 +134,11 @@ func TestIntegrationReconThreeWayHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
 	}
+	key, err := merchantSvc.CreateAPIKey(ctx, createdMerchant.ID, merchant.CreateAPIKeyInput{Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite})
+	if err != nil {
+		t.Fatalf("create api key: %v", err)
+	}
+	authHeader := basicAuth(key.KeyID, key.KeySecret)
 
 	o, err := orderSvc.Create(ctx, order.CreateInput{
 		MerchantID: createdMerchant.ID, Amount: 4000, Currency: "INR", Receipt: "recon-tw-1",
@@ -121,9 +146,14 @@ func TestIntegrationReconThreeWayHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 	auth, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID, OrderID: o.ID,
-		Amount: o.Amount, Currency: o.Currency, Method: "card",
+		MerchantID:           createdMerchant.ID,
+		OrderID:              o.ID,
+		Amount:               o.Amount,
+		Currency:             o.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
@@ -155,7 +185,7 @@ func TestIntegrationReconDetectsMismatch(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	_, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
+	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name: "Recon Mismatch Merchant", Email: "recon-mm@test.com", BusinessType: "company",
@@ -163,6 +193,11 @@ func TestIntegrationReconDetectsMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
 	}
+	key, err := merchantSvc.CreateAPIKey(ctx, createdMerchant.ID, merchant.CreateAPIKeyInput{Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite})
+	if err != nil {
+		t.Fatalf("create api key: %v", err)
+	}
+	authHeader := basicAuth(key.KeyID, key.KeySecret)
 
 	o, err := orderSvc.Create(ctx, order.CreateInput{
 		MerchantID: createdMerchant.ID, Amount: 3000, Currency: "INR", Receipt: "recon-mm-1",
@@ -170,9 +205,14 @@ func TestIntegrationReconDetectsMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 	auth, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID, OrderID: o.ID,
-		Amount: o.Amount, Currency: o.Currency, Method: "card",
+		MerchantID:           createdMerchant.ID,
+		OrderID:              o.ID,
+		Amount:               o.Amount,
+		Currency:             o.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize: %v", err)

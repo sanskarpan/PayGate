@@ -46,9 +46,14 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 	}
 
 	// Authorize and capture payment.
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 	authorized, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID, OrderID: createdOrder.ID,
-		Amount: createdOrder.Amount, Currency: createdOrder.Currency, Method: "card",
+		MerchantID:           createdMerchant.ID,
+		OrderID:              createdOrder.ID,
+		Amount:               createdOrder.Amount,
+		Currency:             createdOrder.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
@@ -118,9 +123,14 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 		createdOrder2, _ := orderSvc.Create(ctx, order.CreateInput{
 			MerchantID: createdMerchant.ID, Amount: 5000, Currency: "INR", Receipt: "refund-test-2",
 		})
+		cardTokenID2 := createCardTokenViaMux(t, mux, authHeader, false)
 		authorized2, _ := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-			MerchantID: createdMerchant.ID, OrderID: createdOrder2.ID,
-			Amount: createdOrder2.Amount, Currency: createdOrder2.Currency, Method: "card",
+			MerchantID:           createdMerchant.ID,
+			OrderID:              createdOrder2.ID,
+			Amount:               createdOrder2.Amount,
+			Currency:             createdOrder2.Currency,
+			Method:               "card",
+			PaymentMethodTokenID: cardTokenID2,
 		})
 		_, _ = paymentSvc.CaptureForMerchant(ctx, createdMerchant.ID, authorized2.PaymentID, createdOrder2.Amount)
 
@@ -141,9 +151,14 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 		createdOrder3, _ := orderSvc.Create(ctx, order.CreateInput{
 			MerchantID: createdMerchant.ID, Amount: 3000, Currency: "INR", Receipt: "refund-test-3",
 		})
+		cardTokenID3 := createCardTokenViaMux(t, mux, authHeader, false)
 		authorized3, _ := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-			MerchantID: createdMerchant.ID, OrderID: createdOrder3.ID,
-			Amount: createdOrder3.Amount, Currency: createdOrder3.Currency, Method: "card",
+			MerchantID:           createdMerchant.ID,
+			OrderID:              createdOrder3.ID,
+			Amount:               createdOrder3.Amount,
+			Currency:             createdOrder3.Currency,
+			Method:               "card",
+			PaymentMethodTokenID: cardTokenID3,
 		})
 		// Do NOT capture — payment is still 'authorized'.
 		body, _ := json.Marshal(map[string]any{"amount": 3000})

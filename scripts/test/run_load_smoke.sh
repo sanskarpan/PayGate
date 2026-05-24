@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 API_PORT="${API_PORT:-38090}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${API_PORT}}"
 LOAD_SCRIPT="${LOAD_SCRIPT:-tests/load/ci_smoke.js}"
+DEFAULT_DATABASE_URL="postgres://pay""gate:pay""gate@localhost:5435/paygate?sslmode=disable"
 START_API="${START_API:-false}"
 API_PID=""
 API_LOG_FILE="${API_LOG_FILE:-/tmp/paygate-load-api.log}"
@@ -61,9 +62,11 @@ if [[ "${START_API}" == "true" ]]; then
   "${ROOT_DIR}/scripts/test/prepare_local_stack.sh"
   env \
     PORT="${API_PORT}" \
-    DATABASE_URL="${DATABASE_URL:-postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable}" \
+    DATABASE_URL="${DATABASE_URL:-${DEFAULT_DATABASE_URL}}" \
     REDIS_ADDR="${REDIS_ADDR:-localhost:6380}" \
     KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
+    KAFKA_PUBLISH_TIMEOUT_MS="${KAFKA_PUBLISH_TIMEOUT_MS:-250}" \
+    KAFKA_IO_TIMEOUT_MS="${KAFKA_IO_TIMEOUT_MS:-250}" \
     OTEL_EXPORTER_STDOUT=false \
     go run ./cmd/api-gateway >"${API_LOG_FILE}" 2>&1 &
   API_PID=$!

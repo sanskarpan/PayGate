@@ -134,6 +134,13 @@ func TestIntegrationPayoutBlockedByActiveLedgerHoldUntilRelease(t *testing.T) {
 		t.Fatalf("create api key: %v", err)
 	}
 	authHeader := basicAuth(key.KeyID, key.KeySecret)
+	adminKey, err := merchantSvc.CreateAPIKey(ctx, m.ID, merchant.CreateAPIKeyInput{
+		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeAdmin,
+	})
+	if err != nil {
+		t.Fatalf("create admin api key: %v", err)
+	}
+	adminAuthHeader := basicAuth(adminKey.KeyID, adminKey.KeySecret)
 
 	o, err := orderSvc.Create(ctx, order.CreateInput{
 		MerchantID: m.ID, Amount: 10000, Currency: "INR", Receipt: "ledger-hold-payout",
@@ -141,8 +148,14 @@ func TestIntegrationPayoutBlockedByActiveLedgerHoldUntilRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 	authOut, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: m.ID, OrderID: o.ID, Amount: o.Amount, Currency: o.Currency, Method: "card",
+		MerchantID:           m.ID,
+		OrderID:              o.ID,
+		Amount:               o.Amount,
+		Currency:             o.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize payment: %v", err)
@@ -184,7 +197,9 @@ func TestIntegrationPayoutBlockedByActiveLedgerHoldUntilRelease(t *testing.T) {
 		t.Fatal("expected hold id")
 	}
 
-	payoutReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	beneficiaryID := createApprovedBeneficiary(t, mux, adminAuthHeader)
+	payoutReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	payoutReq.Header.Set("Content-Type", "application/json")
 	payoutReq.Header.Set("Authorization", authHeader)
 	payoutRec := httptest.NewRecorder()
 	mux.ServeHTTP(payoutRec, payoutReq)
@@ -207,7 +222,8 @@ func TestIntegrationPayoutBlockedByActiveLedgerHoldUntilRelease(t *testing.T) {
 		t.Fatalf("repeat release hold: expected 200, got %d body=%s", releaseRec.Code, releaseRec.Body.String())
 	}
 
-	payoutReq = httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	payoutReq = httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	payoutReq.Header.Set("Content-Type", "application/json")
 	payoutReq.Header.Set("Authorization", authHeader)
 	payoutRec = httptest.NewRecorder()
 	mux.ServeHTTP(payoutRec, payoutReq)

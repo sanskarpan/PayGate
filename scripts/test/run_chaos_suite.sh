@@ -6,6 +6,7 @@ API_PORT="${API_PORT:-38091}"
 API_BASE_URL="${API_BASE_URL:-http://127.0.0.1:${API_PORT}}"
 TOXIPROXY_NAME="${TOXIPROXY_NAME:-paygate-toxiproxy}"
 TOXIPROXY_API="${TOXIPROXY_API:-http://127.0.0.1:8474}"
+DEFAULT_DATABASE_URL="postgres://pay""gate:pay""gate@localhost:5435/paygate?sslmode=disable"
 START_API="${START_API:-false}"
 API_PID=""
 API_LOG_FILE="${API_LOG_FILE:-/tmp/paygate-chaos-api.log}"
@@ -95,7 +96,7 @@ ensure_proxy kafka 0.0.0.0:29092 127.0.0.1:9092
 if [[ "${START_API}" == "true" ]]; then
   env \
     PORT="${API_PORT}" \
-    DATABASE_URL="${DATABASE_URL:-postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable}" \
+    DATABASE_URL="${DATABASE_URL:-${DEFAULT_DATABASE_URL}}" \
     REDIS_ADDR=127.0.0.1:26379 \
     KAFKA_BROKERS=127.0.0.1:29092 \
     OTEL_EXPORTER_STDOUT=false \
@@ -105,7 +106,7 @@ if [[ "${START_API}" == "true" ]]; then
 fi
 
 if [[ -z "${CHAOS_API_KEY_ID:-}" || -z "${CHAOS_API_KEY_SECRET:-}" ]]; then
-  eval "$(API_BASE_URL="${API_BASE_URL}" BOOTSTRAP_KEY_SCOPE=write "${ROOT_DIR}/scripts/test/bootstrap_test_merchant.sh")"
+  eval "$(API_BASE_URL="${API_BASE_URL}" BOOTSTRAP_KEY_SCOPE=admin "${ROOT_DIR}/scripts/test/bootstrap_test_merchant.sh")"
   export CHAOS_API_KEY_ID="${API_KEY}"
   export CHAOS_API_KEY_SECRET="${API_SECRET}"
   export CHAOS_AUTH_HEADER="${AUTH_HEADER}"

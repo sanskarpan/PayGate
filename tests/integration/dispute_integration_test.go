@@ -38,6 +38,7 @@ func TestIntegrationDisputeLifecycleAndValidation(t *testing.T) {
 		t.Fatalf("create api key: %v", err)
 	}
 	authHeader := basicAuth(key.KeyID, key.KeySecret)
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 
 	o, err := orderSvc.Create(ctx, order.CreateInput{
 		MerchantID: createdMerchant.ID,
@@ -49,11 +50,12 @@ func TestIntegrationDisputeLifecycleAndValidation(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 	auth, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID,
-		OrderID:    o.ID,
-		Amount:     o.Amount,
-		Currency:   o.Currency,
-		Method:     "card",
+		MerchantID:           createdMerchant.ID,
+		OrderID:              o.ID,
+		Amount:               o.Amount,
+		Currency:             o.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize payment: %v", err)

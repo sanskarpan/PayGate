@@ -25,6 +25,8 @@ fi
   pnpm test:e2e
 )
 
+"${ROOT_DIR}/scripts/test/verify_integrations_artifacts.sh"
+
 if [[ "${RUN_LOAD_SMOKE}" == "true" ]]; then
   START_API=true "${ROOT_DIR}/scripts/test/run_load_smoke.sh"
 fi

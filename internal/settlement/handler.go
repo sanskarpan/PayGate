@@ -24,6 +24,10 @@ func NewHandler(svc *Service) *Handler {
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("GET /v1/settlements", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.list)))
 	mux.Handle("GET /v1/settlements/{settlementID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.get)))
+	mux.Handle("GET /v1/settlements/preferences", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getPreferences)))
+	mux.Handle("PUT /v1/settlements/preferences", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.updatePreferences)))
+	mux.Handle("POST /v1/settlements/{settlementID}/statement", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.generateStatement)))
+	mux.Handle("GET /v1/settlements/{settlementID}/statement", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getStatement)))
 	mux.Handle("POST /v1/settlements/batch", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.runBatch)))
 	mux.Handle("POST /v1/settlements/partial", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.runPartialBatch)))
 	mux.Handle("POST /v1/settlements/{settlementID}/hold", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.hold)))
@@ -122,13 +126,99 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
+	adjustments, err := h.svc.ListAdjustments(r.Context(), p.MerchantID, r.PathValue("settlementID"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
 	resp := present(sttl)
 	itemsJSON := make([]map[string]any, 0, len(lineItems))
 	for _, item := range lineItems {
 		itemsJSON = append(itemsJSON, presentItem(item))
 	}
 	resp["items"] = itemsJSON
+	adjJSON := make([]map[string]any, 0, len(adjustments))
+	for _, item := range adjustments {
+		adjJSON = append(adjJSON, presentAdjustment(item))
+	}
+	resp["adjustments"] = adjJSON
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) getPreferences(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	prefs, err := h.svc.GetPreferences(r.Context(), p.MerchantID)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentPreferences(prefs))
+}
+
+func (h *Handler) updatePreferences(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var body struct {
+		ScheduleType            ScheduleType  `json:"schedule_type"`
+		WeeklyDayOfWeek         *int          `json:"weekly_day_of_week"`
+		PayoutMinimum           int64         `json:"payout_minimum"`
+		ApprovalThresholdAmount int64         `json:"approval_threshold_amount"`
+		WeekendPolicy           WeekendPolicy `json:"weekend_policy"`
+		AutoPayout              bool          `json:"auto_payout"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST", Description: "invalid request body"})
+		return
+	}
+	prefs, err := h.svc.UpsertPreferences(r.Context(), Preferences{
+		MerchantID:              p.MerchantID,
+		ScheduleType:            body.ScheduleType,
+		WeeklyDayOfWeek:         body.WeeklyDayOfWeek,
+		PayoutMinimum:           body.PayoutMinimum,
+		ApprovalThresholdAmount: body.ApprovalThresholdAmount,
+		WeekendPolicy:           body.WeekendPolicy,
+		AutoPayout:              body.AutoPayout,
+	})
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentPreferences(prefs))
+}
+
+func (h *Handler) generateStatement(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	stmt, err := h.svc.GenerateStatement(r.Context(), p.MerchantID, r.PathValue("settlementID"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, presentStatement(stmt))
+}
+
+func (h *Handler) getStatement(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	stmt, err := h.svc.GetStatement(r.Context(), p.MerchantID, r.PathValue("settlementID"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentStatement(stmt))
 }
 
 func (h *Handler) hold(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +306,8 @@ func present(s Settlement) map[string]any {
 		"total_amount":       s.TotalAmount,
 		"total_fees":         s.TotalFees,
 		"total_refunds":      s.TotalRefunds,
+		"gross_net_amount":   s.GrossNetAmount,
+		"reserve_amount":     s.ReserveAmount,
 		"net_amount":         s.NetAmount,
 		"payment_count":      s.PaymentCount,
 		"currency":           s.Currency,
@@ -229,6 +321,46 @@ func present(s Settlement) map[string]any {
 	}
 }
 
+func presentPreferences(p Preferences) map[string]any {
+	return map[string]any{
+		"entity":                    "settlement_preferences",
+		"merchant_id":               p.MerchantID,
+		"schedule_type":             p.ScheduleType,
+		"weekly_day_of_week":        p.WeeklyDayOfWeek,
+		"payout_minimum":            p.PayoutMinimum,
+		"approval_threshold_amount": p.ApprovalThresholdAmount,
+		"weekend_policy":            p.WeekendPolicy,
+		"auto_payout":               p.AutoPayout,
+	}
+}
+
+func presentStatement(s Statement) map[string]any {
+	return map[string]any{
+		"entity":        "settlement_statement",
+		"id":            s.ID,
+		"settlement_id": s.SettlementID,
+		"format":        s.Format,
+		"file_name":     s.FileName,
+		"content":       s.Content,
+		"totals":        s.Totals,
+		"created_at":    s.CreatedAt.Unix(),
+	}
+}
+
+func presentAdjustment(a Adjustment) map[string]any {
+	return map[string]any{
+		"entity":          "settlement_adjustment",
+		"id":              a.ID,
+		"payment_id":      a.PaymentID,
+		"refund_id":       a.RefundID,
+		"adjustment_type": a.AdjustmentType,
+		"amount":          a.Amount,
+		"currency":        a.Currency,
+		"reason":          a.Reason,
+		"created_at":      a.CreatedAt.Unix(),
+	}
+}
+
 func presentTime(ts *time.Time) any {
 	if ts == nil {
 		return nil
@@ -237,7 +369,7 @@ func presentTime(ts *time.Time) any {
 }
 
 func presentItem(item SettlementItem) map[string]any {
-	return map[string]any{
+	resp := map[string]any{
 		"id":            item.ID,
 		"entity":        "settlement_item",
 		"settlement_id": item.SettlementID,
@@ -249,6 +381,10 @@ func presentItem(item SettlementItem) map[string]any {
 		"currency":      item.Currency,
 		"created_at":    item.CreatedAt.Unix(),
 	}
+	if len(item.SplitSummary) > 0 {
+		resp["split_summary"] = item.SplitSummary
+	}
+	return resp
 }
 
 func handleError(w http.ResponseWriter, err error) {

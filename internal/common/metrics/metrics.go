@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -122,10 +123,41 @@ func MetricsMiddleware(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: 200}
 		next.ServeHTTP(rec, r)
 		duration := time.Since(start).Seconds()
-		path := r.URL.Path
-		// Normalize path to avoid high cardinality (strip IDs)
-		// Simple approach: just use the pattern prefix
+		path := normalizeHTTPPath(r)
 		HTTPRequestsTotal.WithLabelValues(r.Method, path, fmt.Sprintf("%d", rec.status)).Inc()
 		HTTPRequestDuration.WithLabelValues(r.Method, path).Observe(duration)
 	})
+}
+
+func normalizeHTTPPath(r *http.Request) string {
+	if strings.TrimSpace(r.Pattern) != "" {
+		return r.Pattern
+	}
+	parts := strings.Split(r.URL.Path, "/")
+	for i, part := range parts {
+		if looksDynamicSegment(part) {
+			parts[i] = "{id}"
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
+func looksDynamicSegment(value string) bool {
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}") {
+		return false
+	}
+	if len(value) >= 16 {
+		return true
+	}
+	hasDigit := false
+	for _, ch := range value {
+		if ch >= '0' && ch <= '9' {
+			hasDigit = true
+			break
+		}
+	}
+	return hasDigit && strings.ContainsAny(value, "-_")
 }

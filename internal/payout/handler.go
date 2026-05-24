@@ -2,6 +2,7 @@ package payout
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,11 +22,16 @@ type Handler struct {
 	svc        *Service
 	settlement *settlement.Service
 	ledger     *ledger.Service
+	caps       interface {
+		CheckCapability(ctx context.Context, merchantID string, capability merchant.CapabilityCode) error
+	}
 }
 
 // NewHandler creates a Handler.
-func NewHandler(svc *Service, settlementSvc *settlement.Service, ledgerSvc *ledger.Service) *Handler {
-	return &Handler{svc: svc, settlement: settlementSvc, ledger: ledgerSvc}
+func NewHandler(svc *Service, settlementSvc *settlement.Service, ledgerSvc *ledger.Service, caps interface {
+	CheckCapability(ctx context.Context, merchantID string, capability merchant.CapabilityCode) error
+}) *Handler {
+	return &Handler{svc: svc, settlement: settlementSvc, ledger: ledgerSvc, caps: caps}
 }
 
 func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
@@ -35,10 +41,19 @@ func (h *Handler) RegisterPublicRoutes(mux *http.ServeMux) {
 // RegisterRoutesWithAuth wires payout endpoints into mux under auth.
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("POST /v1/settlements/{settlementID}/payout", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.initiate)))
+	mux.Handle("GET /v1/beneficiaries", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listBeneficiaries)))
+	mux.Handle("POST /v1/beneficiaries", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.createBeneficiary)))
+	mux.Handle("GET /v1/beneficiaries/{beneficiaryID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getBeneficiary)))
+	mux.Handle("POST /v1/beneficiaries/{beneficiaryID}/verify", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.verifyBeneficiary)))
+	mux.Handle("POST /v1/beneficiaries/{beneficiaryID}/approve", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.approveBeneficiary)))
 	mux.Handle("GET /v1/settlements/{settlementID}/payout-simulator", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getScenario)))
 	mux.Handle("PUT /v1/settlements/{settlementID}/payout-simulator", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.putScenario)))
 	mux.Handle("GET /v1/payouts", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.list)))
 	mux.Handle("GET /v1/payouts/{payoutID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.get)))
+	mux.Handle("POST /v1/payouts/{payoutID}/approve", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.approvePayout)))
+	mux.Handle("POST /v1/payouts/{payoutID}/reject", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.rejectPayout)))
+	mux.Handle("GET /v1/payouts/{payoutID}/approvals", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listApprovals)))
+	mux.Handle("POST /v1/payout-batches", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.createBatch)))
 	mux.Handle("POST /v1/payouts/{payoutID}/cancel", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.cancel)))
 	mux.Handle("GET /v1/payouts/{payoutID}/events", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.events)))
 }
@@ -50,6 +65,22 @@ func (h *Handler) initiate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	settlementID := r.PathValue("settlementID")
+	if h.caps != nil {
+		if err := h.caps.CheckCapability(r.Context(), p.MerchantID, merchant.CapabilityPayouts); err != nil {
+			handleError(w, err)
+			return
+		}
+	}
+
+	var req struct {
+		BeneficiaryID string `json:"beneficiary_id"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST", Description: "invalid request body"})
+			return
+		}
+	}
 
 	// Look up the settlement to get the net amount and currency.
 	sttl, err := h.settlement.Get(r.Context(), p.MerchantID, settlementID)
@@ -71,8 +102,17 @@ func (h *Handler) initiate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	prefs, err := h.settlement.GetPreferences(r.Context(), p.MerchantID)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	if prefs.PayoutMinimum > 0 && sttl.NetAmount < prefs.PayoutMinimum {
+		handleError(w, ErrSettlementNotProcessed)
+		return
+	}
 
-	pout, err := h.svc.InitiatePayoutForSettlement(r.Context(), p.MerchantID, settlementID, sttl.NetAmount, sttl.Currency)
+	pout, err := h.svc.InitiatePayoutForSettlement(r.Context(), p.MerchantID, settlementID, strings.TrimSpace(req.BeneficiaryID), sttl.NetAmount, sttl.Currency, prefs.ApprovalThresholdAmount, "")
 	if err != nil {
 		handleError(w, err)
 		return
@@ -287,26 +327,28 @@ func present(p Payout) map[string]any {
 		completedAt = p.CompletedAt.Unix()
 	}
 	return map[string]any{
-		"entity":         "payout",
-		"id":             p.ID,
-		"merchant_id":    p.MerchantID,
-		"settlement_id":  p.SettlementID,
-		"saga_id":        p.SagaID,
-		"status":         p.Status,
-		"amount":         p.Amount,
-		"currency":       p.Currency,
-		"bank_reference": p.BankReference,
-		"rail_reference": p.RailReference,
-		"failure_reason": p.FailureReason,
-		"return_reason":  p.ReturnReason,
-		"initiated_at":   initiatedAt,
-		"completed_at":   completedAt,
-		"failed_at":      presentTime(p.FailedAt),
-		"returned_at":    presentTime(p.ReturnedAt),
-		"reversed_at":    presentTime(p.ReversedAt),
-		"cancelled_at":   presentTime(p.CancelledAt),
-		"cancel_reason":  p.CancelReason,
-		"created_at":     p.CreatedAt.Unix(),
+		"entity":          "payout",
+		"id":              p.ID,
+		"merchant_id":     p.MerchantID,
+		"settlement_id":   p.SettlementID,
+		"beneficiary_id":  p.BeneficiaryID,
+		"saga_id":         p.SagaID,
+		"status":          p.Status,
+		"approval_status": p.ApprovalStatus,
+		"amount":          p.Amount,
+		"currency":        p.Currency,
+		"bank_reference":  p.BankReference,
+		"rail_reference":  p.RailReference,
+		"failure_reason":  p.FailureReason,
+		"return_reason":   p.ReturnReason,
+		"initiated_at":    initiatedAt,
+		"completed_at":    completedAt,
+		"failed_at":       presentTime(p.FailedAt),
+		"returned_at":     presentTime(p.ReturnedAt),
+		"reversed_at":     presentTime(p.ReversedAt),
+		"cancelled_at":    presentTime(p.CancelledAt),
+		"cancel_reason":   p.CancelReason,
+		"created_at":      p.CreatedAt.Unix(),
 	}
 }
 
@@ -344,14 +386,20 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "SETTLEMENT_NOT_PROCESSED", Description: err.Error()})
 	case errors.Is(err, ErrSettlementOnHold):
 		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "SETTLEMENT_ON_HOLD", Description: err.Error()})
+	case errors.Is(err, ErrBeneficiaryNotFound):
+		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "BENEFICIARY_NOT_FOUND", Description: err.Error()})
+	case errors.Is(err, ErrBeneficiaryInvalid), errors.Is(err, ErrInvalidSimulatorScenario):
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST", Description: err.Error()})
+	case errors.Is(err, ErrBeneficiaryNotApproved), errors.Is(err, ErrPayoutApprovalRequired), errors.Is(err, ErrPayoutApprovalRejected):
+		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "PAYOUT_APPROVAL_REQUIRED", Description: err.Error()})
 	case errors.Is(err, settlement.ErrSettlementRollbackMarked):
 		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "SETTLEMENT_ROLLBACK_MARKED", Description: err.Error()})
 	case errors.Is(err, ErrInvalidRailSignature):
 		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "INVALID_SIGNATURE", Description: err.Error()})
-	case errors.Is(err, ErrInvalidSimulatorScenario):
-		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "INVALID_PAYOUT_SIMULATOR", Description: err.Error()})
 	case errors.Is(err, ledger.ErrHoldInsufficient):
 		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "INSUFFICIENT_PAYOUTABLE_BALANCE", Description: err.Error()})
+	case errors.Is(err, merchant.ErrCapabilityRestricted):
+		httpx.WriteError(w, http.StatusForbidden, httpx.APIError{Code: "CAPABILITY_RESTRICTED", Description: err.Error()})
 	default:
 		// Check for settlement not found too.
 		var errBody struct{ Code string }

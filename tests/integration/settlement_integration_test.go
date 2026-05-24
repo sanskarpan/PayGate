@@ -36,6 +36,13 @@ func TestIntegrationSettlementBatch(t *testing.T) {
 		t.Fatalf("create api key: %v", err)
 	}
 	authHeader := basicAuth(key.KeyID, key.KeySecret)
+	writeKey, err := merchantSvc.CreateAPIKey(ctx, createdMerchant.ID, merchant.CreateAPIKeyInput{
+		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite,
+	})
+	if err != nil {
+		t.Fatalf("create write api key: %v", err)
+	}
+	writeAuthHeader := basicAuth(writeKey.KeyID, writeKey.KeySecret)
 
 	// Create and capture two payments.
 	capturePayment := func(amount int64, receipt string) {
@@ -46,9 +53,14 @@ func TestIntegrationSettlementBatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create order: %v", err)
 		}
+		cardTokenID := createCardTokenViaMux(t, mux, writeAuthHeader, false)
 		auth, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-			MerchantID: createdMerchant.ID, OrderID: o.ID,
-			Amount: o.Amount, Currency: o.Currency, Method: "card",
+			MerchantID:           createdMerchant.ID,
+			OrderID:              o.ID,
+			Amount:               o.Amount,
+			Currency:             o.Currency,
+			Method:               "card",
+			PaymentMethodTokenID: cardTokenID,
 		})
 		if err != nil {
 			t.Fatalf("authorize: %v", err)
