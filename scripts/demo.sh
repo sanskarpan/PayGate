@@ -65,18 +65,27 @@ ORDER_ID=$(echo "$ORDER" | jq -r '.id')
 [[ -n "$ORDER_ID" ]] || fail "order creation failed"
 ok "order created: $ORDER_ID (amount: $(echo "$ORDER" | jq -r '.amount') INR)"
 
-step "5 — Authorize payment"
+step "5 — Create sandbox card token"
+CARD_TOKEN=$(curl -sf -X POST "${BASE_URL}/v1/card-tokens" \
+  -H "Content-Type: application/json" \
+  -H "$AUTH_HEADER" \
+  -d "{\"card_number\":\"4111111111111111\",\"exp_month\":12,\"exp_year\":2030,\"reusable\":false}")
+CARD_TOKEN_ID=$(echo "$CARD_TOKEN" | jq -r '.id')
+[[ -n "$CARD_TOKEN_ID" ]] || fail "card token creation failed"
+ok "card token created: $CARD_TOKEN_ID"
+
+step "6 — Authorize payment"
 PAYMENT=$(curl -sf -X POST "${BASE_URL}/v1/payments/authorize" \
   -H "Content-Type: application/json" \
   -H "$AUTH_HEADER" \
   -H "Idempotency-Key: demo-pay-$(date +%s)" \
-  -d "{\"order_id\":\"${ORDER_ID}\",\"amount\":9900,\"currency\":\"INR\",\"method\":\"card\"}")
+  -d "{\"order_id\":\"${ORDER_ID}\",\"amount\":9900,\"currency\":\"INR\",\"method\":\"card\",\"payment_method_token_id\":\"${CARD_TOKEN_ID}\"}")
 PAYMENT_ID=$(echo "$PAYMENT" | jq -r '.id')
 PAYMENT_STATUS=$(echo "$PAYMENT" | jq -r '.status')
 [[ -n "$PAYMENT_ID" ]] || fail "payment authorization failed"
 ok "payment authorized: $PAYMENT_ID (status: $PAYMENT_STATUS)"
 
-step "6 — Capture payment"
+step "7 — Capture payment"
 CAPTURE=$(curl -sf -X POST "${BASE_URL}/v1/payments/${PAYMENT_ID}/capture" \
   -H "Content-Type: application/json" \
   -H "$AUTH_HEADER" \
