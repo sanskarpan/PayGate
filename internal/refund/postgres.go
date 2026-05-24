@@ -130,14 +130,15 @@ func (r *PostgresRepository) ProcessRefund(ctx context.Context, refundID string)
 	var paymentAmount int64
 	var paymentFee int64
 	var amountRefunded int64
+	var settlementID *string
 	err = tx.QueryRow(ctx, `
 SELECT r.id, r.payment_id, r.order_id, r.merchant_id, r.amount, r.currency, r.reason, r.status,
-       p.amount, p.fee, p.amount_refunded
+       p.amount, p.fee, p.amount_refunded, p.settlement_id
 	FROM paygate_payments.refunds r
 	JOIN paygate_payments.payments p ON p.id = r.payment_id
 WHERE r.id = $1
 FOR UPDATE
-`, refundID).Scan(&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency, &ref.Reason, &ref.Status, &paymentAmount, &paymentFee, &amountRefunded)
+`, refundID).Scan(&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency, &ref.Reason, &ref.Status, &paymentAmount, &paymentFee, &amountRefunded, &settlementID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Refund{}, ErrRefundNotFound
@@ -197,6 +198,27 @@ WHERE id = $2
 		Payload:       map[string]any{"refund_id": refundID, "payment_id": ref.PaymentID, "amount": ref.Amount},
 	}); err != nil {
 		return Refund{}, err
+	}
+	if settlementID != nil && *settlementID != "" {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_settlements.settlement_adjustments
+    (id, merchant_id, settlement_id, payment_id, refund_id, adjustment_type, amount, currency, reason)
+VALUES ($1, $2, $3, $4, $5, 'refund_processed', $6, $7, $8)
+`, idgen.New("sadj"), ref.MerchantID, *settlementID, ref.PaymentID, refundID, merchantPayableDelta, ref.Currency, ref.Reason); err != nil {
+			return Refund{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE paygate_settlements.settlements
+SET rollback_marked_at = COALESCE(rollback_marked_at, $3),
+    rollback_reason = CASE WHEN rollback_reason IS NULL OR rollback_reason = '' THEN $4 ELSE rollback_reason END,
+    on_hold = TRUE,
+    hold_reason = COALESCE(NULLIF(hold_reason, ''), $4),
+    held_at = COALESCE(held_at, $3),
+    updated_at = $3
+WHERE id = $1 AND merchant_id = $2
+`, *settlementID, ref.MerchantID, now, "post-settlement refund adjustment"); err != nil {
+			return Refund{}, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -274,14 +296,15 @@ func (r *PostgresRepository) ReverseRefund(ctx context.Context, merchantID, refu
 	var paymentFee int64
 	var amountRefunded int64
 	var amountRefundedPending int64
+	var settlementID *string
 	err = tx.QueryRow(ctx, `
 SELECT r.id, r.payment_id, r.order_id, r.merchant_id, r.amount, r.currency, r.reason, r.status,
-       p.amount, p.fee, p.amount_refunded, p.amount_refunded_pending
+       p.amount, p.fee, p.amount_refunded, p.amount_refunded_pending, p.settlement_id
 FROM paygate_payments.refunds r
 JOIN paygate_payments.payments p ON p.id = r.payment_id
 WHERE r.id = $1 AND r.merchant_id = $2
 FOR UPDATE
-`, refundID, merchantID).Scan(&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency, &ref.Reason, &ref.Status, &paymentAmount, &paymentFee, &amountRefunded, &amountRefundedPending)
+`, refundID, merchantID).Scan(&ref.ID, &ref.PaymentID, &ref.OrderID, &ref.MerchantID, &ref.Amount, &ref.Currency, &ref.Reason, &ref.Status, &paymentAmount, &paymentFee, &amountRefunded, &amountRefundedPending, &settlementID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Refund{}, ErrRefundNotFound
@@ -355,6 +378,15 @@ WHERE id = $2
 		},
 	}); err != nil {
 		return Refund{}, err
+	}
+	if settlementID != nil && *settlementID != "" {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_settlements.settlement_adjustments
+    (id, merchant_id, settlement_id, payment_id, refund_id, adjustment_type, amount, currency, reason)
+VALUES ($1, $2, $3, $4, $5, 'refund_reversed', $6, $7, $8)
+`, idgen.New("sadj"), ref.MerchantID, *settlementID, ref.PaymentID, refundID, merchantPayableDelta, ref.Currency, reason); err != nil {
+			return Refund{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Refund{}, err
