@@ -156,7 +156,9 @@ func TestIntegrationSettlementRollbackMarkerBlocksPayout(t *testing.T) {
 		t.Fatalf("expected rollback reason in response, got %s", markRec.Body.String())
 	}
 
-	payoutReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	beneficiaryID := createApprovedBeneficiary(t, mux, authHeader)
+	payoutReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	payoutReq.Header.Set("Content-Type", "application/json")
 	payoutReq.Header.Set("Authorization", authHeader)
 	payoutRec := httptest.NewRecorder()
 	mux.ServeHTTP(payoutRec, payoutReq)
