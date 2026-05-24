@@ -66,7 +66,9 @@ type Settlement struct {
 	TotalAmount      int64 // sum of captured payment amounts
 	TotalFees        int64 // sum of platform fees deducted
 	TotalRefunds     int64 // sum of refunded amounts
-	NetAmount        int64 // TotalAmount - TotalFees - TotalRefunds
+	GrossNetAmount   int64 // TotalAmount - TotalFees - TotalRefunds before reserve deductions
+	ReserveAmount    int64 // reserve deducted from merchant payout under policy
+	NetAmount        int64 // GrossNetAmount - ReserveAmount
 	PaymentCount     int
 	Currency         string
 	ProcessedAt      *time.Time
@@ -91,6 +93,7 @@ type SettlementItem struct {
 	Refunds      int64 // total amount_refunded on payment
 	Net          int64 // Amount - Fee - Refunds
 	Currency     string
+	SplitSummary []map[string]any
 	CreatedAt    time.Time
 }
 
