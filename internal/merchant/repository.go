@@ -1,10 +1,31 @@
 package merchant
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type Repository interface {
 	CreateMerchant(ctx context.Context, merchant Merchant) (Merchant, error)
 	GetMerchantByID(ctx context.Context, merchantID string) (Merchant, error)
+	GetOnboardingApplicationByMerchant(ctx context.Context, merchantID string) (OnboardingApplication, error)
+	UpsertOnboardingApplication(ctx context.Context, app OnboardingApplication, actor, actorScope string) (OnboardingApplication, error)
+	TransitionOnboardingApplication(ctx context.Context, merchantID string, nextState OnboardingState, reviewerNotes, actor, actorScope string) (OnboardingApplication, error)
+	ListOnboardingParties(ctx context.Context, merchantID string) ([]OnboardingParty, error)
+	ReplaceOnboardingParties(ctx context.Context, merchantID string, parties []OnboardingParty, actor, actorScope string) ([]OnboardingParty, error)
+	ListOnboardingDocuments(ctx context.Context, merchantID string) ([]OnboardingDocument, error)
+	RequestOnboardingDocument(ctx context.Context, merchantID string, doc OnboardingDocument, actor, actorScope string) (OnboardingDocument, error)
+	UploadOnboardingDocument(ctx context.Context, merchantID string, doc OnboardingDocument, actor, actorScope string) (OnboardingDocument, error)
+	ReviewOnboardingDocument(ctx context.Context, merchantID, documentID string, status DocumentStatus, reviewNotes string, expiresAt *time.Time, actor, actorScope string) (OnboardingDocument, error)
+	ListScreeningCases(ctx context.Context, merchantID string) ([]ScreeningCase, error)
+	CreateScreeningCase(ctx context.Context, merchantID string, screening ScreeningCase, actor, actorScope string) (ScreeningCase, error)
+	ListCapabilities(ctx context.Context, merchantID string) ([]MerchantCapability, error)
+	UpsertCapabilities(ctx context.Context, merchantID string, capabilities []MerchantCapability, actor string) ([]MerchantCapability, error)
+	GetReservePolicy(ctx context.Context, merchantID string) (ReservePolicy, error)
+	UpsertReservePolicy(ctx context.Context, policy ReservePolicy, actor string) (ReservePolicy, error)
+	CreateReserveEscalation(ctx context.Context, escalation ReserveEscalation) (ReserveEscalation, error)
+	ListReserveEscalations(ctx context.Context, merchantID string, status ReserveEscalationStatus) ([]ReserveEscalation, error)
+	ReviewReserveEscalation(ctx context.Context, merchantID, escalationID string, decision ReserveEscalationStatus, notes, actor string, policyOverride *ReservePolicy) (ReserveEscalation, error)
 	CreateAPIKey(ctx context.Context, key APIKey) (APIKey, error)
 	GetAPIKeyByID(ctx context.Context, keyID string) (APIKey, error)
 	ListAPIKeysByMerchant(ctx context.Context, merchantID string) ([]APIKey, error)
