@@ -79,6 +79,50 @@ async function apiJson(
   return response.json();
 }
 
+async function createCardToken(
+  request: APIRequestContext,
+  authHeader: Record<string, string>,
+  reusable: boolean,
+) {
+  const expires = new Date();
+  expires.setUTCFullYear(expires.getUTCFullYear() + 3);
+  return apiJson(request, "POST", "/v1/card-tokens", {
+    expectedStatus: 201,
+    headers: authHeader,
+    data: {
+      card_number: "4111111111111111",
+      exp_month: expires.getUTCMonth() + 1,
+      exp_year: expires.getUTCFullYear(),
+      reusable,
+    },
+  });
+}
+
+async function createApprovedBeneficiary(request: APIRequestContext, authHeader: Record<string, string>) {
+  const beneficiary = await apiJson(request, "POST", "/v1/beneficiaries", {
+    expectedStatus: 201,
+    headers: authHeader,
+    data: {
+      destination_type: "bank_account",
+      account_holder_name: "Playwright Beneficiary",
+      bank_account_number: "4111111111111234",
+      bank_ifsc: "HDFC0001234",
+    },
+  });
+  const beneficiaryID = beneficiary.id as string;
+  await apiJson(request, "POST", `/v1/beneficiaries/${beneficiaryID}/verify`, {
+    expectedStatus: 200,
+    headers: authHeader,
+    data: {},
+  });
+  await apiJson(request, "POST", `/v1/beneficiaries/${beneficiaryID}/approve`, {
+    expectedStatus: 200,
+    headers: authHeader,
+    data: { notes: "playwright approved" },
+  });
+  return beneficiaryID;
+}
+
 async function poll<T>(
   label: string,
   fn: () => Promise<T>,
@@ -153,6 +197,32 @@ export async function ensureSeedData(request: APIRequestContext): Promise<SeedDa
     },
   });
 
+  await apiJson(request, "POST", "/v1/gateway/method-configs", {
+    expectedStatus: 201,
+    headers: authHeader,
+    data: {
+      merchant_id: merchantID,
+      method: "card",
+      enabled: true,
+      success_rate: 1,
+      decline_code: "CARD_DECLINED",
+      delay_ms: 0,
+    },
+  });
+
+  await apiJson(request, "POST", "/v1/gateway/method-configs", {
+    expectedStatus: 201,
+    headers: authHeader,
+    data: {
+      merchant_id: merchantID,
+      method: "upi",
+      enabled: true,
+      success_rate: 1,
+      decline_code: "VPA_INVALID",
+      delay_ms: 0,
+    },
+  });
+
   // The API process reports ready before the async relay/consumer pair has
   // fully settled. Give the webhook worker a short warm-up window so the first
   // capture events are not produced before the consumer is subscribed.
@@ -169,6 +239,7 @@ export async function ensureSeedData(request: APIRequestContext): Promise<SeedDa
     },
   });
   const orderID = order.id as string;
+  const firstCardToken = await createCardToken(request, authHeader, false);
 
   const authorized = await apiJson(request, "POST", "/v1/payments/authorize", {
     expectedStatus: 201,
@@ -178,6 +249,7 @@ export async function ensureSeedData(request: APIRequestContext): Promise<SeedDa
       amount: 10000,
       currency: "INR",
       method: "card",
+      payment_method_token_id: firstCardToken.id,
       auto_capture: false,
     },
   });
@@ -211,6 +283,7 @@ export async function ensureSeedData(request: APIRequestContext): Promise<SeedDa
     },
   });
   const secondOrderID = secondOrder.id as string;
+  const secondCardToken = await createCardToken(request, authHeader, true);
 
   const secondAuthorized = await apiJson(request, "POST", "/v1/payments/authorize", {
     expectedStatus: 201,
@@ -220,6 +293,7 @@ export async function ensureSeedData(request: APIRequestContext): Promise<SeedDa
       amount: 15000,
       currency: "INR",
       method: "card",
+      payment_method_token_id: secondCardToken.id,
       auto_capture: false,
     },
   });
@@ -240,10 +314,12 @@ export async function ensureSeedData(request: APIRequestContext): Promise<SeedDa
     },
   });
   const settlementID = settlement.id as string;
+  const beneficiaryID = await createApprovedBeneficiary(request, authHeader);
 
   const payout = await apiJson(request, "POST", `/v1/settlements/${settlementID}/payout`, {
     expectedStatus: 201,
     headers: authHeader,
+    data: { beneficiary_id: beneficiaryID },
   });
   const payoutID = payout.id as string;
 
