@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -20,6 +21,42 @@ type PostgresRepository struct {
 	ledger   *ledger.Service
 	orderSvc *order.Service
 	outbox   *outbox.Writer
+}
+
+func initialMethodState(method string) string {
+	switch method {
+	case "upi":
+		return MethodStateUPIIntentCreated
+	default:
+		return MethodStateCardAuthorizationStarted
+	}
+}
+
+func methodStateForAuthorized(method string) string {
+	switch method {
+	case "upi":
+		return MethodStateUPICollected
+	default:
+		return MethodStateCardAuthorized
+	}
+}
+
+func methodStateForFailure(method string) string {
+	switch method {
+	case "upi":
+		return MethodStateUPIFailed
+	default:
+		return MethodStateCardDeclined
+	}
+}
+
+func methodStateForCapture(method string) string {
+	switch method {
+	case "upi":
+		return MethodStateUPICollected
+	default:
+		return MethodStateCardCaptured
+	}
 }
 
 func NewPostgresRepository(db *pgxpool.Pool, ledgerSvc *ledger.Service, orderSvc *order.Service) *PostgresRepository {
@@ -123,13 +160,15 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,'processing',$8)
 
 	_, err = tx.Exec(ctx, `
 INSERT INTO paygate_payments.payments
-(id, attempt_id, order_id, merchant_id, amount, currency, method, status, captured)
-VALUES ($1,$2,$3,$4,$5,$6,$7,'created',false)
-`, paymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method)
+(id, attempt_id, order_id, merchant_id, amount, currency, method, method_state, status, captured)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'created',false)
+`, paymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, initialMethodState(in.Method))
 	if err != nil {
 		return CaptureResult{}, fmt.Errorf("insert payment: %w", err)
 	}
-
+	if err := r.insertPaymentSplitsTx(ctx, tx, in.MerchantID, paymentID, in.Splits); err != nil {
+		return CaptureResult{}, err
+	}
 	_, _ = tx.Exec(ctx, `
 UPDATE paygate_orders.orders
 SET status = CASE WHEN status = 'created' THEN 'attempted' ELSE status END,
@@ -145,7 +184,26 @@ WHERE id=$1 AND merchant_id=$2
 		return CaptureResult{}, err
 	}
 
-	return CaptureResult{PaymentID: paymentID, MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, Status: StateCreated, Captured: false, CreatedAt: now}, nil
+	return CaptureResult{PaymentID: paymentID, MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, MethodState: initialMethodState(in.Method), Status: StateCreated, Captured: false, CreatedAt: now}, nil
+}
+
+func (r *PostgresRepository) AttachCardPaymentDetails(ctx context.Context, merchantID, paymentID string, in CardPaymentDetailsInput) error {
+	_, err := r.db.Exec(ctx, `
+INSERT INTO paygate_payments.card_payment_details
+(payment_id, card_token_id, brand, last4, exp_month, exp_year, token_class)
+VALUES ($1,$2,$3,$4,$5,$6,$7)
+ON CONFLICT (payment_id) DO UPDATE
+SET card_token_id = EXCLUDED.card_token_id,
+    brand = EXCLUDED.brand,
+    last4 = EXCLUDED.last4,
+    exp_month = EXCLUDED.exp_month,
+    exp_year = EXCLUDED.exp_year,
+    token_class = EXCLUDED.token_class
+`, paymentID, in.PaymentMethodTokenID, in.CardBrand, in.CardLast4, in.CardExpMonth, in.CardExpYear, in.CardTokenClass)
+	if err != nil {
+		return fmt.Errorf("attach card payment details: %w", err)
+	}
+	return nil
 }
 
 func (r *PostgresRepository) MarkAuthorizationAuthorized(ctx context.Context, merchantID, paymentID, gatewayReference, authCode string, autoCaptureAt *time.Time) (CaptureResult, error) {
@@ -159,11 +217,11 @@ func (r *PostgresRepository) MarkAuthorizationAuthorized(ctx context.Context, me
 	var attemptID string
 	var status string
 	err = tx.QueryRow(ctx, `
-SELECT id, attempt_id, merchant_id, order_id, amount, currency, method, status, captured, created_at, authorized_at
+SELECT id, attempt_id, merchant_id, order_id, amount, currency, method, method_state, COALESCE(method_state_reason, ''), status, captured, created_at, authorized_at
 FROM paygate_payments.payments
 WHERE id = $1 AND merchant_id = $2
 FOR UPDATE
-`, paymentID, merchantID).Scan(&current.PaymentID, &attemptID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &status, &current.Captured, &current.CreatedAt, &current.AuthorizedAt)
+`, paymentID, merchantID).Scan(&current.PaymentID, &attemptID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &current.MethodState, &current.MethodStateReason, &status, &current.Captured, &current.CreatedAt, &current.AuthorizedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CaptureResult{}, ErrPaymentNotFound
@@ -182,13 +240,14 @@ FOR UPDATE
 	if _, err := tx.Exec(ctx, `
 UPDATE paygate_payments.payments
 SET status = 'authorized',
+    method_state = $6,
     gateway_reference = $2,
     auth_code = $3,
     authorized_at = $4,
     auto_capture_at = $5,
     updated_at = NOW()
 WHERE id = $1
-`, paymentID, gatewayReference, authCode, now, autoCaptureAt); err != nil {
+`, paymentID, gatewayReference, authCode, now, autoCaptureAt, methodStateForAuthorized(current.Method)); err != nil {
 		return CaptureResult{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -206,10 +265,7 @@ WHERE id = $1
 	if err := tx.Commit(ctx); err != nil {
 		return CaptureResult{}, err
 	}
-
-	current.Status = StateAuthorized
-	current.AuthorizedAt = &now
-	return current, nil
+	return r.GetPayment(ctx, merchantID, paymentID)
 }
 
 func (r *PostgresRepository) MarkAuthorizationFailed(ctx context.Context, merchantID, paymentID, errorCode, errorDescription string) error {
@@ -221,13 +277,14 @@ func (r *PostgresRepository) MarkAuthorizationFailed(ctx context.Context, mercha
 
 	var attemptID string
 	var orderID string
+	var currentMethod string
 	var status string
 	err = tx.QueryRow(ctx, `
-SELECT attempt_id, order_id, status
+SELECT attempt_id, order_id, method, status
 FROM paygate_payments.payments
 WHERE id = $1 AND merchant_id = $2
 FOR UPDATE
-`, paymentID, merchantID).Scan(&attemptID, &orderID, &status)
+`, paymentID, merchantID).Scan(&attemptID, &orderID, &currentMethod, &status)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrPaymentNotFound
@@ -245,11 +302,13 @@ FOR UPDATE
 	if _, err := tx.Exec(ctx, `
 UPDATE paygate_payments.payments
 SET status = 'failed',
+    method_state = $4,
+    method_state_reason = NULLIF($5, ''),
     error_code = $2,
     error_description = $3,
     updated_at = NOW()
 WHERE id = $1
-`, paymentID, errorCode, errorDescription); err != nil {
+`, paymentID, errorCode, errorDescription, methodStateForFailure(currentMethod), errorDescription); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -279,11 +338,11 @@ func (r *PostgresRepository) ReverseAuthorization(ctx context.Context, merchantI
 	var attemptID string
 	var status string
 	err = tx.QueryRow(ctx, `
-SELECT id, attempt_id, merchant_id, order_id, amount, currency, method, status, captured, created_at, authorized_at
+SELECT id, attempt_id, merchant_id, order_id, amount, currency, method, method_state, COALESCE(method_state_reason, ''), status, captured, created_at, authorized_at
 FROM paygate_payments.payments
 WHERE id = $1 AND merchant_id = $2
 FOR UPDATE
-`, paymentID, merchantID).Scan(&current.PaymentID, &attemptID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &status, &current.Captured, &current.CreatedAt, &current.AuthorizedAt)
+`, paymentID, merchantID).Scan(&current.PaymentID, &attemptID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &current.MethodState, &current.MethodStateReason, &status, &current.Captured, &current.CreatedAt, &current.AuthorizedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CaptureResult{}, ErrPaymentNotFound
@@ -303,12 +362,14 @@ FOR UPDATE
 	if _, err := tx.Exec(ctx, `
 UPDATE paygate_payments.payments
 SET status = 'authorization_reversed',
+    method_state = $4,
+    method_state_reason = NULLIF($5, ''),
     auto_capture_at = NULL,
     error_code = 'AUTHORIZATION_REVERSED',
     error_description = NULLIF($2, ''),
     updated_at = $3
 WHERE id = $1
-`, paymentID, reason, now); err != nil {
+`, paymentID, reason, now, MethodStateCardAuthorizationReversed, reason); err != nil {
 		return CaptureResult{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -337,9 +398,7 @@ WHERE id = $1
 	if err := tx.Commit(ctx); err != nil {
 		return CaptureResult{}, err
 	}
-
-	current.Status = StateAuthorizationReversed
-	return current, nil
+	return r.GetPayment(ctx, merchantID, paymentID)
 }
 
 func (r *PostgresRepository) CaptureAuthorizedPayment(ctx context.Context, merchantID, paymentID string, amount int64) (CaptureResult, error) {
@@ -352,10 +411,10 @@ func (r *PostgresRepository) CaptureAuthorizedPayment(ctx context.Context, merch
 	var current CaptureResult
 	var status string
 	err = tx.QueryRow(ctx, `
-SELECT id, merchant_id, order_id, amount, currency, method, status, captured, created_at, authorized_at
+SELECT id, merchant_id, order_id, amount, currency, method, method_state, COALESCE(method_state_reason, ''), status, captured, created_at, authorized_at
 FROM paygate_payments.payments
 WHERE id=$1 AND merchant_id=$2 FOR UPDATE
-`, paymentID, merchantID).Scan(&current.PaymentID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &status, &current.Captured, &current.CreatedAt, &current.AuthorizedAt)
+`, paymentID, merchantID).Scan(&current.PaymentID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &current.MethodState, &current.MethodStateReason, &status, &current.Captured, &current.CreatedAt, &current.AuthorizedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CaptureResult{}, ErrPaymentNotFound
@@ -374,17 +433,39 @@ WHERE id=$1 AND merchant_id=$2 FOR UPDATE
 	}
 
 	fee := amount * 2 / 100
+	splits, err := r.listPaymentSplitsTx(ctx, tx, paymentID)
+	if err != nil {
+		return CaptureResult{}, err
+	}
 	entries := []ledger.Entry{
 		{AccountCode: "CUSTOMER_RECEIVABLE", DebitAmount: amount, Description: "payment capture receivable"},
-		{AccountCode: "MERCHANT_PAYABLE", CreditAmount: amount - fee, Description: "merchant payable on capture"},
 		{AccountCode: "PLATFORM_FEE_REVENUE", CreditAmount: fee, Description: "platform fee revenue"},
+	}
+	var splitTotal int64
+	for _, split := range splits {
+		if split.Amount <= 0 {
+			continue
+		}
+		splitTotal += split.Amount
+		description := "connected account payable"
+		if split.BeneficiaryLabel != "" {
+			description = "connected account payable: " + split.BeneficiaryLabel
+		}
+		entries = append(entries, ledger.Entry{AccountCode: "MERCHANT_PAYABLE", CreditAmount: split.Amount, Description: description})
+	}
+	residual := amount - fee - splitTotal
+	if residual < 0 {
+		return CaptureResult{}, ErrAmountMismatch
+	}
+	if residual > 0 {
+		entries = append(entries, ledger.Entry{AccountCode: "MERCHANT_PAYABLE", CreditAmount: residual, Description: "merchant payable on capture"})
 	}
 	if _, err := r.ledger.CreateEntriesTx(ctx, tx, current.MerchantID, "payment", current.PaymentID, "payment capture", entries); err != nil {
 		return CaptureResult{}, err
 	}
 
 	now := time.Now().UTC()
-	_, err = tx.Exec(ctx, `UPDATE paygate_payments.payments SET status='captured', captured=true, captured_at=$2, updated_at=NOW(), fee=$3 WHERE id=$1`, paymentID, now, fee)
+	_, err = tx.Exec(ctx, `UPDATE paygate_payments.payments SET status='captured', method_state=$4, captured=true, captured_at=$2, updated_at=NOW(), fee=$3 WHERE id=$1`, paymentID, now, fee, methodStateForCapture(current.Method))
 	if err != nil {
 		return CaptureResult{}, err
 	}
@@ -403,20 +484,19 @@ WHERE id=$1 AND merchant_id=$2 FOR UPDATE
 	if err := tx.Commit(ctx); err != nil {
 		return CaptureResult{}, err
 	}
-	current.Status = StateCaptured
-	current.Captured = true
-	current.CapturedAt = &now
-	return current, nil
+	return r.GetPayment(ctx, merchantID, paymentID)
 }
 
 func (r *PostgresRepository) GetPayment(ctx context.Context, merchantID, paymentID string) (CaptureResult, error) {
 	var out CaptureResult
 	var status string
 	err := r.db.QueryRow(ctx, `
-SELECT id, merchant_id, order_id, amount, currency, method, status, captured, captured_at, created_at, authorized_at
-FROM paygate_payments.payments
-WHERE id=$1 AND merchant_id=$2
-`, paymentID, merchantID).Scan(&out.PaymentID, &out.MerchantID, &out.OrderID, &out.Amount, &out.Currency, &out.Method, &status, &out.Captured, &out.CapturedAt, &out.CreatedAt, &out.AuthorizedAt)
+SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.captured_at, p.created_at, p.authorized_at,
+       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0)
+FROM paygate_payments.payments p
+LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
+WHERE p.id=$1 AND p.merchant_id=$2
+`, paymentID, merchantID).Scan(&out.PaymentID, &out.MerchantID, &out.OrderID, &out.Amount, &out.Currency, &out.Method, &out.MethodState, &out.MethodStateReason, &status, &out.Captured, &out.CapturedAt, &out.CreatedAt, &out.AuthorizedAt, &out.PaymentMethodTokenID, &out.CardBrand, &out.CardLast4, &out.CardExpMonth, &out.CardExpYear)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CaptureResult{}, ErrPaymentNotFound
@@ -424,6 +504,7 @@ WHERE id=$1 AND merchant_id=$2
 		return CaptureResult{}, err
 	}
 	out.Status = PaymentState(status)
+	out.Splits, _ = r.listPaymentSplits(ctx, paymentID)
 	return out, nil
 }
 
@@ -433,14 +514,16 @@ func (r *PostgresRepository) ListPayments(ctx context.Context, f ListFilter) (Li
 	}
 	args := []any{f.MerchantID}
 	query := `
-SELECT id, merchant_id, order_id, amount, currency, method, status, captured, captured_at, created_at, authorized_at
-FROM paygate_payments.payments
-WHERE merchant_id = $1`
+SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.captured_at, p.created_at, p.authorized_at,
+       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0)
+FROM paygate_payments.payments p
+LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
+WHERE p.merchant_id = $1`
 	if f.OrderID != "" {
-		query += ` AND order_id = $2`
+		query += ` AND p.order_id = $2`
 		args = append(args, f.OrderID)
 	}
-	query += ` ORDER BY created_at DESC LIMIT `
+	query += ` ORDER BY p.created_at DESC LIMIT `
 	if len(args) == 1 {
 		query += `$2`
 	} else {
@@ -465,15 +548,23 @@ WHERE merchant_id = $1`
 			&item.Amount,
 			&item.Currency,
 			&item.Method,
+			&item.MethodState,
+			&item.MethodStateReason,
 			&status,
 			&item.Captured,
 			&item.CapturedAt,
 			&item.CreatedAt,
 			&item.AuthorizedAt,
+			&item.PaymentMethodTokenID,
+			&item.CardBrand,
+			&item.CardLast4,
+			&item.CardExpMonth,
+			&item.CardExpYear,
 		); err != nil {
 			return ListResult{}, err
 		}
 		item.Status = PaymentState(status)
+		item.Splits, _ = r.listPaymentSplits(ctx, item.PaymentID)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -564,7 +655,7 @@ FOR UPDATE SKIP LOCKED
 	for _, item := range payments {
 		if _, err := tx.Exec(ctx, `
 UPDATE paygate_payments.payments
-SET status='auto_refunded', error_code='AUTH_WINDOW_EXPIRED', error_description='capture window expired', updated_at=NOW()
+SET status='auto_refunded', method_state='card_authorization_reversed', method_state_reason='capture window expired', error_code='AUTH_WINDOW_EXPIRED', error_description='capture window expired', updated_at=NOW()
 WHERE id = $1
 `, item.id); err != nil {
 			return 0, err
@@ -615,6 +706,77 @@ LIMIT 1
 		return CaptureResult{}, ErrPaymentNotFound
 	}
 	return r.GetPayment(ctx, merchantID, *paymentID)
+}
+
+func (r *PostgresRepository) insertPaymentSplitsTx(ctx context.Context, tx pgx.Tx, merchantID, paymentID string, splits []CreatePaymentSplitInput) error {
+	for _, split := range splits {
+		if split.Amount < 0 {
+			return ErrAmountMismatch
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_payments.payment_splits
+    (id, merchant_id, payment_id, destination_type, destination_ref, beneficiary_label, amount, currency)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+`, idgen.New("psplit"), merchantID, paymentID, split.DestinationType, split.DestinationRef, split.BeneficiaryLabel, split.Amount, split.Currency); err != nil {
+			return fmt.Errorf("insert payment split: %w", err)
+		}
+	}
+	return nil
+}
+
+func (r *PostgresRepository) listPaymentSplits(ctx context.Context, paymentID string) ([]PaymentSplit, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT id, merchant_id, payment_id, destination_type, destination_ref, beneficiary_label, amount, currency, created_at
+FROM paygate_payments.payment_splits
+WHERE payment_id = $1
+ORDER BY created_at, id
+`, paymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPaymentSplits(rows)
+}
+
+func (r *PostgresRepository) listPaymentSplitsTx(ctx context.Context, tx pgx.Tx, paymentID string) ([]PaymentSplit, error) {
+	rows, err := tx.Query(ctx, `
+SELECT id, merchant_id, payment_id, destination_type, destination_ref, beneficiary_label, amount, currency, created_at
+FROM paygate_payments.payment_splits
+WHERE payment_id = $1
+ORDER BY created_at, id
+`, paymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPaymentSplits(rows)
+}
+
+func scanPaymentSplits(rows pgx.Rows) ([]PaymentSplit, error) {
+	var out []PaymentSplit
+	for rows.Next() {
+		var item PaymentSplit
+		if err := rows.Scan(&item.ID, &item.MerchantID, &item.PaymentID, &item.DestinationType, &item.DestinationRef, &item.BeneficiaryLabel, &item.Amount, &item.Currency, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func paymentSplitSummaryJSON(splits []PaymentSplit) []byte {
+	items := make([]map[string]any, 0, len(splits))
+	for _, split := range splits {
+		items = append(items, map[string]any{
+			"destination_type":  split.DestinationType,
+			"destination_ref":   split.DestinationRef,
+			"beneficiary_label": split.BeneficiaryLabel,
+			"amount":            split.Amount,
+			"currency":          split.Currency,
+		})
+	}
+	raw, _ := json.Marshal(items)
+	return raw
 }
 
 func nullableText(v string) *string {
