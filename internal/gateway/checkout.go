@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
+	"github.com/sanskarpan/PayGate/internal/tokenization"
 )
 
 // safeCallbackURL validates that the provided URL is a safe relative path to
@@ -33,12 +35,27 @@ func safeCallbackURL(raw, fallback string) string {
 }
 
 type CheckoutHandler struct {
-	paymentSvc *payment.Service
-	orderSvc   *order.Service
+	paymentSvc    *payment.Service
+	orderSvc      *order.Service
+	cardTokenizer CardTokenizer
 }
 
-func NewCheckoutHandler(paymentSvc *payment.Service, orderSvc *order.Service) *CheckoutHandler {
-	return &CheckoutHandler{paymentSvc: paymentSvc, orderSvc: orderSvc}
+type CardTokenizer interface {
+	CreateCardToken(ctx context.Context, in tokenization.CreateCardTokenInput) (tokenization.CardToken, error)
+}
+
+func NewCheckoutHandler(paymentSvc *payment.Service, orderSvc *order.Service, opts ...func(*CheckoutHandler)) *CheckoutHandler {
+	h := &CheckoutHandler{paymentSvc: paymentSvc, orderSvc: orderSvc}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+func WithCardTokenizer(tokenizer CardTokenizer) func(*CheckoutHandler) {
+	return func(h *CheckoutHandler) {
+		h.cardTokenizer = tokenizer
+	}
 }
 
 func (h *CheckoutHandler) RegisterRoutes(mux *http.ServeMux) {
@@ -115,14 +132,59 @@ func (h *CheckoutHandler) pay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := h.paymentSvc.Authorize(r.Context(), payment.AuthorizeInput{
+	if method == string(MethodUPI) {
+		intent, upiErr := h.paymentSvc.CreateUPIIntent(r.Context(), payment.CreateUPIIntentInput{
+			MerchantID:       merchantID,
+			OrderID:          orderID,
+			Amount:           o.AmountDue,
+			Currency:         o.Currency,
+			VPA:              "customer@upi",
+			ExpiresInSeconds: 300,
+		})
+		if upiErr != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: upiErr.Error()})
+			return
+		}
+		page := `<html><body><h1>Complete UPI Payment</h1>
+<p>Order: {{.OrderID}}</p>
+<p>Payment ID: {{.PaymentID}}</p>
+<p>Status: {{.Status}}</p>
+<p><a href="{{.DeepLink}}">Open UPI App</a></p>
+<p>Return after payment to: <a href="{{.CallbackURL}}">{{.CallbackURL}}</a></p>
+</body></html>`
+		t := template.Must(template.New("upi-intent").Parse(page))
+		_ = t.Execute(w, map[string]string{
+			"OrderID":     orderID,
+			"PaymentID":   intent.PaymentID,
+			"Status":      string(intent.Status),
+			"DeepLink":    intent.DeepLink,
+			"CallbackURL": callbackURL,
+		})
+		return
+	}
+	authInput := payment.AuthorizeInput{
 		MerchantID:  merchantID,
 		OrderID:     orderID,
 		Amount:      o.AmountDue,
 		Currency:    o.Currency,
 		Method:      method,
 		AutoCapture: true,
-	})
+	}
+	if method == string(MethodCard) && h.cardTokenizer != nil {
+		expires := time.Now().UTC().AddDate(3, 0, 0)
+		token, tokenErr := h.cardTokenizer.CreateCardToken(r.Context(), tokenization.CreateCardTokenInput{
+			MerchantID: merchantID,
+			CardNumber: "4111111111111111",
+			ExpMonth:   int(expires.Month()),
+			ExpYear:    expires.Year(),
+		})
+		if tokenErr != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "sandbox card tokenization failed"})
+			return
+		}
+		authInput.PaymentMethodTokenID = token.ID
+	}
+	out, err := h.paymentSvc.Authorize(r.Context(), authInput)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 		return
