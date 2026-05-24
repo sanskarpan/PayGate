@@ -172,7 +172,19 @@ func (s *Service) RunNext(ctx context.Context, leaseOwner string) (bool, error) 
 		return true, s.handleTerminalFailure(ctx, instance, step, "NO_HANDLER", fmt.Sprintf("no command handler registered for %s", step.CommandName))
 	}
 
-	result, err := handler(ctx, step.Command())
+	instance, err := s.repo.Get(ctx, step.MerchantID, step.SagaID)
+	if err != nil {
+		return true, err
+	}
+	command := step.Command()
+	command.CorrelationID = instance.CorrelationID
+	command.CausationID = instance.CausationID
+	command.ReplyTopic = step.ReplyTopic
+	command.DispatchAttempt = step.AttemptCount
+	command.MaxAttempts = step.MaxAttempts
+	command.RequestedAt = time.Now().UTC()
+
+	result, err := handler(ctx, command)
 	if err != nil {
 		terminal := step.AttemptCount >= step.MaxAttempts
 		classification := "transient"

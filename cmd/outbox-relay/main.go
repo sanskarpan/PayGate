@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -30,10 +32,22 @@ func run() error {
 	}
 	defer db.Close()
 
-	publisher := outbox.NewKafkaPublisher(cfg.KafkaBrokers)
+	publisher := outbox.NewKafkaPublisherWithTimeouts(cfg.KafkaBrokers, envDurationMillis("KAFKA_PUBLISH_TIMEOUT_MS", 5000), envDurationMillis("KAFKA_IO_TIMEOUT_MS", 5000))
 	defer func() { _ = publisher.Close() }()
 
 	relay := outbox.NewRelay(db, publisher, time.Second, logger.New("outbox-relay"))
 	relay.Start(ctx)
 	return nil
+}
+
+func envDurationMillis(name string, defaultMs int) time.Duration {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return time.Duration(defaultMs) * time.Millisecond
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms <= 0 {
+		return time.Duration(defaultMs) * time.Millisecond
+	}
+	return time.Duration(ms) * time.Millisecond
 }

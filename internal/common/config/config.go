@@ -18,6 +18,8 @@ type Config struct {
 	TrustedProxyCIDRs      []string
 	PayoutRailSecret       string
 	SagaWorkerEnabled      bool
+	AppEncryptionKeys      []string
+	AppEncryptionActiveKey string
 }
 
 func FromEnv() Config {
@@ -57,6 +59,8 @@ func FromEnv() Config {
 		payoutRailSecret = "paygate-dev-payout-rail-secret"
 	}
 	sagaWorkerEnabled := os.Getenv("SAGA_WORKER_ENABLED")
+	appEncryptionKeys := strings.TrimSpace(os.Getenv("APP_ENCRYPTION_KEYS"))
+	appEncryptionActiveKey := strings.TrimSpace(os.Getenv("APP_ENCRYPTION_ACTIVE_KEY_VERSION"))
 	return Config{
 		Port:                   port,
 		DatabaseURL:            dbURL,
@@ -67,6 +71,8 @@ func FromEnv() Config {
 		TrustedProxyCIDRs:      splitCSV(trustedProxyCIDRs),
 		PayoutRailSecret:       payoutRailSecret,
 		SagaWorkerEnabled:      sagaWorkerEnabled != "false",
+		AppEncryptionKeys:      splitCSV(appEncryptionKeys),
+		AppEncryptionActiveKey: appEncryptionActiveKey,
 	}
 }
 
@@ -94,6 +100,9 @@ func (c Config) Validate() error {
 		if _, err := netip.ParsePrefix(raw); err != nil {
 			errs = append(errs, fmt.Errorf("TRUSTED_PROXY_CIDRS contains invalid CIDR %q", raw))
 		}
+	}
+	if len(c.AppEncryptionKeys) > 0 && strings.TrimSpace(c.AppEncryptionActiveKey) == "" {
+		errs = append(errs, fmt.Errorf("APP_ENCRYPTION_ACTIVE_KEY_VERSION is required when APP_ENCRYPTION_KEYS is set"))
 	}
 	return errors.Join(errs...)
 }

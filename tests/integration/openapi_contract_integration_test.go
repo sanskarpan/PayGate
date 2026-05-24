@@ -61,12 +61,14 @@ func TestIntegrationOpenAPIContractCoreRoutes(t *testing.T) {
 		"receipt":  "openapi-contract-order",
 	}, http.StatusCreated)
 	orderID := mustString(t, orderResp, "id")
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 
 	paymentResp := sendJSON(t, mux, http.MethodPost, "/v1/payments/authorize", authHeader, map[string]any{
-		"order_id": orderID,
-		"amount":   15000,
-		"currency": "INR",
-		"method":   "card",
+		"order_id":                orderID,
+		"amount":                  15000,
+		"currency":                "INR",
+		"method":                  "card",
+		"payment_method_token_id": cardTokenID,
 	}, http.StatusCreated)
 	paymentID := mustString(t, paymentResp, "id")
 
@@ -83,7 +85,11 @@ func TestIntegrationOpenAPIContractCoreRoutes(t *testing.T) {
 	settlementResp := sendJSON(t, mux, http.MethodPost, "/v1/settlements/batch", authHeader, map[string]any{}, http.StatusCreated)
 	settlementID := mustString(t, settlementResp, "id")
 
-	payoutResp := sendJSON(t, mux, http.MethodPost, "/v1/settlements/"+settlementID+"/payout", authHeader, nil, http.StatusCreated)
+	approveMerchantOnboarding(t, mux, authHeader)
+	beneficiaryID := createApprovedBeneficiary(t, mux, authHeader)
+	payoutResp := sendJSON(t, mux, http.MethodPost, "/v1/settlements/"+settlementID+"/payout", authHeader, map[string]any{
+		"beneficiary_id": beneficiaryID,
+	}, http.StatusCreated)
 	payoutID := mustString(t, payoutResp, "id")
 	if _, ok := payoutResp["saga_id"]; !ok {
 		t.Fatalf("expected payout response to include saga_id, got %#v", payoutResp)

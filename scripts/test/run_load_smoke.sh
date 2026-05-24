@@ -64,6 +64,8 @@ if [[ "${START_API}" == "true" ]]; then
     DATABASE_URL="${DATABASE_URL:-postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable}" \
     REDIS_ADDR="${REDIS_ADDR:-localhost:6380}" \
     KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
+    KAFKA_PUBLISH_TIMEOUT_MS="${KAFKA_PUBLISH_TIMEOUT_MS:-250}" \
+    KAFKA_IO_TIMEOUT_MS="${KAFKA_IO_TIMEOUT_MS:-250}" \
     OTEL_EXPORTER_STDOUT=false \
     go run ./cmd/api-gateway >"${API_LOG_FILE}" 2>&1 &
   API_PID=$!

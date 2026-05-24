@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/auth"
+	"github.com/sanskarpan/PayGate/internal/billing"
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/dispute"
 	"github.com/sanskarpan/PayGate/internal/eventschema"
@@ -26,8 +27,11 @@ import (
 	"github.com/sanskarpan/PayGate/internal/payment"
 	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/refund"
+	"github.com/sanskarpan/PayGate/internal/reporting"
+	"github.com/sanskarpan/PayGate/internal/retention"
 	"github.com/sanskarpan/PayGate/internal/saga"
 	"github.com/sanskarpan/PayGate/internal/settlement"
+	"github.com/sanskarpan/PayGate/internal/tokenization"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
 
@@ -289,10 +293,14 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 
 	orderSvc := order.NewService(order.NewPostgresRepository(db))
 	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
-	paymentSvc := payment.NewService(payment.NewPostgresRepository(db, ledgerSvc, orderSvc), gateway.NewSimulator())
+	cardTokenSvc := tokenization.NewService(tokenization.NewPostgresRepository(db))
+	paymentSvc := payment.NewService(payment.NewPostgresRepository(db, ledgerSvc, orderSvc), gateway.NewSimulator(), payment.WithCardTokenAuthorizer(cardTokenSvc))
+	billingSvc := billing.NewService(billing.NewPostgresRepository(db), orderSvc, paymentSvc, cardTokenSvc)
 	refundSvc := refund.NewService(refund.NewPostgresRepository(db, ledgerSvc))
 	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
-	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledgerSvc))
+	settlementRepo := settlement.NewPostgresRepository(db, ledgerSvc)
+	settlementRepo.SetReservePolicyResolver(merchantSvc)
+	settlementSvc := settlement.NewService(settlementRepo)
 	sagaSvc := saga.NewService(saga.NewPostgresRepository(db), nil)
 	go saga.NewWorker(sagaSvc, 10*time.Millisecond, nil).Start(context.Background())
 	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
@@ -302,18 +310,24 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	payoutSvc.RegisterSagaHandlers(sagaSvc)
 	disputeSvc := dispute.NewService(dispute.NewPostgresRepository(db))
 	schemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), nil)
+	reportingSvc := reporting.NewService(reporting.NewRepository(db))
+	retentionSvc := retention.NewService(retention.NewPostgresRepository(db))
 
 	merchantHandler := merchant.NewHandler(merchantSvc)
 	orderHandler := order.NewHandler(orderSvc)
-	paymentHandler := payment.NewHandler(paymentSvc)
-	refundHandler := refund.NewHandler(refundSvc)
+	billingHandler := billing.NewHandler(billingSvc)
+	paymentHandler := payment.NewHandler(paymentSvc, payment.WithCapabilityChecker(merchantSvc))
+	refundHandler := refund.NewHandler(refundSvc, merchantSvc)
 	webhookHandler := webhook.NewHandler(webhookSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc, merchantSvc)
 	sagaHandler := saga.NewHandler(sagaSvc)
 	disputeHandler := dispute.NewHandler(disputeSvc)
 	holdHandler := ledger.NewHoldHandler(ledgerSvc)
 	schemaHandler := eventschema.NewHandler(schemaSvc)
+	cardTokenHandler := tokenization.NewHandler(cardTokenSvc)
+	reportingHandler := reporting.NewHandler(reportingSvc)
+	retentionHandler := retention.NewHandler(retentionSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
@@ -332,8 +346,11 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 		})
 	})
 	merchantHandler.RegisterRoutes(mux)
+	paymentHandler.RegisterRoutes(mux)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
+	cardTokenHandler.RegisterRoutesWithAuth(mux, protected)
+	billingHandler.RegisterRoutesWithAuth(mux, protected)
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
 	refundHandler.RegisterRoutesWithAuth(mux, protected)
 	settlementHandler.RegisterRoutesWithAuth(mux, protected)
@@ -344,6 +361,8 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	disputeHandler.RegisterRoutesWithAuth(mux, protected)
 	holdHandler.RegisterRoutesWithAuth(mux, protected)
 	schemaHandler.RegisterRoutesWithAuth(mux, protected)
+	reportingHandler.RegisterRoutesWithAuth(mux, protected)
+	retentionHandler.RegisterRoutesWithAuth(mux, protected)
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := httpx.PrincipalFromContext(r.Context())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})
