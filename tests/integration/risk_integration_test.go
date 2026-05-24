@@ -19,6 +19,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
 	"github.com/sanskarpan/PayGate/internal/risk"
+	"github.com/sanskarpan/PayGate/internal/tokenization"
 )
 
 func buildRiskMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *risk.Service) {
@@ -27,19 +28,34 @@ func buildRiskMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *risk.Se
 	authMw := auth.NewMiddleware(merchantSvc)
 	idemMw := idempotency.NewMiddleware(idempotency.NewStore(db, nil))
 
-	riskRepo := risk.NewPostgresRepository(db)
-	riskSvc := risk.NewService(riskRepo, nil)
-	riskHandler := risk.NewHandler(riskSvc)
-
 	orderSvc := order.NewService(order.NewPostgresRepository(db))
 	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
+	cardTokenSvc := tokenization.NewService(tokenization.NewPostgresRepository(db))
 	paymentSvc := payment.NewService(
 		payment.NewPostgresRepository(db, ledgerSvc, orderSvc),
 		gateway.NewSimulator(),
+		payment.WithCardTokenAuthorizer(cardTokenSvc),
 	)
-	paymentHandler := payment.NewHandler(paymentSvc, payment.WithRiskEvaluator(&testRiskAdapter{svc: riskSvc}))
+	riskRepo := risk.NewPostgresRepository(db)
+	riskSvc := risk.NewService(riskRepo, nil,
+		risk.WithPaymentService(paymentSvc),
+		risk.WithReserveEscalator(func(ctx context.Context, ev risk.RiskEvent) error {
+			_, err := merchantSvc.QueueReserveEscalation(ctx, merchant.QueueReserveEscalationInput{
+				MerchantID:       ev.MerchantID,
+				RiskEventID:      ev.ID,
+				TriggerScore:     ev.Score,
+				TriggeredRules:   ev.TriggeredRules,
+				SuggestedBaseBPS: 1000,
+				Rationale:        "risk event exceeded reserve escalation threshold",
+			})
+			return err
+		}),
+	)
+	riskHandler := risk.NewHandler(riskSvc)
+	paymentHandler := payment.NewHandler(paymentSvc, payment.WithRiskEvaluator(&testRiskAdapter{svc: riskSvc}), payment.WithCapabilityChecker(merchantSvc))
 	merchantHandler := merchant.NewHandler(merchantSvc)
 	orderHandler := order.NewHandler(orderSvc)
+	cardTokenHandler := tokenization.NewHandler(cardTokenSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
@@ -49,6 +65,7 @@ func buildRiskMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *risk.Se
 	merchantHandler.RegisterRoutes(mux)
 	merchantHandler.RegisterProtectedRoutes(mux, protected)
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
+	cardTokenHandler.RegisterRoutesWithAuth(mux, protected)
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
 	riskHandler.RegisterRoutesWithAuth(mux, func(scope string, next http.Handler) http.Handler {
 		return authMw.RequireScope(merchant.APIKeyScope(scope), next)
@@ -59,13 +76,22 @@ func buildRiskMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *risk.Se
 // testRiskAdapter wraps risk.Service for use as payment.RiskEvaluator.
 type testRiskAdapter struct{ svc *risk.Service }
 
-func (a *testRiskAdapter) EvaluateAuthorize(ctx context.Context, merchantID, paymentID string, amount int64, ip string) (string, error) {
+func (a *testRiskAdapter) EvaluateAuthorize(ctx context.Context, in payment.AuthorizeRiskInput) (string, error) {
 	ev, err := a.svc.EvaluatePayment(ctx, risk.EvalInput{
-		MerchantID: merchantID,
-		PaymentID:  paymentID,
-		Amount:     amount,
-		Currency:   "INR",
-		IPAddress:  ip,
+		MerchantID:        in.MerchantID,
+		PaymentID:         in.PaymentID,
+		Amount:            in.Amount,
+		Currency:          in.Currency,
+		IPAddress:         in.IPAddress,
+		DeviceFingerprint: in.RiskContext.DeviceFingerprint,
+		BrowserLanguage:   in.RiskContext.BrowserLanguage,
+		UserAgent:         in.RiskContext.UserAgent,
+		CardBIN:           in.RiskContext.CardBIN,
+		CardNetwork:       in.RiskContext.CardNetwork,
+		IssuerCountry:     in.RiskContext.IssuerCountry,
+		CardCountry:       in.RiskContext.CardCountry,
+		FundingType:       in.RiskContext.FundingType,
+		MerchantCountry:   in.RiskContext.MerchantCountry,
 	})
 	if err != nil {
 		return string(risk.RiskActionAllow), err
@@ -108,13 +134,15 @@ func TestIntegrationRiskEventRecordedOnPaymentAuthorize(t *testing.T) {
 	if err := json.Unmarshal(orderRec.Body.Bytes(), &orderResp); err != nil {
 		t.Fatalf("decode order response: %v", err)
 	}
+	cardTokenID := createCardTokenViaMux(t, mux, authHdr, false)
 
 	// Authorize a payment — risk event should be recorded.
 	payBody, _ := json.Marshal(map[string]any{
-		"order_id": orderResp["id"],
-		"amount":   5000,
-		"currency": "INR",
-		"method":   "card",
+		"order_id":                orderResp["id"],
+		"amount":                  5000,
+		"currency":                "INR",
+		"method":                  "card",
+		"payment_method_token_id": cardTokenID,
 	})
 	payReq := httptest.NewRequest(http.MethodPost, "/v1/payments/authorize", bytes.NewReader(payBody))
 	payReq.Header.Set("Authorization", authHdr)
