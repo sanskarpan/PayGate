@@ -30,6 +30,12 @@ const (
 	MismatchPaymentSettledNotInBatch MismatchType = "payment_settled_not_in_batch"
 	// OrphanSettlementItem: a settlement item points to a missing payment.
 	MismatchOrphanSettlementItem MismatchType = "orphan_settlement_item"
+	// ExternalSourceMissingInternal: imported external source row has no matching internal entity.
+	MismatchExternalSourceMissingInternal MismatchType = "external_source_missing_internal"
+	// ExternalSourceAmountMismatch: imported external amount differs from internal amount.
+	MismatchExternalSourceAmountMismatch MismatchType = "external_source_amount_mismatch"
+	// InternalMissingExternalSource: internal entity was not present in the imported source set.
+	MismatchInternalMissingExternalSource MismatchType = "internal_missing_external_source"
 )
 
 var ErrBatchNotFound = errors.New("recon batch not found")
@@ -50,15 +56,67 @@ type ReconBatch struct {
 
 // ReconMismatch records a single detected discrepancy.
 type ReconMismatch struct {
+	ID              string
+	BatchID         string
+	MerchantID      string
+	SourceImportID  string
+	MismatchType    MismatchType
+	EntityType      string
+	EntityID        string
+	ExpectedValue   string
+	ActualValue     string
+	Description     string
+	Resolved        bool
+	Status          string
+	AssignedTo      string
+	AssignedAt      *time.Time
+	ResolvedAt      *time.Time
+	ResolvedBy      string
+	ResolutionCode  string
+	ResolutionNotes string
+	CreatedAt       time.Time
+}
+
+type SourceImport struct {
 	ID            string
 	BatchID       string
 	MerchantID    string
-	MismatchType  MismatchType
-	EntityType    string
-	EntityID      string
-	ExpectedValue string
-	ActualValue   string
-	Description   string
-	Resolved      bool
+	SourceType    string
+	Status        string
+	PeriodStart   time.Time
+	PeriodEnd     time.Time
+	EntryCount    int
+	MismatchCount int
 	CreatedAt     time.Time
+}
+
+type SourceEntry struct {
+	ID             string
+	SourceImportID string
+	MerchantID     string
+	EntityType     string
+	ExternalID     string
+	ReferenceID    string
+	Amount         int64
+	Currency       string
+	Status         string
+	OccurredAt     time.Time
+	Metadata       map[string]any
+}
+
+type MismatchNote struct {
+	ID         string
+	MismatchID string
+	MerchantID string
+	Author     string
+	Note       string
+	CreatedAt  time.Time
+}
+
+type ImportSourceInput struct {
+	MerchantID  string
+	SourceType  string
+	PeriodStart time.Time
+	PeriodEnd   time.Time
+	Entries     []SourceEntry
 }

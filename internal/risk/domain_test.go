@@ -6,25 +6,28 @@ func TestEvaluate(t *testing.T) {
 	base := EvalInput{
 		MerchantID:     "merch_1",
 		PaymentID:      "pay_1",
-		Amount:         2000,  // 20 INR
+		Amount:         2000, // 20 INR
 		Currency:       "INR",
 		IPAddress:      "1.2.3.4",
 		MerchantAvgTxn: 1000, // >= ThresholdAmountSpikeMinAvg
 	}
 
 	tests := []struct {
-		name              string
-		in                EvalInput
-		merchantHourly    int
-		ipHourly          int
-		wantAction        RiskAction
-		wantRules         []string
+		name           string
+		in             EvalInput
+		merchantHourly int
+		ipHourly       int
+		deviceHourly   int
+		cfg            MerchantFraudConfig
+		wantAction     RiskAction
+		wantRules      []string
 	}{
 		{
 			name:           "clean transaction",
 			in:             base,
 			merchantHourly: 10,
 			ipHourly:       2,
+			cfg:            DefaultMerchantFraudConfig("merch_1"),
 			wantAction:     RiskActionAllow,
 			wantRules:      nil,
 		},
@@ -33,6 +36,7 @@ func TestEvaluate(t *testing.T) {
 			in:             base,
 			merchantHourly: ThresholdMerchantTxnPerHour,
 			ipHourly:       2,
+			cfg:            DefaultMerchantFraudConfig("merch_1"),
 			wantAction:     RiskActionHold,
 			wantRules:      []string{"merchant_velocity_1h"},
 		},
@@ -41,6 +45,7 @@ func TestEvaluate(t *testing.T) {
 			in:             base,
 			merchantHourly: 5,
 			ipHourly:       ThresholdIPTxnPerHour,
+			cfg:            DefaultMerchantFraudConfig("merch_1"),
 			wantAction:     RiskActionHold,
 			wantRules:      []string{"ip_velocity_1h"},
 		},
@@ -56,6 +61,7 @@ func TestEvaluate(t *testing.T) {
 			},
 			merchantHourly: 5,
 			ipHourly:       2,
+			cfg:            DefaultMerchantFraudConfig("merch_1"),
 			wantAction:     RiskActionHold,
 			wantRules:      []string{"amount_spike_3x"},
 		},
@@ -71,6 +77,7 @@ func TestEvaluate(t *testing.T) {
 			},
 			merchantHourly: 5,
 			ipHourly:       2,
+			cfg:            DefaultMerchantFraudConfig("merch_1"),
 			wantAction:     RiskActionAllow,
 			wantRules:      nil,
 		},
@@ -86,6 +93,7 @@ func TestEvaluate(t *testing.T) {
 			},
 			merchantHourly: ThresholdMerchantTxnPerHour,
 			ipHourly:       ThresholdIPTxnPerHour,
+			cfg:            DefaultMerchantFraudConfig("merch_1"),
 			// ScoreVelocityMerchant(50) + ScoreVelocityIP(50) = 100 → block (>= 90)
 			wantAction: RiskActionBlock,
 			wantRules:  []string{"merchant_velocity_1h", "ip_velocity_1h", "amount_spike_3x"},
@@ -102,14 +110,56 @@ func TestEvaluate(t *testing.T) {
 			},
 			merchantHourly: 5,
 			ipHourly:       ThresholdIPTxnPerHour + 10,
+			cfg:            DefaultMerchantFraudConfig("merch_1"),
 			wantAction:     RiskActionAllow,
 			wantRules:      nil,
+		},
+		{
+			name: "device velocity breach",
+			in: EvalInput{
+				MerchantID:        "merch_1",
+				PaymentID:         "pay_6",
+				Amount:            1000,
+				Currency:          "INR",
+				DeviceFingerprint: "dev_1",
+			},
+			merchantHourly: 1,
+			ipHourly:       0,
+			deviceHourly:   ThresholdDeviceTxnPerHour,
+			cfg:            DefaultMerchantFraudConfig("merch_1"),
+			wantAction:     RiskActionHold,
+			wantRules:      []string{"device_velocity_1h"},
+		},
+		{
+			name: "blocked bin",
+			in: EvalInput{
+				MerchantID: "merch_1",
+				PaymentID:  "pay_7",
+				Amount:     1000,
+				Currency:   "INR",
+				CardBIN:    "411111",
+			},
+			merchantHourly: 1,
+			ipHourly:       0,
+			cfg: MerchantFraudConfig{
+				MerchantID:                "merch_1",
+				IPVelocityThreshold:       ThresholdIPTxnPerHour,
+				DeviceVelocityThreshold:   ThresholdDeviceTxnPerHour,
+				MerchantVelocityThreshold: ThresholdMerchantTxnPerHour,
+				AmountSpikeFactor:         ThresholdAmountSpikeFactor,
+				ReviewThreshold:           ScoreHoldThreshold,
+				BlockThreshold:            ScoreBlockThreshold,
+				BlockedBINs:               []string{"411111"},
+				ReviewOnCountryMismatch:   true,
+			},
+			wantAction: RiskActionBlock,
+			wantRules:  []string{"blocked_bin"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			res := Evaluate(tc.in, tc.merchantHourly, tc.ipHourly)
+			res := Evaluate(tc.in, tc.cfg, tc.merchantHourly, tc.ipHourly, tc.deviceHourly)
 			if res.Action != tc.wantAction {
 				t.Errorf("action: got %q, want %q (score=%d)", res.Action, tc.wantAction, res.Score)
 			}
