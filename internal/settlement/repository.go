@@ -32,4 +32,11 @@ type Repository interface {
 
 	// RunPartialBatch settles only the specific paymentIDs provided, rather than all eligible payments.
 	RunPartialBatch(ctx context.Context, merchantID string, paymentIDs []string) (Settlement, error)
+
+	GetPreferences(ctx context.Context, merchantID string) (Preferences, error)
+	UpsertPreferences(ctx context.Context, preferences Preferences) (Preferences, error)
+	GenerateStatement(ctx context.Context, merchantID, settlementID string) (Statement, error)
+	GetStatement(ctx context.Context, merchantID, settlementID string) (Statement, error)
+	ListAdjustments(ctx context.Context, merchantID, settlementID string) ([]Adjustment, error)
+	RecordAdjustment(ctx context.Context, adjustment Adjustment) error
 }
