@@ -74,26 +74,28 @@ func Transition(from PayoutState, ev PayoutEvent) (PayoutState, error) {
 
 // Payout represents a bank transfer of a settlement's net amount to a merchant.
 type Payout struct {
-	ID            string
-	MerchantID    string
-	SettlementID  string
-	SagaID        string
-	Status        PayoutState
-	Amount        int64
-	Currency      string
-	BankReference string
-	RailReference string
-	FailureReason string
-	ReturnReason  string
-	InitiatedAt   *time.Time
-	CompletedAt   *time.Time
-	FailedAt      *time.Time
-	ReturnedAt    *time.Time
-	ReversedAt    *time.Time
-	CancelledAt   *time.Time
-	CancelReason  string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID             string
+	MerchantID     string
+	SettlementID   string
+	BeneficiaryID  string
+	SagaID         string
+	Status         PayoutState
+	ApprovalStatus ApprovalStatus
+	Amount         int64
+	Currency       string
+	BankReference  string
+	RailReference  string
+	FailureReason  string
+	ReturnReason   string
+	InitiatedAt    *time.Time
+	CompletedAt    *time.Time
+	FailedAt       *time.Time
+	ReturnedAt     *time.Time
+	ReversedAt     *time.Time
+	CancelledAt    *time.Time
+	CancelReason   string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type TimelineEvent struct {
