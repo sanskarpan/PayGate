@@ -1,0 +1,74 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-05-24T00:00:00.000Z",
+  "__export_source": "paygate.local",
+  "resources": [
+    {
+      "_id": "wrk_paygate",
+      "_type": "workspace",
+      "name": "PayGate Core Flows",
+      "scope": "collection"
+    },
+    {
+      "_id": "env_paygate_local",
+      "_type": "environment",
+      "parentId": "wrk_paygate",
+      "name": "Local",
+      "data": {
+        "api_base_url": "http://127.0.0.1:8090",
+        "auth_header": "",
+        "order_id": "",
+        "payment_id": ""
+      }
+    },
+    {
+      "_id": "req_paygate_bootstrap",
+      "_type": "request",
+      "parentId": "wrk_paygate",
+      "name": "Bootstrap Merchant",
+      "method": "POST",
+      "url": "{{ _.api_base_url }}/v1/merchants",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"name\":\"Insomnia Sandbox Merchant\",\"email\":\"merchant+insomnia@paygate.local\",\"business_type\":\"company\",\"settings\":{\"suite\":\"insomnia\"}}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ]
+    },
+    {
+      "_id": "req_paygate_order",
+      "_type": "request",
+      "parentId": "wrk_paygate",
+      "name": "Create Order",
+      "method": "POST",
+      "url": "{{ _.api_base_url }}/v1/orders",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"amount\":4200,\"currency\":\"INR\",\"receipt\":\"insomnia-order-1\"}"
+      },
+      "headers": [
+        { "name": "Authorization", "value": "{{ _.auth_header }}" },
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Idempotency-Key", "value": "insomnia-order-1" }
+      ]
+    },
+    {
+      "_id": "req_paygate_payment",
+      "_type": "request",
+      "parentId": "wrk_paygate",
+      "name": "Authorize Payment",
+      "method": "POST",
+      "url": "{{ _.api_base_url }}/v1/payments/authorize",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"order_id\":\"{{ _.order_id }}\",\"method\":\"card\",\"payment_method_token_id\":\"tok_sandbox_single_use\",\"auto_capture\":false}"
+      },
+      "headers": [
+        { "name": "Authorization", "value": "{{ _.auth_header }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ]
+    }
+  ]
+}

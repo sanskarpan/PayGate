@@ -2,10 +2,13 @@ package recon
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
 	"github.com/sanskarpan/PayGate/internal/settlement"
@@ -315,8 +318,9 @@ func (w *Worker) ListMismatches(ctx context.Context, merchantID string, limit in
 		limit = 50
 	}
 	q := `
-SELECT id, batch_id, merchant_id, mismatch_type, entity_type, entity_id,
-       expected_value, actual_value, description, resolved, created_at
+SELECT id, batch_id, merchant_id, COALESCE(source_import_id, ''), mismatch_type, entity_type, entity_id,
+       expected_value, actual_value, description, resolved, status, COALESCE(assigned_to, ''), assigned_at, resolved_at,
+       COALESCE(resolved_by, ''), COALESCE(resolution_code, ''), COALESCE(resolution_notes, ''), created_at
 FROM paygate_recon.recon_mismatches
 WHERE merchant_id = $1
   AND ($2 = FALSE OR resolved = FALSE)
@@ -333,15 +337,383 @@ LIMIT $3`
 	for rows.Next() {
 		var mm ReconMismatch
 		if err := rows.Scan(
-			&mm.ID, &mm.BatchID, &mm.MerchantID, &mm.MismatchType,
+			&mm.ID, &mm.BatchID, &mm.MerchantID, &mm.SourceImportID, &mm.MismatchType,
 			&mm.EntityType, &mm.EntityID, &mm.ExpectedValue, &mm.ActualValue,
-			&mm.Description, &mm.Resolved, &mm.CreatedAt,
+			&mm.Description, &mm.Resolved, &mm.Status, &mm.AssignedTo, &mm.AssignedAt, &mm.ResolvedAt,
+			&mm.ResolvedBy, &mm.ResolutionCode, &mm.ResolutionNotes, &mm.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan recon mismatch: %w", err)
 		}
 		mismatches = append(mismatches, mm)
 	}
 	return mismatches, rows.Err()
+}
+
+func (w *Worker) ListSourceImports(ctx context.Context, merchantID string, limit int) ([]SourceImport, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := w.db.Query(ctx, `
+SELECT id, batch_id, merchant_id, source_type, status, period_start, period_end, entry_count, mismatch_count, created_at
+FROM paygate_recon.recon_source_imports
+WHERE merchant_id = $1
+ORDER BY created_at DESC
+LIMIT $2
+`, merchantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SourceImport
+	for rows.Next() {
+		var item SourceImport
+		if err := rows.Scan(&item.ID, &item.BatchID, &item.MerchantID, &item.SourceType, &item.Status, &item.PeriodStart, &item.PeriodEnd, &item.EntryCount, &item.MismatchCount, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (w *Worker) ImportSource(ctx context.Context, in ImportSourceInput) (SourceImport, error) {
+	batchID := idgen.New("recon")
+	importID := idgen.New("rsrc")
+	tx, err := w.db.Begin(ctx)
+	if err != nil {
+		return SourceImport{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_recon.recon_batches
+    (id, merchant_id, batch_type, status, period_start, period_end, checked_count, mismatch_count)
+VALUES ($1,$2,'external_source','completed',$3,$4,$5,0)
+`, batchID, in.MerchantID, in.PeriodStart, in.PeriodEnd, len(in.Entries)); err != nil {
+		return SourceImport{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_recon.recon_source_imports
+    (id, batch_id, merchant_id, source_type, status, period_start, period_end, entry_count, mismatch_count)
+VALUES ($1,$2,$3,$4,'completed',$5,$6,$7,0)
+`, importID, batchID, in.MerchantID, in.SourceType, in.PeriodStart, in.PeriodEnd, len(in.Entries)); err != nil {
+		return SourceImport{}, err
+	}
+
+	seenRefs := map[string]struct{}{}
+	var mismatches []ReconMismatch
+	for _, entry := range in.Entries {
+		raw, _ := json.Marshal(entry.Metadata)
+		entryID := idgen.New("rentry")
+		if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_recon.recon_source_entries
+    (id, source_import_id, merchant_id, entity_type, external_id, reference_id, amount, currency, status, occurred_at, metadata_json)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+`, entryID, importID, in.MerchantID, entry.EntityType, entry.ExternalID, entry.ReferenceID, entry.Amount, entry.Currency, entry.Status, entry.OccurredAt, string(raw)); err != nil {
+			return SourceImport{}, err
+		}
+		seenRefs[entry.ReferenceID] = struct{}{}
+		mm, ok, err := w.compareSourceEntry(ctx, tx, batchID, importID, in.MerchantID, entry)
+		if err != nil {
+			return SourceImport{}, err
+		}
+		if ok {
+			mismatches = append(mismatches, mm)
+		}
+	}
+	missing, err := w.findMissingInternalEntities(ctx, tx, batchID, importID, in, seenRefs)
+	if err != nil {
+		return SourceImport{}, err
+	}
+	mismatches = append(mismatches, missing...)
+	for _, mm := range mismatches {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_recon.recon_mismatches
+    (id, batch_id, merchant_id, source_import_id, mismatch_type, entity_type, entity_id, expected_value, actual_value, description, resolved, status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,'open')
+`, mm.ID, mm.BatchID, mm.MerchantID, mm.SourceImportID, mm.MismatchType, mm.EntityType, mm.EntityID, mm.ExpectedValue, mm.ActualValue, mm.Description); err != nil {
+			return SourceImport{}, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_recon.recon_batches
+SET mismatch_count = $2
+WHERE id = $1
+`, batchID, len(mismatches)); err != nil {
+		return SourceImport{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_recon.recon_source_imports
+SET mismatch_count = $2
+WHERE id = $1
+`, importID, len(mismatches)); err != nil {
+		return SourceImport{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SourceImport{}, err
+	}
+	return SourceImport{
+		ID:            importID,
+		BatchID:       batchID,
+		MerchantID:    in.MerchantID,
+		SourceType:    in.SourceType,
+		Status:        "completed",
+		PeriodStart:   in.PeriodStart,
+		PeriodEnd:     in.PeriodEnd,
+		EntryCount:    len(in.Entries),
+		MismatchCount: len(mismatches),
+		CreatedAt:     time.Now().UTC(),
+	}, nil
+}
+
+func (w *Worker) compareSourceEntry(ctx context.Context, tx pgx.Tx, batchID, importID, merchantID string, entry SourceEntry) (ReconMismatch, bool, error) {
+	switch entry.EntityType {
+	case "settlement":
+		var amount int64
+		var currency, status string
+		err := tx.QueryRow(ctx, `
+SELECT net_amount, currency, status
+FROM paygate_settlements.settlements
+WHERE id = $1 AND merchant_id = $2
+`, entry.ReferenceID, merchantID).Scan(&amount, &currency, &status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ReconMismatch{
+				ID:             idgen.New("mm"),
+				BatchID:        batchID,
+				MerchantID:     merchantID,
+				SourceImportID: importID,
+				MismatchType:   MismatchExternalSourceMissingInternal,
+				EntityType:     "settlement",
+				EntityID:       entry.ReferenceID,
+				ExpectedValue:  fmt.Sprintf("%d %s", entry.Amount, entry.Currency),
+				ActualValue:    "missing",
+				Description:    "external settlement source row has no matching internal settlement",
+			}, true, nil
+		}
+		if err != nil {
+			return ReconMismatch{}, false, err
+		}
+		if amount != entry.Amount || currency != entry.Currency {
+			return ReconMismatch{
+				ID:             idgen.New("mm"),
+				BatchID:        batchID,
+				MerchantID:     merchantID,
+				SourceImportID: importID,
+				MismatchType:   MismatchExternalSourceAmountMismatch,
+				EntityType:     "settlement",
+				EntityID:       entry.ReferenceID,
+				ExpectedValue:  fmt.Sprintf("%d %s", entry.Amount, entry.Currency),
+				ActualValue:    fmt.Sprintf("%d %s", amount, currency),
+				Description:    "external settlement amount or currency does not match internal settlement",
+			}, true, nil
+		}
+		if entry.Status != "" && status != entry.Status {
+			return ReconMismatch{
+				ID:             idgen.New("mm"),
+				BatchID:        batchID,
+				MerchantID:     merchantID,
+				SourceImportID: importID,
+				MismatchType:   MismatchExternalSourceAmountMismatch,
+				EntityType:     "settlement",
+				EntityID:       entry.ReferenceID,
+				ExpectedValue:  entry.Status,
+				ActualValue:    status,
+				Description:    "external settlement status does not match internal settlement",
+			}, true, nil
+		}
+	case "payout":
+		var amount int64
+		var currency, status string
+		err := tx.QueryRow(ctx, `
+SELECT amount, currency, status
+FROM paygate_payouts.payouts
+WHERE id = $1 AND merchant_id = $2
+`, entry.ReferenceID, merchantID).Scan(&amount, &currency, &status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ReconMismatch{
+				ID:             idgen.New("mm"),
+				BatchID:        batchID,
+				MerchantID:     merchantID,
+				SourceImportID: importID,
+				MismatchType:   MismatchExternalSourceMissingInternal,
+				EntityType:     "payout",
+				EntityID:       entry.ReferenceID,
+				ExpectedValue:  fmt.Sprintf("%d %s", entry.Amount, entry.Currency),
+				ActualValue:    "missing",
+				Description:    "external payout source row has no matching internal payout",
+			}, true, nil
+		}
+		if err != nil {
+			return ReconMismatch{}, false, err
+		}
+		if amount != entry.Amount || currency != entry.Currency || (entry.Status != "" && status != entry.Status) {
+			return ReconMismatch{
+				ID:             idgen.New("mm"),
+				BatchID:        batchID,
+				MerchantID:     merchantID,
+				SourceImportID: importID,
+				MismatchType:   MismatchExternalSourceAmountMismatch,
+				EntityType:     "payout",
+				EntityID:       entry.ReferenceID,
+				ExpectedValue:  fmt.Sprintf("%d %s %s", entry.Amount, entry.Currency, entry.Status),
+				ActualValue:    fmt.Sprintf("%d %s %s", amount, currency, status),
+				Description:    "external payout source row does not match internal payout",
+			}, true, nil
+		}
+	}
+	return ReconMismatch{}, false, nil
+}
+
+func (w *Worker) findMissingInternalEntities(ctx context.Context, tx pgx.Tx, batchID, importID string, in ImportSourceInput, seenRefs map[string]struct{}) ([]ReconMismatch, error) {
+	if len(in.Entries) == 0 {
+		return nil, nil
+	}
+	entityType := in.Entries[0].EntityType
+	if entityType == "settlement" {
+		rows, err := tx.Query(ctx, `
+SELECT id, net_amount, currency
+FROM paygate_settlements.settlements
+WHERE merchant_id = $1 AND created_at >= $2 AND created_at < $3
+`, in.MerchantID, in.PeriodStart, in.PeriodEnd)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var mismatches []ReconMismatch
+		for rows.Next() {
+			var id, currency string
+			var amount int64
+			if err := rows.Scan(&id, &amount, &currency); err != nil {
+				return nil, err
+			}
+			if _, ok := seenRefs[id]; ok {
+				continue
+			}
+			mismatches = append(mismatches, ReconMismatch{
+				ID:             idgen.New("mm"),
+				BatchID:        batchID,
+				MerchantID:     in.MerchantID,
+				SourceImportID: importID,
+				MismatchType:   MismatchInternalMissingExternalSource,
+				EntityType:     "settlement",
+				EntityID:       id,
+				ExpectedValue:  "present in external source",
+				ActualValue:    fmt.Sprintf("%d %s missing", amount, currency),
+				Description:    "internal settlement missing from imported external source",
+			})
+		}
+		return mismatches, rows.Err()
+	}
+	return nil, nil
+}
+
+func (w *Worker) AssignMismatch(ctx context.Context, merchantID, mismatchID, assignedTo, note string) error {
+	tx, err := w.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_recon.recon_mismatches
+SET status = 'assigned', assigned_to = $3, assigned_at = NOW(), resolved = FALSE
+WHERE id = $1 AND merchant_id = $2
+`, mismatchID, merchantID, assignedTo); err != nil {
+		return err
+	}
+	if note != "" {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_recon.recon_mismatch_notes
+    (id, mismatch_id, merchant_id, author, note)
+VALUES ($1,$2,$3,$4,$5)
+`, idgen.New("rmn"), mismatchID, merchantID, assignedTo, note); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (w *Worker) ResolveMismatch(ctx context.Context, merchantID, mismatchID, actor, resolutionCode, resolutionNotes string) error {
+	_, err := w.db.Exec(ctx, `
+UPDATE paygate_recon.recon_mismatches
+SET status = 'resolved',
+    resolved = TRUE,
+    resolved_at = NOW(),
+    resolved_by = $3,
+    resolution_code = $4,
+    resolution_notes = $5
+WHERE id = $1 AND merchant_id = $2
+`, mismatchID, merchantID, actor, resolutionCode, resolutionNotes)
+	return err
+}
+
+func (w *Worker) ReopenMismatch(ctx context.Context, merchantID, mismatchID, note string) error {
+	tx, err := w.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_recon.recon_mismatches
+SET status = 'open',
+    resolved = FALSE,
+    resolved_at = NULL,
+    resolved_by = NULL,
+    resolution_code = NULL,
+    resolution_notes = '',
+    assigned_to = NULL,
+    assigned_at = NULL
+WHERE id = $1 AND merchant_id = $2
+`, mismatchID, merchantID); err != nil {
+		return err
+	}
+	if note != "" {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_recon.recon_mismatch_notes
+    (id, mismatch_id, merchant_id, author, note)
+VALUES ($1,$2,$3,'system',$4)
+`, idgen.New("rmn"), mismatchID, merchantID, note); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (w *Worker) AddMismatchNote(ctx context.Context, merchantID, mismatchID, author, note string) (MismatchNote, error) {
+	item := MismatchNote{
+		ID:         idgen.New("rmn"),
+		MismatchID: mismatchID,
+		MerchantID: merchantID,
+		Author:     author,
+		Note:       note,
+		CreatedAt:  time.Now().UTC(),
+	}
+	_, err := w.db.Exec(ctx, `
+INSERT INTO paygate_recon.recon_mismatch_notes
+    (id, mismatch_id, merchant_id, author, note, created_at)
+VALUES ($1,$2,$3,$4,$5,$6)
+`, item.ID, item.MismatchID, item.MerchantID, item.Author, item.Note, item.CreatedAt)
+	return item, err
+}
+
+func (w *Worker) ListMismatchNotes(ctx context.Context, merchantID, mismatchID string) ([]MismatchNote, error) {
+	rows, err := w.db.Query(ctx, `
+SELECT id, mismatch_id, merchant_id, author, note, created_at
+FROM paygate_recon.recon_mismatch_notes
+WHERE merchant_id = $1 AND mismatch_id = $2
+ORDER BY created_at ASC
+`, merchantID, mismatchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MismatchNote
+	for rows.Next() {
+		var item MismatchNote
+		if err := rows.Scan(&item.ID, &item.MismatchID, &item.MerchantID, &item.Author, &item.Note, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (w *Worker) persistBatch(ctx context.Context, batchID, merchantID string, batchType BatchType, start, end time.Time, checked, mismatchCount int, mismatches []ReconMismatch) (int, error) {

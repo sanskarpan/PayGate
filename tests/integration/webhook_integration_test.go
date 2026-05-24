@@ -155,7 +155,7 @@ func TestIntegrationWebhookDelivery(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	_, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
+	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	// Set up a mock HTTP server to receive the webhook.
 	received := make(chan []byte, 10)
@@ -173,6 +173,13 @@ func TestIntegrationWebhookDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
 	}
+	key, err := merchantSvc.CreateAPIKey(ctx, createdMerchant.ID, merchant.CreateAPIKeyInput{
+		Mode: merchant.APIKeyModeTest, Scope: merchant.APIKeyScopeWrite,
+	})
+	if err != nil {
+		t.Fatalf("create api key: %v", err)
+	}
+	authHeader := basicAuth(key.KeyID, key.KeySecret)
 
 	// Create webhook subscription pointing at mock server.
 	webhookRepo := webhook.NewPostgresRepository(db)
@@ -185,6 +192,7 @@ func TestIntegrationWebhookDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create subscription: %v", err)
 	}
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 
 	// Create an order + capture a payment.
 	createdOrder, err := orderSvc.Create(ctx, order.CreateInput{
@@ -194,8 +202,12 @@ func TestIntegrationWebhookDelivery(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 	authorized, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID, OrderID: createdOrder.ID,
-		Amount: createdOrder.Amount, Currency: createdOrder.Currency, Method: "card",
+		MerchantID:           createdMerchant.ID,
+		OrderID:              createdOrder.ID,
+		Amount:               createdOrder.Amount,
+		Currency:             createdOrder.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize: %v", err)

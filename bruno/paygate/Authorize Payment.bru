@@ -1,0 +1,24 @@
+meta {
+  name: Authorize Payment
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{api_base_url}}/v1/payments/authorize
+  body: json
+}
+
+headers {
+  Authorization: {{auth_header}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "order_id": "{{order_id}}",
+    "method": "card",
+    "payment_method_token_id": "tok_sandbox_single_use",
+    "auto_capture": false
+  }
+}

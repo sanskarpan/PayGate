@@ -1,0 +1,123 @@
+{
+  "info": {
+    "name": "PayGate Core Flows",
+    "_postman_id": "7d4b1d8d-73d8-4b75-8d75-e2b0fd8fd001",
+    "description": "Core merchant bootstrap, order, payment, refund, settlement, payout, and reporting flows for PayGate.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Bootstrap Merchant",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Sandbox Merchant\",\n  \"email\": \"merchant+sandbox@paygate.local\",\n  \"business_type\": \"company\",\n  \"settings\": {\"suite\": \"postman\"}\n}"
+        },
+        "url": { "raw": "{{api_base_url}}/v1/merchants", "host": ["{{api_base_url}}"], "path": ["v1", "merchants"] }
+      }
+    },
+    {
+      "name": "Issue Test Key",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"mode\": \"test\",\n  \"scope\": \"admin\"\n}"
+        },
+        "url": { "raw": "{{api_base_url}}/v1/merchants/{{merchant_id}}/keys", "host": ["{{api_base_url}}"], "path": ["v1", "merchants", "{{merchant_id}}", "keys"] }
+      }
+    },
+    {
+      "name": "Create Order",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "{{auth_header}}" },
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Idempotency-Key", "value": "pm-order-1" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 4200,\n  \"currency\": \"INR\",\n  \"receipt\": \"pm-order-1\"\n}"
+        },
+        "url": { "raw": "{{api_base_url}}/v1/orders", "host": ["{{api_base_url}}"], "path": ["v1", "orders"] }
+      }
+    },
+    {
+      "name": "Authorize Card Payment",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "{{auth_header}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"order_id\": \"{{order_id}}\",\n  \"method\": \"card\",\n  \"payment_method_token_id\": \"tok_sandbox_single_use\",\n  \"auto_capture\": false\n}"
+        },
+        "url": { "raw": "{{api_base_url}}/v1/payments/authorize", "host": ["{{api_base_url}}"], "path": ["v1", "payments", "authorize"] }
+      }
+    },
+    {
+      "name": "Capture Payment",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "{{auth_header}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"amount\": 4200\n}" },
+        "url": { "raw": "{{api_base_url}}/v1/payments/{{payment_id}}/capture", "host": ["{{api_base_url}}"], "path": ["v1", "payments", "{{payment_id}}", "capture"] }
+      }
+    },
+    {
+      "name": "Create Refund",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "{{auth_header}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"amount\": 500,\n  \"reason\": \"requested_by_customer\"\n}" },
+        "url": { "raw": "{{api_base_url}}/v1/payments/{{payment_id}}/refunds", "host": ["{{api_base_url}}"], "path": ["v1", "payments", "{{payment_id}}", "refunds"] }
+      }
+    },
+    {
+      "name": "Run Settlement Batch",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "{{auth_header}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{}" },
+        "url": { "raw": "{{api_base_url}}/v1/settlements/batch", "host": ["{{api_base_url}}"], "path": ["v1", "settlements", "batch"] }
+      }
+    },
+    {
+      "name": "Request Reporting Export",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "{{auth_header}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"report_type\": \"payments\",\n  \"format\": \"csv\",\n  \"period_start\": 1704067200,\n  \"period_end\": 1706659200\n}"
+        },
+        "url": { "raw": "{{api_base_url}}/v1/reports/exports", "host": ["{{api_base_url}}"], "path": ["v1", "reports", "exports"] }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "api_base_url", "value": "http://127.0.0.1:8090" },
+    { "key": "merchant_id", "value": "" },
+    { "key": "auth_header", "value": "" },
+    { "key": "order_id", "value": "" },
+    { "key": "payment_id", "value": "" }
+  ]
+}

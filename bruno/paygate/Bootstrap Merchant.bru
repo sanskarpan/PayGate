@@ -1,0 +1,23 @@
+meta {
+  name: Bootstrap Merchant
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{api_base_url}}/v1/merchants
+  body: json
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Bruno Sandbox Merchant",
+    "email": "merchant+bruno@paygate.local",
+    "business_type": "company",
+    "settings": { "suite": "bruno" }
+  }
+}

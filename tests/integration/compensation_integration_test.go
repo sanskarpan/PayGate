@@ -28,7 +28,7 @@ func TestIntegrationPaymentAuthorizationReverseBlocksCaptureAndWritesEvent(t *te
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 	createdMerchant, authHeader := createMerchantAndWriteKey(t, ctx, merchantSvc, "auth-reverse@test.com")
 	createdOrder := createOrderForMerchant(t, ctx, orderSvc, createdMerchant.ID, 6500, "auth-reverse-order")
-	authorized := authorizeAndCaptureOptional(t, ctx, paymentSvc, createdMerchant.ID, createdOrder, false)
+	authorized := authorizeAndCaptureOptional(t, ctx, mux, authHeader, paymentSvc, createdMerchant.ID, createdOrder, false)
 
 	reverseReq := httptest.NewRequest(http.MethodPost, "/v1/payments/"+authorized.PaymentID+"/reverse-authorization", bytes.NewReader([]byte(`{"reason":"operator_requested_reversal"}`)))
 	reverseReq.Header.Set("Authorization", authHeader)
@@ -71,7 +71,7 @@ func TestIntegrationRefundReverseRestoresBalancesAndWritesCorrectiveEntries(t *t
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 	createdMerchant, authHeader := createMerchantAndWriteKey(t, ctx, merchantSvc, "refund-reverse@test.com")
 	createdOrder := createOrderForMerchant(t, ctx, orderSvc, createdMerchant.ID, 10000, "refund-reverse-order")
-	captured := authorizeAndCaptureOptional(t, ctx, paymentSvc, createdMerchant.ID, createdOrder, true)
+	captured := authorizeAndCaptureOptional(t, ctx, mux, authHeader, paymentSvc, createdMerchant.ID, createdOrder, true)
 
 	refundReq := httptest.NewRequest(http.MethodPost, "/v1/payments/"+captured.PaymentID+"/refunds", bytes.NewReader([]byte(`{"amount":10000,"reason":"duplicate_refund","notes":{"source":"integration"}}`)))
 	refundReq.Header.Set("Authorization", authHeader)
@@ -142,7 +142,7 @@ func TestIntegrationSettlementRollbackMarkerBlocksPayout(t *testing.T) {
 	ctx := context.Background()
 
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
-	_, authHeader, sttl := createSettledMerchantFlowForCompensation(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
+	_, authHeader, sttl := createSettledMerchantFlowForCompensation(t, ctx, db, mux, merchantSvc, orderSvc, paymentSvc)
 
 	markReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/rollback-marker", bytes.NewReader([]byte(`{"reason":"reconciliation_gap_detected"}`)))
 	markReq.Header.Set("Authorization", authHeader)
@@ -156,7 +156,9 @@ func TestIntegrationSettlementRollbackMarkerBlocksPayout(t *testing.T) {
 		t.Fatalf("expected rollback reason in response, got %s", markRec.Body.String())
 	}
 
-	payoutReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	beneficiaryID := createApprovedBeneficiary(t, mux, authHeader)
+	payoutReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	payoutReq.Header.Set("Content-Type", "application/json")
 	payoutReq.Header.Set("Authorization", authHeader)
 	payoutRec := httptest.NewRecorder()
 	mux.ServeHTTP(payoutRec, payoutReq)
@@ -209,14 +211,16 @@ func createOrderForMerchant(t *testing.T, ctx context.Context, orderSvc *order.S
 	return createdOrder
 }
 
-func authorizeAndCaptureOptional(t *testing.T, ctx context.Context, paymentSvc *payment.Service, merchantID string, createdOrder order.Order, capture bool) payment.CaptureResult {
+func authorizeAndCaptureOptional(t *testing.T, ctx context.Context, mux *http.ServeMux, authHeader string, paymentSvc *payment.Service, merchantID string, createdOrder order.Order, capture bool) payment.CaptureResult {
 	t.Helper()
+	cardTokenID := createCardTokenViaMux(t, mux, authHeader, false)
 	out, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: merchantID,
-		OrderID:    createdOrder.ID,
-		Amount:     createdOrder.Amount,
-		Currency:   createdOrder.Currency,
-		Method:     "card",
+		MerchantID:           merchantID,
+		OrderID:              createdOrder.ID,
+		Amount:               createdOrder.Amount,
+		Currency:             createdOrder.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: cardTokenID,
 	})
 	if err != nil {
 		t.Fatalf("authorize payment: %v", err)
@@ -241,12 +245,12 @@ WHERE merchant_id = $1 AND account_code = $2 AND currency = $3
 	return balance, err
 }
 
-func createSettledMerchantFlowForCompensation(t *testing.T, ctx context.Context, db *pgxpool.Pool, merchantSvc *merchant.Service, orderSvc *order.Service, paymentSvc *payment.Service) (string, string, settlementSnapshot) {
+func createSettledMerchantFlowForCompensation(t *testing.T, ctx context.Context, db *pgxpool.Pool, mux *http.ServeMux, merchantSvc *merchant.Service, orderSvc *order.Service, paymentSvc *payment.Service) (string, string, settlementSnapshot) {
 	t.Helper()
 
 	createdMerchant, authHeader := createMerchantAndWriteKey(t, ctx, merchantSvc, "settlement-rollback@test.com")
 	createdOrder := createOrderForMerchant(t, ctx, orderSvc, createdMerchant.ID, 9500, "settlement-rollback-order")
-	authorizeAndCaptureOptional(t, ctx, paymentSvc, createdMerchant.ID, createdOrder, true)
+	authorizeAndCaptureOptional(t, ctx, mux, authHeader, paymentSvc, createdMerchant.ID, createdOrder, true)
 
 	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledger.NewService(ledger.NewRepository(db))))
 	sttl, err := settlementSvc.RunBatch(ctx, createdMerchant.ID, time.Unix(0, 0), time.Now().Add(time.Hour))

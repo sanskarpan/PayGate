@@ -14,6 +14,9 @@ type fakeRepo struct {
 func (f *fakeRepo) StartAuthorization(context.Context, CreateAuthorizedInput) (CaptureResult, error) {
 	return CaptureResult{}, nil
 }
+func (f *fakeRepo) AttachCardPaymentDetails(context.Context, string, string, CardPaymentDetailsInput) error {
+	return nil
+}
 func (f *fakeRepo) CreateFailedAttempt(context.Context, CreateAuthorizedInput, string, string) error {
 	return nil
 }
@@ -22,6 +25,33 @@ func (f *fakeRepo) MarkAuthorizationAuthorized(context.Context, string, string, 
 }
 func (f *fakeRepo) MarkAuthorizationFailed(context.Context, string, string, string, string) error {
 	return nil
+}
+func (f *fakeRepo) CreateUPIIntent(context.Context, CreateUPIIntentRecordInput) (UPIIntentResult, error) {
+	return UPIIntentResult{}, nil
+}
+func (f *fakeRepo) AttachUPIIntentGatewayData(context.Context, string, string, GatewayUPIIntentResult) (UPIIntentResult, error) {
+	return UPIIntentResult{}, nil
+}
+func (f *fakeRepo) GetUPIIntent(context.Context, string, string) (UPIIntentResult, error) {
+	return UPIIntentResult{}, nil
+}
+func (f *fakeRepo) PollUPIIntent(context.Context, string, string, time.Time) error {
+	return nil
+}
+func (f *fakeRepo) MarkUPIIntentProcessing(context.Context, string, string) (UPIIntentResult, bool, error) {
+	return UPIIntentResult{}, false, nil
+}
+func (f *fakeRepo) CompleteUPIIntent(context.Context, string, string, string, time.Time) (UPIIntentResult, bool, error) {
+	return UPIIntentResult{}, false, nil
+}
+func (f *fakeRepo) FailUPIIntent(context.Context, string, string, UPIProviderStatus, string, string, time.Time) (UPIIntentResult, bool, error) {
+	return UPIIntentResult{}, false, nil
+}
+func (f *fakeRepo) AbandonUPIIntent(context.Context, string, string, string, time.Time) (UPIIntentResult, error) {
+	return UPIIntentResult{}, nil
+}
+func (f *fakeRepo) ExpireUPIIntent(context.Context, string, string, time.Time) (UPIIntentResult, error) {
+	return UPIIntentResult{}, nil
 }
 func (f *fakeRepo) ReverseAuthorization(context.Context, string, string, string) (CaptureResult, error) {
 	return CaptureResult{}, nil

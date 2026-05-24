@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -13,10 +14,13 @@ import (
 )
 
 const (
-	deliveryTimeout    = 10 * time.Second
-	signatureHeader    = "X-PayGate-Signature"
-	timestampHeader    = "X-PayGate-Timestamp"
-	eventTypeHeader    = "X-PayGate-Event"
+	deliveryTimeout      = 10 * time.Second
+	signatureHeader      = "X-PayGate-Signature"
+	timestampHeader      = "X-PayGate-Timestamp"
+	eventTypeHeader      = "X-PayGate-Event"
+	contentDigestHeader  = "Content-Digest"
+	signatureInputHeader = "Signature-Input"
+	httpSignatureHeader  = "Signature"
 )
 
 // DeliveryResult holds the outcome of a single HTTP delivery attempt.
@@ -45,16 +49,23 @@ func NewDeliverer() *Deliverer {
 // not an error.
 func (d *Deliverer) Deliver(ctx context.Context, url, secret, eventType string, payload []byte) DeliveryResult {
 	sig := sign(secret, payload)
-	ts := fmt.Sprintf("%d", time.Now().Unix())
+	createdAt := time.Now().Unix()
+	ts := fmt.Sprintf("%d", createdAt)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return DeliveryResult{Error: err.Error()}
 	}
+	digest := contentDigest(payload)
+	signatureInput := structuredSignatureInput(createdAt)
+	httpSig := structuredSignature(secret, req.Method, canonicalPath(req), digest, ts, eventType, signatureInput)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(signatureHeader, "sha256="+sig)
 	req.Header.Set(timestampHeader, ts)
 	req.Header.Set(eventTypeHeader, eventType)
+	req.Header.Set(contentDigestHeader, digest)
+	req.Header.Set(signatureInputHeader, signatureInput)
+	req.Header.Set(httpSignatureHeader, httpSig)
 
 	resp, err := d.client.Do(req)
 	if err != nil {
@@ -83,4 +94,52 @@ func sign(secret string, payload []byte) string {
 func Verify(secret string, payload []byte, signature string) bool {
 	expected := "sha256=" + sign(secret, payload)
 	return hmac.Equal([]byte(signature), []byte(expected))
+}
+
+func VerifyHTTPMessageSignature(secret string, req *http.Request, payload []byte) bool {
+	signatureInput := req.Header.Get(signatureInputHeader)
+	signature := req.Header.Get(httpSignatureHeader)
+	if signatureInput == "" || signature == "" {
+		return false
+	}
+	digest := req.Header.Get(contentDigestHeader)
+	ts := req.Header.Get(timestampHeader)
+	eventType := req.Header.Get(eventTypeHeader)
+	if digest == "" || digest != contentDigest(payload) {
+		return false
+	}
+	expected := structuredSignature(secret, req.Method, canonicalPath(req), digest, ts, eventType, signatureInput)
+	return hmac.Equal([]byte(signature), []byte(expected))
+}
+
+func contentDigest(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return "sha-256=:" + base64.StdEncoding.EncodeToString(sum[:]) + ":"
+}
+
+func structuredSignatureInput(createdAt int64) string {
+	return fmt.Sprintf(`paygate=("@method" "@path" "content-digest" "x-paygate-timestamp" "x-paygate-event");created=%d;alg="hmac-sha256";keyid="webhook"`, createdAt)
+}
+
+func structuredSignature(secret, method, path, digest, ts, eventType, signatureInput string) string {
+	base := fmt.Sprintf(
+		"@method: %s\n@path: %s\ncontent-digest: %s\nx-paygate-timestamp: %s\nx-paygate-event: %s\n@signature-params: %s",
+		method,
+		path,
+		digest,
+		ts,
+		eventType,
+		signatureInput,
+	)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(base))
+	return "paygate=:" + base64.StdEncoding.EncodeToString(mac.Sum(nil)) + ":"
+}
+
+func canonicalPath(req *http.Request) string {
+	path := req.URL.EscapedPath()
+	if path == "" {
+		return "/"
+	}
+	return path
 }

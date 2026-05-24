@@ -3,16 +3,27 @@ package settlement
 import (
 	"context"
 	"time"
+
+	"github.com/sanskarpan/PayGate/internal/merchant"
 )
 
 // Service orchestrates the settlement use-cases.
 type Service struct {
-	repo Repository
+	repo                  Repository
+	reservePolicyResolver interface {
+		GetReservePolicy(ctx context.Context, merchantID string) (merchant.ReservePolicy, error)
+	}
 }
 
 // NewService creates a new Service.
 func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
+}
+
+func (s *Service) SetReservePolicyResolver(resolver interface {
+	GetReservePolicy(ctx context.Context, merchantID string) (merchant.ReservePolicy, error)
+}) {
+	s.reservePolicyResolver = resolver
 }
 
 // RunBatch runs the settlement batch for merchantID covering [periodStart, periodEnd).
@@ -63,4 +74,24 @@ func (s *Service) GetItems(ctx context.Context, merchantID, settlementID string)
 		return Settlement{}, nil, err
 	}
 	return sttl, items, nil
+}
+
+func (s *Service) GetPreferences(ctx context.Context, merchantID string) (Preferences, error) {
+	return s.repo.GetPreferences(ctx, merchantID)
+}
+
+func (s *Service) UpsertPreferences(ctx context.Context, prefs Preferences) (Preferences, error) {
+	return s.repo.UpsertPreferences(ctx, prefs)
+}
+
+func (s *Service) GenerateStatement(ctx context.Context, merchantID, settlementID string) (Statement, error) {
+	return s.repo.GenerateStatement(ctx, merchantID, settlementID)
+}
+
+func (s *Service) GetStatement(ctx context.Context, merchantID, settlementID string) (Statement, error) {
+	return s.repo.GetStatement(ctx, merchantID, settlementID)
+}
+
+func (s *Service) ListAdjustments(ctx context.Context, merchantID, settlementID string) ([]Adjustment, error) {
+	return s.repo.ListAdjustments(ctx, merchantID, settlementID)
 }

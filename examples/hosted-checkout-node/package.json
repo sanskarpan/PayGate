@@ -1,0 +1,8 @@
+{
+  "name": "paygate-hosted-checkout-node-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  }
+}
