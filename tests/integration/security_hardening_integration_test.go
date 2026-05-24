@@ -298,7 +298,9 @@ func TestIntegrationPayoutRejectedWhileSettlementOnHold(t *testing.T) {
 		t.Fatalf("hold settlement: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	beneficiaryID := createApprovedBeneficiary(t, mux, basicAuth(key.KeyID, key.KeySecret))
+	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", basicAuth(key.KeyID, key.KeySecret))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
