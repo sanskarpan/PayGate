@@ -4,19 +4,34 @@ import { notFound, redirect } from "next/navigation";
 import type {
   APIKeyItem,
   AuditLogItem,
+  BeneficiaryItem,
+  CapabilityItem,
   DeliveryAttemptItem,
   DashboardViewer,
   DisputeItem,
+  EventSchemaItem,
+  ExportJobItem,
   GatewayScenario,
   InvitationItem,
+  LedgerHoldItem,
+  OnboardingApplicationItem,
+  OnboardingDocumentItem,
+  OnboardingPartyItem,
   OrderItem,
   PaymentItem,
   PayoutItem,
   ReconMismatch,
+  ReportCatalogItem,
+  ReserveEscalationItem,
+  ReservePolicyItem,
   RefundItem,
   RiskEventItem,
+  SagaItem,
+  ScreeningCaseItem,
   SettlementItem,
   SettlementLineItem,
+  TaxProfileItem,
+  UPIIntentItem,
   WebhookItem,
 } from "./types";
 
@@ -121,6 +136,18 @@ export async function getPayment(id: string) {
   return (await response.json()) as PaymentItem;
 }
 
+export async function getUPIIntent(paymentID: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/payments/${paymentID}/upi-intent`);
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`upi intent fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as UPIIntentItem;
+}
+
 export async function getAPIKeys() {
   await requireViewer();
   const response = await apiFetch("/v1/merchants/me/api-keys");
@@ -207,6 +234,96 @@ export async function getRiskEvents() {
     throw new Error(`risk events fetch failed: ${response.status}`);
   }
   return (await response.json()) as CollectionResponse<RiskEventItem>;
+}
+
+export async function getOnboarding() {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/onboarding");
+  if (!response.ok) {
+    throw new Error(`onboarding fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as OnboardingApplicationItem;
+}
+
+export async function getOnboardingParties() {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/onboarding/parties");
+  if (!response.ok) {
+    throw new Error(`onboarding parties fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<OnboardingPartyItem>;
+}
+
+export async function getOnboardingDocuments() {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/onboarding/documents");
+  if (!response.ok) {
+    throw new Error(`onboarding documents fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<OnboardingDocumentItem>;
+}
+
+export async function getScreeningCases() {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/onboarding/screenings");
+  if (!response.ok) {
+    throw new Error(`screening cases fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<ScreeningCaseItem>;
+}
+
+export async function getCapabilities() {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/capabilities");
+  if (!response.ok) {
+    throw new Error(`capabilities fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<CapabilityItem>;
+}
+
+export async function getReservePolicy() {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/reserve-policy");
+  if (!response.ok) {
+    throw new Error(`reserve policy fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as ReservePolicyItem;
+}
+
+export async function getReserveEscalations() {
+  await requireViewer();
+  const response = await apiFetch("/v1/merchants/me/reserve-escalations");
+  if (!response.ok) {
+    throw new Error(`reserve escalations fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<ReserveEscalationItem>;
+}
+
+export async function getReportCatalog() {
+  await requireViewer();
+  const response = await apiFetch("/v1/reports/catalog");
+  if (!response.ok) {
+    throw new Error(`report catalog fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<ReportCatalogItem>;
+}
+
+export async function getReportExports() {
+  await requireViewer();
+  const response = await apiFetch("/v1/reports/exports");
+  if (!response.ok) {
+    throw new Error(`report exports fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<ExportJobItem>;
+}
+
+export async function getTaxProfile() {
+  await requireViewer();
+  const response = await apiFetch("/v1/reports/tax-profile");
+  if (!response.ok) {
+    throw new Error(`tax profile fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as TaxProfileItem;
 }
 
 export async function resolveRiskEvent(id: string, resolvedBy: string) {
@@ -301,6 +418,42 @@ export async function getPayouts() {
     return { items: [] as PayoutItem[], count: 0 };
   }
   return (await response.json()) as CollectionResponse<PayoutItem>;
+}
+
+export async function getBeneficiaries() {
+  await requireViewer();
+  const response = await apiFetch("/v1/beneficiaries");
+  if (!response.ok) {
+    return { items: [] as BeneficiaryItem[], count: 0 };
+  }
+  return (await response.json()) as CollectionResponse<BeneficiaryItem>;
+}
+
+export async function getSagas() {
+  await requireViewer();
+  const response = await apiFetch("/v1/sagas?count=20");
+  if (!response.ok) {
+    return { items: [] as SagaItem[], count: 0 };
+  }
+  return (await response.json()) as CollectionResponse<SagaItem>;
+}
+
+export async function getEventSchemas() {
+  await requireViewer();
+  const response = await apiFetch("/v1/event-schemas");
+  if (!response.ok) {
+    return { items: [] as EventSchemaItem[], count: 0 };
+  }
+  return (await response.json()) as CollectionResponse<EventSchemaItem>;
+}
+
+export async function getLedgerHolds() {
+  await requireViewer();
+  const response = await apiFetch("/v1/ledger/holds?count=20");
+  if (!response.ok) {
+    return { items: [] as LedgerHoldItem[], count: 0 };
+  }
+  return (await response.json()) as CollectionResponse<LedgerHoldItem>;
 }
 
 export async function getGatewayScenarios() {

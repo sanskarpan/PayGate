@@ -1,12 +1,15 @@
 import Link from "next/link";
 
-import { getPayment } from "../../../lib/api";
+import { getPayment, getUPIIntent } from "../../../lib/api";
 import { formatMoney, formatTime, truncateMiddle } from "../../../lib/types";
 
 export default async function PaymentDetailPage({ params }: { params: { id: string } }) {
   const payment = await getPayment(params.id);
+  const upiIntent = payment.method === "upi" ? await getUPIIntent(params.id) : null;
   const timeline = [
     { label: "Created", at: payment.created_at, active: true },
+    { label: "Customer Action", at: upiIntent ? payment.created_at : 0, active: payment.status === "pending_customer_action" || payment.method === "upi" },
+    { label: "Processing", at: upiIntent?.last_polled_at || upiIntent?.completed_at || 0, active: payment.status === "processing" },
     { label: "Authorized", at: payment.authorized_at, active: Boolean(payment.authorized_at) },
     { label: "Captured", at: payment.captured_at, active: Boolean(payment.captured_at) },
   ];
@@ -42,6 +45,12 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
           <span className="eyebrow">Method</span>
           <strong>{payment.method}</strong>
         </div>
+        {upiIntent ? (
+          <div className="key-fact">
+            <span className="eyebrow">UPI Status</span>
+            <strong>{upiIntent.provider_status}</strong>
+          </div>
+        ) : null}
       </div>
       <div className="detail-grid">
         <div className="detail-card">
@@ -77,6 +86,42 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
               <dt>Captured At</dt>
               <dd>{payment.captured_at ? formatTime(payment.captured_at) : "Not available"}</dd>
             </div>
+            {upiIntent ? (
+              <>
+                <div>
+                  <dt>VPA</dt>
+                  <dd>{upiIntent.vpa || "Not available"}</dd>
+                </div>
+                <div>
+                  <dt>Provider Status</dt>
+                  <dd>{upiIntent.provider_status}</dd>
+                </div>
+                <div>
+                  <dt>Expires At</dt>
+                  <dd>{formatTime(upiIntent.expires_at)}</dd>
+                </div>
+                <div>
+                  <dt>Gateway Reference</dt>
+                  <dd>{upiIntent.gateway_reference || "Pending"}</dd>
+                </div>
+                <div>
+                  <dt>Intent Link</dt>
+                  <dd>
+                    {upiIntent.next_action?.deep_link ? (
+                      <a href={upiIntent.next_action.deep_link} target="_blank" rel="noreferrer">
+                        Open UPI App
+                      </a>
+                    ) : (
+                      "Not available"
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Failure</dt>
+                  <dd>{upiIntent.failure_code || upiIntent.failure_description || "Not available"}</dd>
+                </div>
+              </>
+            ) : null}
           </dl>
         </div>
       </div>

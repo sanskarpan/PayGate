@@ -8,10 +8,13 @@ import type { DashboardViewer } from "../lib/types";
 const links = [
   ["/overview", "Overview"],
   ["/orders", "Orders"],
+  ["/compliance", "Compliance"],
   ["/webhooks", "Webhooks"],
   ["/settlements", "Settlements"],
   ["/payouts", "Payouts"],
+  ["/reports", "Reports"],
   ["/recon", "Reconciliation"],
+  ["/control-plane", "Control Plane"],
   ["/api-keys", "API Keys"],
   ["/risk", "Risk"],
   ["/disputes", "Disputes"],

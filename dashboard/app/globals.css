@@ -189,6 +189,40 @@ pre {
   background: linear-gradient(135deg, rgba(13, 111, 93, 0.14), rgba(159, 113, 51, 0.12));
 }
 
+.hero-actions,
+.row-actions,
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.row-actions {
+  justify-content: flex-end;
+}
+
+.inline-form label,
+.stack label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.inline-form input,
+.inline-form select,
+.stack input,
+.stack select,
+.stack textarea {
+  min-width: 0;
+  padding: 11px 13px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+}
+
 .nav-user {
   display: flex;
   flex-wrap: wrap;
