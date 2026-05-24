@@ -83,12 +83,18 @@ type Step struct {
 }
 
 type Command struct {
-	SagaID       string
-	StepID       string
-	MerchantID   string
-	CommandName  string
-	CommandID    string
-	InputPayload map[string]any
+	SagaID          string
+	StepID          string
+	MerchantID      string
+	CommandName     string
+	CommandID       string
+	CorrelationID   string
+	CausationID     string
+	ReplyTopic      string
+	DispatchAttempt int
+	MaxAttempts     int
+	RequestedAt     time.Time
+	InputPayload    map[string]any
 }
 
 type DeadLetterType string
