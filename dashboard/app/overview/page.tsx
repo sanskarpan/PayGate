@@ -77,6 +77,9 @@ export default async function OverviewPage() {
           <Link className="ghost-button" href="/disputes">
             Inspect Disputes
           </Link>
+          <Link className="ghost-button" href="/compliance">
+            Review Compliance
+          </Link>
         </div>
       </div>
 
@@ -229,6 +232,22 @@ export default async function OverviewPage() {
                   <div className="row-title">Failure-path simulation</div>
                   <div className="row-meta">
                     <span>Control gateway behavior for testing adverse scenarios</span>
+                  </div>
+                </div>
+              </Link>
+              <Link className="list-row" href="/reports">
+                <div>
+                  <div className="row-title">Finance downloads</div>
+                  <div className="row-meta">
+                    <span>Generate statements, exports, and tax reporting artifacts</span>
+                  </div>
+                </div>
+              </Link>
+              <Link className="list-row" href="/control-plane">
+                <div>
+                  <div className="row-title">Runtime control plane</div>
+                  <div className="row-meta">
+                    <span>Inspect sagas, schemas, and ledger holds</span>
                   </div>
                 </div>
               </Link>
