@@ -1,7 +1,9 @@
 package webhook
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -47,8 +49,16 @@ func TestDelivererSuccessfulDelivery(t *testing.T) {
 		if sig == "" {
 			t.Error("expected X-PayGate-Signature header")
 		}
-		payload := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(payload)
+		if r.Header.Get(contentDigestHeader) == "" {
+			t.Error("expected Content-Digest header")
+		}
+		if r.Header.Get(signatureInputHeader) == "" || r.Header.Get(httpSignatureHeader) == "" {
+			t.Error("expected structured HTTP signature headers")
+		}
+		payload, _ := io.ReadAll(r.Body)
+		if !VerifyHTTPMessageSignature("my-secret", r, payload) {
+			t.Error("expected structured HTTP signature to verify")
+		}
 		received <- payload
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"received":true}`))
@@ -64,6 +74,26 @@ func TestDelivererSuccessfulDelivery(t *testing.T) {
 	}
 	if result.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", result.StatusCode)
+	}
+}
+
+func TestVerifyHTTPMessageSignatureRejectsTampering(t *testing.T) {
+	payload := []byte(`{"event":"payment.captured"}`)
+	req := httptest.NewRequest(http.MethodPost, "http://localhost/webhook", bytes.NewReader(payload))
+	ts := "1700000000"
+	digest := contentDigest(payload)
+	sigInput := structuredSignatureInput(1700000000)
+	req.Header.Set(contentDigestHeader, digest)
+	req.Header.Set(timestampHeader, ts)
+	req.Header.Set(eventTypeHeader, "payment.captured")
+	req.Header.Set(signatureInputHeader, sigInput)
+	req.Header.Set(httpSignatureHeader, structuredSignature("secret", req.Method, req.URL.EscapedPath(), digest, ts, "payment.captured", sigInput))
+
+	if !VerifyHTTPMessageSignature("secret", req, payload) {
+		t.Fatal("expected valid signature to verify")
+	}
+	if VerifyHTTPMessageSignature("secret", req, []byte(`{"event":"tampered"}`)) {
+		t.Fatal("expected tampered payload to fail verification")
 	}
 }
 
