@@ -5,7 +5,7 @@ import "context"
 // Repository defines storage operations for the payout service.
 type Repository interface {
 	// CreateForSettlement creates a new payout in pending state for the given settlement.
-	CreateForSettlement(ctx context.Context, merchantID, settlementID string, amount int64, currency string) (Payout, error)
+	CreateForSettlement(ctx context.Context, merchantID, settlementID, beneficiaryID string, amount int64, currency string, approvalStatus ApprovalStatus, batchID string) (Payout, error)
 
 	// GetByID returns a payout by ID scoped to the merchant.
 	GetByID(ctx context.Context, merchantID, id string) (Payout, error)
@@ -45,4 +45,16 @@ type Repository interface {
 
 	// GetSimulatorScenarioForPayout returns the simulator scenario tied to the payout settlement and consumes one transient failure if configured.
 	GetSimulatorScenarioForPayout(ctx context.Context, merchantID, payoutID string) (SimulatorScenario, bool, error)
+
+	ListBeneficiaries(ctx context.Context, merchantID string) ([]Beneficiary, error)
+	GetBeneficiary(ctx context.Context, merchantID, beneficiaryID string) (Beneficiary, error)
+	CreateBeneficiary(ctx context.Context, beneficiary Beneficiary, actor, actorScope string) (Beneficiary, error)
+	VerifyBeneficiary(ctx context.Context, merchantID, beneficiaryID string, evidence map[string]any) (Beneficiary, BeneficiaryVerification, error)
+	ApproveBeneficiary(ctx context.Context, merchantID, beneficiaryID, notes, actor, actorScope string) (Beneficiary, error)
+	RecordApproval(ctx context.Context, merchantID, payoutID, actor, actorScope, decision, notes string) (Payout, error)
+	ListApprovals(ctx context.Context, merchantID, payoutID string) ([]ApprovalRecord, error)
+	CreateBatch(ctx context.Context, batch Batch, items []BatchItem) (Batch, []BatchItem, error)
+	ListBatchItems(ctx context.Context, merchantID, batchID string) ([]BatchItem, error)
+	UpdateBatchItem(ctx context.Context, batchItemID, payoutID, status, errorText string) error
+	FinalizeBatch(ctx context.Context, batchID, status string, summary map[string]any) (Batch, error)
 }
