@@ -184,7 +184,9 @@ func TestIntegrationPayoutBlockedByActiveLedgerHoldUntilRelease(t *testing.T) {
 		t.Fatal("expected hold id")
 	}
 
-	payoutReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	beneficiaryID := createApprovedBeneficiary(t, mux, authHeader)
+	payoutReq := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	payoutReq.Header.Set("Content-Type", "application/json")
 	payoutReq.Header.Set("Authorization", authHeader)
 	payoutRec := httptest.NewRecorder()
 	mux.ServeHTTP(payoutRec, payoutReq)
@@ -207,7 +209,8 @@ func TestIntegrationPayoutBlockedByActiveLedgerHoldUntilRelease(t *testing.T) {
 		t.Fatalf("repeat release hold: expected 200, got %d body=%s", releaseRec.Code, releaseRec.Body.String())
 	}
 
-	payoutReq = httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	payoutReq = httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	payoutReq.Header.Set("Content-Type", "application/json")
 	payoutReq.Header.Set("Authorization", authHeader)
 	payoutRec = httptest.NewRecorder()
 	mux.ServeHTTP(payoutRec, payoutReq)

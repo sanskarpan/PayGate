@@ -79,8 +79,27 @@ func TestIntegrationPayoutCompletesAndWritesLedger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run settlement batch: %v", err)
 	}
+	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
+	beneficiary, err := payoutSvc.CreateBeneficiary(ctx, payout.Beneficiary{
+		MerchantID:        createdMerchant.ID,
+		DestinationType:   payout.DestinationTypeBankAccount,
+		AccountHolderName: "Primary Beneficiary",
+		BankAccountLast4:  "1234",
+		BankIFSC:          "HDFC0001234",
+	}, "test", "admin")
+	if err != nil {
+		t.Fatalf("create beneficiary: %v", err)
+	}
+	if _, _, err := payoutSvc.VerifyBeneficiary(ctx, createdMerchant.ID, beneficiary.ID); err != nil {
+		t.Fatalf("verify beneficiary: %v", err)
+	}
+	beneficiary, err = payoutSvc.ApproveBeneficiary(ctx, createdMerchant.ID, beneficiary.ID, "approved", "test", "admin")
+	if err != nil {
+		t.Fatalf("approve beneficiary: %v", err)
+	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiary.ID+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authHeader)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -137,9 +156,10 @@ func TestIntegrationPayoutRailCallbackAuthenticityReplayAndTimeline(t *testing.T
 	mux, merchantSvc, orderSvc, paymentSvc := buildPayoutRailMux(db, func(context.Context, string, string, string) (map[string]any, error) {
 		return map[string]any{"status": "processing"}, nil
 	})
-	merchantID, authHeader, sttl := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
+	merchantID, authHeader, sttl, beneficiaryID := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authHeader)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -219,9 +239,10 @@ func TestIntegrationPayoutReturnReversesLedgerAndIgnoresOutOfOrderCompletion(t *
 	mux, merchantSvc, orderSvc, paymentSvc := buildPayoutRailMux(db, func(context.Context, string, string, string) (map[string]any, error) {
 		return map[string]any{"status": "processing"}, nil
 	})
-	merchantID, authHeader, sttl := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
+	merchantID, authHeader, sttl, beneficiaryID := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authHeader)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -404,7 +425,7 @@ func TestIntegrationPayoutSimulatorScenarioExercisesRetryOutOfOrderDuplicateAndR
 	}
 
 	mux, merchantSvc, orderSvc, paymentSvc := buildPayoutRailMux(db, transferFn)
-	_, authHeader, sttl := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
+	_, authHeader, sttl, beneficiaryID := createSettledMerchantFlow(t, ctx, db, merchantSvc, orderSvc, paymentSvc)
 
 	getScenarioReq := httptest.NewRequest(http.MethodGet, "/v1/settlements/"+sttl.ID+"/payout-simulator", nil)
 	getScenarioReq.Header.Set("Authorization", authHeader)
@@ -441,7 +462,8 @@ func TestIntegrationPayoutSimulatorScenarioExercisesRetryOutOfOrderDuplicateAndR
 		t.Fatalf("expected simulator scenario update 200, got %d body=%s", putScenarioRec.Code, putScenarioRec.Body.String())
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/settlements/"+sttl.ID+"/payout", bytes.NewReader([]byte(`{"beneficiary_id":"`+beneficiaryID+`"}`)))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", authHeader)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -546,7 +568,7 @@ func uniqueTestEmail(t *testing.T, prefix string) string {
 	return fmt.Sprintf("%s-%s-%d@test.com", prefix, slug, time.Now().UnixNano())
 }
 
-func createSettledMerchantFlow(t *testing.T, ctx context.Context, db *pgxpool.Pool, merchantSvc *merchant.Service, orderSvc *order.Service, paymentSvc *payment.Service) (string, string, settlement.Settlement) {
+func createSettledMerchantFlow(t *testing.T, ctx context.Context, db *pgxpool.Pool, merchantSvc *merchant.Service, orderSvc *order.Service, paymentSvc *payment.Service) (string, string, settlement.Settlement, string) {
 	t.Helper()
 	merchantEmail := uniqueTestEmail(t, "payout-rail")
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
@@ -592,7 +614,25 @@ func createSettledMerchantFlow(t *testing.T, ctx context.Context, db *pgxpool.Po
 	if err != nil {
 		t.Fatalf("run settlement batch: %v", err)
 	}
-	return createdMerchant.ID, authHeader, sttl
+	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
+	beneficiary, err := payoutSvc.CreateBeneficiary(ctx, payout.Beneficiary{
+		MerchantID:        createdMerchant.ID,
+		DestinationType:   payout.DestinationTypeBankAccount,
+		AccountHolderName: "Rail Beneficiary",
+		BankAccountLast4:  "1234",
+		BankIFSC:          "HDFC0001234",
+	}, "test", "admin")
+	if err != nil {
+		t.Fatalf("create beneficiary: %v", err)
+	}
+	if _, _, err := payoutSvc.VerifyBeneficiary(ctx, createdMerchant.ID, beneficiary.ID); err != nil {
+		t.Fatalf("verify beneficiary: %v", err)
+	}
+	beneficiary, err = payoutSvc.ApproveBeneficiary(ctx, createdMerchant.ID, beneficiary.ID, "approved", "test", "admin")
+	if err != nil {
+		t.Fatalf("approve beneficiary: %v", err)
+	}
+	return createdMerchant.ID, authHeader, sttl, beneficiary.ID
 }
 
 func doRailCallback(t *testing.T, mux *http.ServeMux, payload map[string]any, signed bool) *httptest.ResponseRecorder {
@@ -626,7 +666,9 @@ func buildPayoutRailMux(db *pgxpool.Pool, transferFn func(context.Context, strin
 	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
 	paymentSvc := payment.NewService(payment.NewPostgresRepository(db, ledgerSvc, orderSvc), gateway.NewSimulator())
 	refundSvc := refund.NewService(refund.NewPostgresRepository(db, ledgerSvc))
-	settlementSvc := settlement.NewService(settlement.NewPostgresRepository(db, ledgerSvc))
+	settlementRepo := settlement.NewPostgresRepository(db, ledgerSvc)
+	settlementRepo.SetReservePolicyResolver(merchantSvc)
+	settlementSvc := settlement.NewService(settlementRepo)
 	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
 	payoutSvc.SetLedgerService(ledgerSvc)
 	payoutSvc.SetRailCallbackSecret("paygate-test-payout-rail-secret")
@@ -634,10 +676,10 @@ func buildPayoutRailMux(db *pgxpool.Pool, transferFn func(context.Context, strin
 
 	merchantHandler := merchant.NewHandler(merchantSvc)
 	orderHandler := order.NewHandler(orderSvc)
-	paymentHandler := payment.NewHandler(paymentSvc)
-	refundHandler := refund.NewHandler(refundSvc)
+	paymentHandler := payment.NewHandler(paymentSvc, payment.WithCapabilityChecker(merchantSvc))
+	refundHandler := refund.NewHandler(refundSvc, merchantSvc)
 	settlementHandler := settlement.NewHandler(settlementSvc)
-	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc)
+	payoutHandler := payout.NewHandler(payoutSvc, settlementSvc, ledgerSvc, merchantSvc)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))

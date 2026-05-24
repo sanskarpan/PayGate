@@ -42,6 +42,14 @@ type CreateAPIKeyInput struct {
 	Scope APIKeyScope `json:"scope"`
 }
 
+type UpsertOnboardingApplicationInput struct {
+	LegalName              string `json:"legal_name"`
+	BusinessClassification string `json:"business_classification"`
+	RegistrationNumber     string `json:"registration_number"`
+	TaxIdentifier          string `json:"tax_identifier"`
+	CountryCode            string `json:"country_code"`
+}
+
 type GeneratedAPIKey struct {
 	KeyID     string      `json:"key_id"`
 	KeySecret string      `json:"key_secret"`
@@ -67,12 +75,13 @@ func NewService(repo Repository, opts ...Option) *Service {
 
 func (s *Service) CreateMerchant(ctx context.Context, in CreateMerchantInput) (Merchant, error) {
 	m := Merchant{
-		ID:           idgen.New("merch"),
-		Name:         strings.TrimSpace(in.Name),
-		Email:        strings.TrimSpace(strings.ToLower(in.Email)),
-		BusinessType: strings.TrimSpace(in.BusinessType),
-		Status:       MerchantStatusActive,
-		Settings:     in.Settings,
+		ID:               idgen.New("merch"),
+		Name:             strings.TrimSpace(in.Name),
+		Email:            strings.TrimSpace(strings.ToLower(in.Email)),
+		BusinessType:     strings.TrimSpace(in.BusinessType),
+		Status:           MerchantStatusActive,
+		OnboardingStatus: OnboardingStateDraft,
+		Settings:         in.Settings,
 	}
 
 	if err := m.ValidateForCreate(); err != nil {
@@ -94,7 +103,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, merchantID string, in Create
 	if err != nil {
 		return GeneratedAPIKey{}, err
 	}
-	if err := m.CanIssueAPIKey(); err != nil {
+	if err := m.CanIssueAPIKey(in.Mode); err != nil {
 		return GeneratedAPIKey{}, err
 	}
 
@@ -201,6 +210,77 @@ func (s *Service) CanBootstrapAPIKey(ctx context.Context, merchantID string) (bo
 
 func (s *Service) ListAPIKeys(ctx context.Context, merchantID string) ([]APIKey, error) {
 	return s.repo.ListAPIKeysByMerchant(ctx, merchantID)
+}
+
+func (s *Service) GetOnboardingApplication(ctx context.Context, merchantID string) (OnboardingApplication, error) {
+	return s.repo.GetOnboardingApplicationByMerchant(ctx, strings.TrimSpace(merchantID))
+}
+
+func (s *Service) UpsertOnboardingApplication(ctx context.Context, merchantID string, in UpsertOnboardingApplicationInput, actor, actorScope string) (OnboardingApplication, error) {
+	current, err := s.repo.GetOnboardingApplicationByMerchant(ctx, strings.TrimSpace(merchantID))
+	if err != nil {
+		return OnboardingApplication{}, err
+	}
+	switch current.State {
+	case OnboardingStateApproved, OnboardingStateInReview:
+		return OnboardingApplication{}, ErrInvalidOnboardingState
+	}
+	current.LegalName = strings.TrimSpace(in.LegalName)
+	current.BusinessClassification = strings.TrimSpace(in.BusinessClassification)
+	current.RegistrationNumber = strings.TrimSpace(in.RegistrationNumber)
+	current.TaxIdentifier = strings.TrimSpace(in.TaxIdentifier)
+	if cc := strings.TrimSpace(strings.ToUpper(in.CountryCode)); cc != "" {
+		current.CountryCode = cc
+	}
+	if current.State == OnboardingStateRejected {
+		current.State = OnboardingStateDraft
+		current.ReviewerNotes = ""
+	}
+	return s.repo.UpsertOnboardingApplication(ctx, current, actor, actorScope)
+}
+
+func (s *Service) SubmitOnboardingApplication(ctx context.Context, merchantID, actor, actorScope string) (OnboardingApplication, error) {
+	current, err := s.repo.GetOnboardingApplicationByMerchant(ctx, strings.TrimSpace(merchantID))
+	if err != nil {
+		return OnboardingApplication{}, err
+	}
+	if current.State == OnboardingStateApproved || current.State == OnboardingStateInReview || current.State == OnboardingStateSubmitted {
+		return OnboardingApplication{}, ErrInvalidOnboardingState
+	}
+	if err := current.ValidateForSubmission(); err != nil {
+		return OnboardingApplication{}, err
+	}
+	return s.repo.TransitionOnboardingApplication(ctx, merchantID, OnboardingStateSubmitted, "", actor, actorScope)
+}
+
+func (s *Service) ReviewOnboardingApplication(ctx context.Context, merchantID string, nextState OnboardingState, reviewerNotes, actor, actorScope string) (OnboardingApplication, error) {
+	switch nextState {
+	case OnboardingStateInReview, OnboardingStateNeedsInformation, OnboardingStateApproved, OnboardingStateRejected:
+	default:
+		return OnboardingApplication{}, ErrInvalidOnboardingState
+	}
+	merchantID = strings.TrimSpace(merchantID)
+	if nextState == OnboardingStateApproved {
+		if err := s.ensureOnboardingReviewReadiness(ctx, merchantID); err != nil {
+			return OnboardingApplication{}, err
+		}
+	}
+	app, err := s.repo.TransitionOnboardingApplication(ctx, merchantID, nextState, strings.TrimSpace(reviewerNotes), actor, actorScope)
+	if err != nil {
+		return OnboardingApplication{}, err
+	}
+	if nextState == OnboardingStateApproved {
+		if _, capErr := s.repo.UpsertCapabilities(ctx, merchantID, []MerchantCapability{
+			{CapabilityCode: CapabilityPayments, Status: CapabilityStatusEnabled, Reason: "approved onboarding"},
+			{CapabilityCode: CapabilityRefunds, Status: CapabilityStatusEnabled, Reason: "approved onboarding"},
+			{CapabilityCode: CapabilityPayouts, Status: CapabilityStatusEnabled, Reason: "approved onboarding"},
+			{CapabilityCode: CapabilityUPI, Status: CapabilityStatusEnabled, Reason: "approved onboarding"},
+			{CapabilityCode: CapabilityCards, Status: CapabilityStatusEnabled, Reason: "approved onboarding"},
+		}, actor); capErr != nil {
+			return OnboardingApplication{}, capErr
+		}
+	}
+	return app, nil
 }
 
 func (s *Service) BootstrapMerchantUser(ctx context.Context, merchantID string, in BootstrapMerchantUserInput) (MerchantUser, error) {

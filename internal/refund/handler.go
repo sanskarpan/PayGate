@@ -1,6 +1,7 @@
 package refund
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,12 +13,17 @@ import (
 
 // Handler exposes the refund HTTP endpoints.
 type Handler struct {
-	svc *Service
+	svc          *Service
+	capabilities interface {
+		CheckCapability(ctx context.Context, merchantID string, capability merchant.CapabilityCode) error
+	}
 }
 
 // NewHandler creates a Handler.
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, caps interface {
+	CheckCapability(ctx context.Context, merchantID string, capability merchant.CapabilityCode) error
+}) *Handler {
+	return &Handler{svc: svc, capabilities: caps}
 }
 
 // RegisterRoutesWithAuth wires the refund endpoints into mux under auth.
@@ -42,6 +48,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
 		return
+	}
+	if h.capabilities != nil {
+		if err := h.capabilities.CheckCapability(r.Context(), p.MerchantID, merchant.CapabilityRefunds); err != nil {
+			handleError(w, err)
+			return
+		}
 	}
 	ref, err := h.svc.Initiate(r.Context(), CreateInput{
 		PaymentID:  r.PathValue("paymentID"),
@@ -83,6 +95,12 @@ func (h *Handler) reverse(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+			return
+		}
+	}
+	if h.capabilities != nil {
+		if err := h.capabilities.CheckCapability(r.Context(), p.MerchantID, merchant.CapabilityRefunds); err != nil {
+			handleError(w, err)
 			return
 		}
 	}
@@ -155,6 +173,8 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	case errors.Is(err, ErrInvalidTransition):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "INVALID_STATE", Description: err.Error()})
+	case errors.Is(err, merchant.ErrCapabilityRestricted):
+		httpx.WriteError(w, http.StatusForbidden, httpx.APIError{Code: "CAPABILITY_RESTRICTED", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error"})
 	}

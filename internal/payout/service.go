@@ -98,11 +98,18 @@ func (s *Service) InitiatePayout(ctx context.Context, merchantID, settlementID s
 
 // InitiatePayoutForSettlement creates a payout for the given settlement using the provided
 // amount and currency, then transitions it to processing and launches execution.
-func (s *Service) InitiatePayoutForSettlement(ctx context.Context, merchantID, settlementID string, amount int64, currency string) (Payout, error) {
+func (s *Service) InitiatePayoutForSettlement(ctx context.Context, merchantID, settlementID, beneficiaryID string, amount int64, currency string, approvalThresholdAmount int64, batchID string) (Payout, error) {
 	if s.ledgerSvc != nil {
 		if err := s.ledgerSvc.CanReserveForPayout(ctx, merchantID, currency, amount); err != nil {
 			return Payout{}, err
 		}
+	}
+	beneficiary, err := s.repo.GetBeneficiary(ctx, merchantID, beneficiaryID)
+	if err != nil {
+		return Payout{}, err
+	}
+	if beneficiary.Status != BeneficiaryStatusApproved {
+		return Payout{}, ErrBeneficiaryNotApproved
 	}
 	existing, err := s.repo.GetBySettlementID(ctx, merchantID, settlementID)
 	if err != nil && !errors.Is(err, ErrPayoutNotFound) {
@@ -111,12 +118,19 @@ func (s *Service) InitiatePayoutForSettlement(ctx context.Context, merchantID, s
 
 	var p Payout
 	if errors.Is(err, ErrPayoutNotFound) {
-		p, err = s.repo.CreateForSettlement(ctx, merchantID, settlementID, amount, currency)
+		approvalStatus := ApprovalStatusNotRequired
+		if approvalThresholdAmount > 0 && amount >= approvalThresholdAmount {
+			approvalStatus = ApprovalStatusPending
+		}
+		p, err = s.repo.CreateForSettlement(ctx, merchantID, settlementID, beneficiaryID, amount, currency, approvalStatus, batchID)
 		if err != nil {
 			return Payout{}, fmt.Errorf("create payout: %w", err)
 		}
 	} else {
 		p = existing
+	}
+	if p.ApprovalStatus == ApprovalStatusPending {
+		return p, nil
 	}
 
 	p, err = s.repo.Initiate(ctx, merchantID, p.ID)
@@ -164,6 +178,97 @@ func (s *Service) Cancel(ctx context.Context, merchantID, payoutID, reason strin
 		}
 	}
 	return current, nil
+}
+
+func (s *Service) CreateBeneficiary(ctx context.Context, beneficiary Beneficiary, actor, actorScope string) (Beneficiary, error) {
+	if err := beneficiary.Validate(); err != nil {
+		return Beneficiary{}, err
+	}
+	return s.repo.CreateBeneficiary(ctx, beneficiary, actor, actorScope)
+}
+
+func (s *Service) ListBeneficiaries(ctx context.Context, merchantID string) ([]Beneficiary, error) {
+	return s.repo.ListBeneficiaries(ctx, merchantID)
+}
+
+func (s *Service) GetBeneficiary(ctx context.Context, merchantID, beneficiaryID string) (Beneficiary, error) {
+	return s.repo.GetBeneficiary(ctx, merchantID, beneficiaryID)
+}
+
+func (s *Service) VerifyBeneficiary(ctx context.Context, merchantID, beneficiaryID string) (Beneficiary, BeneficiaryVerification, error) {
+	evidence := map[string]any{"method": "simulated_penny_drop", "result": "passed"}
+	return s.repo.VerifyBeneficiary(ctx, merchantID, beneficiaryID, evidence)
+}
+
+func (s *Service) ApproveBeneficiary(ctx context.Context, merchantID, beneficiaryID, notes, actor, actorScope string) (Beneficiary, error) {
+	return s.repo.ApproveBeneficiary(ctx, merchantID, beneficiaryID, notes, actor, actorScope)
+}
+
+func (s *Service) ApprovePayout(ctx context.Context, merchantID, payoutID, actor, actorScope, notes string) (Payout, error) {
+	payoutOut, err := s.repo.RecordApproval(ctx, merchantID, payoutID, actor, actorScope, "approved", notes)
+	if err != nil {
+		return Payout{}, err
+	}
+	if payoutOut.ApprovalStatus == ApprovalStatusApproved && payoutOut.Status == StatePending {
+		payoutOut, err = s.repo.Initiate(ctx, merchantID, payoutID)
+		if err != nil {
+			return Payout{}, err
+		}
+		if err := s.launchPayoutExecution(ctx, &payoutOut); err != nil {
+			return Payout{}, err
+		}
+	}
+	return payoutOut, nil
+}
+
+func (s *Service) RejectPayout(ctx context.Context, merchantID, payoutID, actor, actorScope, notes string) (Payout, error) {
+	return s.repo.RecordApproval(ctx, merchantID, payoutID, actor, actorScope, "rejected", notes)
+}
+
+func (s *Service) ListApprovals(ctx context.Context, merchantID, payoutID string) ([]ApprovalRecord, error) {
+	return s.repo.ListApprovals(ctx, merchantID, payoutID)
+}
+
+func (s *Service) CreateBatch(ctx context.Context, merchantID, idempotencyKey string, dryRun bool, items []BatchItem, amountThreshold int64) (Batch, []BatchItem, error) {
+	batch, persistedItems, err := s.repo.CreateBatch(ctx, Batch{
+		ID:             "",
+		MerchantID:     merchantID,
+		DryRun:         dryRun,
+		Status:         "created",
+		IdempotencyKey: idempotencyKey,
+		Summary:        map[string]any{},
+	}, items)
+	if err != nil {
+		return Batch{}, nil, err
+	}
+	if dryRun {
+		return batch, persistedItems, nil
+	}
+	successes := 0
+	failures := 0
+	for i := range persistedItems {
+		payoutOut, payoutErr := s.InitiatePayoutForSettlement(ctx, merchantID, persistedItems[i].SettlementID, persistedItems[i].BeneficiaryID, persistedItems[i].Amount, persistedItems[i].Currency, amountThreshold, batch.ID)
+		if payoutErr != nil {
+			failures++
+			_ = s.repo.UpdateBatchItem(ctx, persistedItems[i].ID, "", "failed", payoutErr.Error())
+			persistedItems[i].Status = "failed"
+			persistedItems[i].ErrorText = payoutErr.Error()
+			continue
+		}
+		successes++
+		_ = s.repo.UpdateBatchItem(ctx, persistedItems[i].ID, payoutOut.ID, "created", "")
+		persistedItems[i].PayoutID = payoutOut.ID
+		persistedItems[i].Status = "created"
+	}
+	status := "completed"
+	if failures > 0 {
+		status = "partial_failed"
+	}
+	batch, err = s.repo.FinalizeBatch(ctx, batch.ID, status, map[string]any{"successes": successes, "failures": failures})
+	if err != nil {
+		return Batch{}, nil, err
+	}
+	return batch, persistedItems, nil
 }
 
 func (s *Service) UpsertSimulatorScenario(ctx context.Context, merchantID, settlementID string, scenario SimulatorScenario) (SimulatorScenario, error) {

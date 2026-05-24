@@ -30,6 +30,24 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) RegisterProtectedRoutes(mux *http.ServeMux, wrap func(scope APIKeyScope, next http.Handler) http.Handler) {
+	mux.Handle("GET /v1/merchants/me/onboarding", wrap(APIKeyScopeRead, http.HandlerFunc(h.getOwnOnboardingApplication)))
+	mux.Handle("PUT /v1/merchants/me/onboarding", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.upsertOwnOnboardingApplication)))
+	mux.Handle("POST /v1/merchants/me/onboarding/submit", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.submitOwnOnboardingApplication)))
+	mux.Handle("POST /v1/merchants/me/onboarding/review", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.reviewOnboardingApplication)))
+	mux.Handle("GET /v1/merchants/me/onboarding/parties", wrap(APIKeyScopeRead, http.HandlerFunc(h.listOnboardingParties)))
+	mux.Handle("PUT /v1/merchants/me/onboarding/parties", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.replaceOnboardingParties)))
+	mux.Handle("GET /v1/merchants/me/onboarding/documents", wrap(APIKeyScopeRead, http.HandlerFunc(h.listOnboardingDocuments)))
+	mux.Handle("POST /v1/merchants/me/onboarding/documents/request", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.requestOnboardingDocument)))
+	mux.Handle("POST /v1/merchants/me/onboarding/documents", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.uploadOnboardingDocument)))
+	mux.Handle("POST /v1/merchants/me/onboarding/documents/{documentID}/review", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.reviewOnboardingDocument)))
+	mux.Handle("GET /v1/merchants/me/onboarding/screenings", wrap(APIKeyScopeRead, http.HandlerFunc(h.listScreeningCases)))
+	mux.Handle("POST /v1/merchants/me/onboarding/screenings/run", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.runScreening)))
+	mux.Handle("GET /v1/merchants/me/capabilities", wrap(APIKeyScopeRead, http.HandlerFunc(h.listCapabilities)))
+	mux.Handle("PUT /v1/merchants/me/capabilities", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.updateCapabilities)))
+	mux.Handle("GET /v1/merchants/me/reserve-policy", wrap(APIKeyScopeRead, http.HandlerFunc(h.getReservePolicy)))
+	mux.Handle("PUT /v1/merchants/me/reserve-policy", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.updateReservePolicy)))
+	mux.Handle("GET /v1/merchants/me/reserve-escalations", wrap(APIKeyScopeRead, http.HandlerFunc(h.listReserveEscalations)))
+	mux.Handle("POST /v1/merchants/me/reserve-escalations/{id}/review", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.reviewReserveEscalation)))
 	mux.Handle("GET /v1/dashboard/me", wrap(APIKeyScopeRead, http.HandlerFunc(h.dashboardMe)))
 	mux.Handle("GET /v1/merchants/me/api-keys", wrap(APIKeyScopeRead, http.HandlerFunc(h.listOwnAPIKeys)))
 	mux.Handle("POST /v1/merchants/me/api-keys", wrap(APIKeyScopeAdmin, http.HandlerFunc(h.createOwnAPIKey)))
@@ -63,15 +81,86 @@ func (h *Handler) createMerchant(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":            merchant.ID,
-		"entity":        "merchant",
-		"name":          merchant.Name,
-		"email":         merchant.Email,
-		"business_type": merchant.BusinessType,
-		"status":        merchant.Status,
-		"settings":      merchant.Settings,
-		"created_at":    merchant.CreatedAt.Unix(),
+		"id":                merchant.ID,
+		"entity":            "merchant",
+		"name":              merchant.Name,
+		"email":             merchant.Email,
+		"business_type":     merchant.BusinessType,
+		"status":            merchant.Status,
+		"onboarding_status": merchant.OnboardingStatus,
+		"settings":          merchant.Settings,
+		"created_at":        merchant.CreatedAt.Unix(),
 	})
+}
+
+func (h *Handler) getOwnOnboardingApplication(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	app, err := h.svc.GetOnboardingApplication(r.Context(), p.MerchantID)
+	if err != nil {
+		handleMerchantError(w, err, "merchant_onboarding_get")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentOnboardingApplication(app))
+}
+
+func (h *Handler) upsertOwnOnboardingApplication(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req UpsertOnboardingApplicationInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	app, err := h.svc.UpsertOnboardingApplication(r.Context(), p.MerchantID, req, actorIdentity(p), string(p.Scope))
+	if err != nil {
+		handleMerchantError(w, err, "merchant_onboarding_update")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentOnboardingApplication(app))
+}
+
+func (h *Handler) submitOwnOnboardingApplication(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	app, err := h.svc.SubmitOnboardingApplication(r.Context(), p.MerchantID, actorIdentity(p), string(p.Scope))
+	if err != nil {
+		handleMerchantError(w, err, "merchant_onboarding_submit")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentOnboardingApplication(app))
+}
+
+func (h *Handler) reviewOnboardingApplication(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req struct {
+		MerchantID    string          `json:"merchant_id"`
+		State         OnboardingState `json:"state"`
+		ReviewerNotes string          `json:"reviewer_notes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	app, err := h.svc.ReviewOnboardingApplication(r.Context(), req.MerchantID, req.State, req.ReviewerNotes, actorIdentity(p), string(p.Scope))
+	if err != nil {
+		handleMerchantError(w, err, "merchant_onboarding_review")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentOnboardingApplication(app))
 }
 
 func (h *Handler) createAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +353,46 @@ func (h *Handler) dashboardMe(w http.ResponseWriter, r *http.Request) {
 		"scope":       p.Scope,
 		"auth_type":   p.AuthType,
 	})
+}
+
+func presentOnboardingApplication(app OnboardingApplication) map[string]any {
+	resp := map[string]any{
+		"id":                      app.ID,
+		"entity":                  "merchant_onboarding_application",
+		"merchant_id":             app.MerchantID,
+		"legal_name":              app.LegalName,
+		"business_classification": app.BusinessClassification,
+		"registration_number":     app.RegistrationNumber,
+		"tax_identifier":          app.TaxIdentifier,
+		"country_code":            app.CountryCode,
+		"state":                   app.State,
+		"reviewer_notes":          app.ReviewerNotes,
+		"created_at":              app.CreatedAt.Unix(),
+		"updated_at":              app.UpdatedAt.Unix(),
+	}
+	if app.SubmittedAt != nil {
+		resp["submitted_at"] = app.SubmittedAt.Unix()
+	}
+	if app.ReviewedAt != nil {
+		resp["reviewed_at"] = app.ReviewedAt.Unix()
+	}
+	if app.ApprovedAt != nil {
+		resp["approved_at"] = app.ApprovedAt.Unix()
+	}
+	if app.RejectedAt != nil {
+		resp["rejected_at"] = app.RejectedAt.Unix()
+	}
+	return resp
+}
+
+func actorIdentity(p httpx.Principal) string {
+	if p.UserID != "" {
+		return p.UserID
+	}
+	if p.KeyID != "" {
+		return p.KeyID
+	}
+	return p.MerchantID
 }
 
 func (h *Handler) listOwnAPIKeys(w http.ResponseWriter, r *http.Request) {
@@ -545,7 +674,13 @@ func handleMerchantError(w http.ResponseWriter, err error, step string) {
 		errors.Is(err, ErrInvalidAPIKeyScope),
 		errors.Is(err, ErrInvalidMerchantUser),
 		errors.Is(err, ErrInvalidMerchantPass),
-		errors.Is(err, ErrInvalidMerchantRole):
+		errors.Is(err, ErrInvalidMerchantRole),
+		errors.Is(err, ErrInvalidOnboardingData),
+		errors.Is(err, ErrInvalidOnboardingState),
+		errors.Is(err, ErrInvalidDocumentState),
+		errors.Is(err, ErrInvalidPartyData),
+		errors.Is(err, ErrInvalidCapability),
+		errors.Is(err, ErrInvalidReservePolicy):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{
 			Code:        "BAD_REQUEST_ERROR",
 			Description: err.Error(),
@@ -553,7 +688,7 @@ func handleMerchantError(w http.ResponseWriter, err error, step string) {
 			Step:        step,
 			Reason:      "input_validation_failed",
 		})
-	case errors.Is(err, ErrMerchantNotFound), errors.Is(err, ErrAPIKeyNotFound), errors.Is(err, ErrMerchantUserNotFound):
+	case errors.Is(err, ErrMerchantNotFound), errors.Is(err, ErrAPIKeyNotFound), errors.Is(err, ErrMerchantUserNotFound), errors.Is(err, ErrOnboardingApplicationNotFound), errors.Is(err, ErrReserveEscalationNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{
 			Code:        "NOT_FOUND",
 			Description: err.Error(),
@@ -563,6 +698,11 @@ func handleMerchantError(w http.ResponseWriter, err error, step string) {
 		})
 	case errors.Is(err, ErrMerchantSuspended),
 		errors.Is(err, ErrMerchantDeactivated),
+		errors.Is(err, ErrOnboardingNotApproved),
+		errors.Is(err, ErrOnboardingOwnersIncomplete),
+		errors.Is(err, ErrOnboardingDocumentsIncomplete),
+		errors.Is(err, ErrOnboardingScreeningIncomplete),
+		errors.Is(err, ErrCapabilityRestricted),
 		errors.Is(err, ErrScopeNotAllowed),
 		errors.Is(err, ErrMerchantUserNotActive),
 		errors.Is(err, ErrBootstrapAlreadyExists):
