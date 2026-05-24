@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
+	"github.com/sanskarpan/PayGate/internal/common/protect"
 )
 
 // PostgresRepository implements Repository using pgxpool.
@@ -45,12 +46,16 @@ func (r *PostgresRepository) CreateSubscription(ctx context.Context, in CreateIn
 		Secret:     secret,
 		Status:     StatusActive,
 	}
+	encryptedSecret, err := protect.Default().SealString(sub.Secret)
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
 
 	_, err = r.db.Exec(ctx, `
 INSERT INTO paygate_webhooks.webhook_subscriptions
     (id, merchant_id, url, events, secret, status)
 VALUES ($1, $2, $3, $4, $5, $6)
-`, sub.ID, sub.MerchantID, sub.URL, sub.Events, sub.Secret, sub.Status)
+`, sub.ID, sub.MerchantID, sub.URL, sub.Events, encryptedSecret, sub.Status)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
@@ -72,6 +77,17 @@ WHERE id = $1 AND merchant_id = $2 AND status != 'deleted'
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WebhookSubscription{}, ErrSubscriptionNotFound
+	}
+	sub.Secret, err = protect.Default().OpenString(sub.Secret)
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
+	if sub.PreviousSecret != nil {
+		opened, err := protect.Default().OpenString(*sub.PreviousSecret)
+		if err != nil {
+			return WebhookSubscription{}, err
+		}
+		sub.PreviousSecret = &opened
 	}
 	return sub, err
 }
@@ -96,6 +112,17 @@ ORDER BY created_at DESC
 			&sub.PreviousSecret, &sub.PreviousSecretExpiresAt,
 			&sub.Status, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, err
+		}
+		sub.Secret, err = protect.Default().OpenString(sub.Secret)
+		if err != nil {
+			return nil, err
+		}
+		if sub.PreviousSecret != nil {
+			opened, err := protect.Default().OpenString(*sub.PreviousSecret)
+			if err != nil {
+				return nil, err
+			}
+			sub.PreviousSecret = &opened
 		}
 		subs = append(subs, sub)
 	}
@@ -174,6 +201,17 @@ WHERE merchant_id = $1 AND status = 'active'
 			&sub.PreviousSecret, &sub.PreviousSecretExpiresAt,
 			&sub.Status, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, err
+		}
+		sub.Secret, err = protect.Default().OpenString(sub.Secret)
+		if err != nil {
+			return nil, err
+		}
+		if sub.PreviousSecret != nil {
+			opened, err := protect.Default().OpenString(*sub.PreviousSecret)
+			if err != nil {
+				return nil, err
+			}
+			sub.PreviousSecret = &opened
 		}
 		if sub.MatchesEvent(eventType) {
 			matches = append(matches, sub)
@@ -405,15 +443,23 @@ func (r *PostgresRepository) RotateSecret(ctx context.Context, merchantID, id st
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
+	encryptedNewSecret, err := protect.Default().SealString(newSecret)
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
+	encryptedCurrentSecret, err := protect.Default().SealString(current.Secret)
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
 	expiresAt := time.Now().Add(RotateSecretGracePeriod)
 	_, err = r.db.Exec(ctx, `
 UPDATE paygate_webhooks.webhook_subscriptions
-SET previous_secret            = secret,
+SET previous_secret            = $5,
     previous_secret_expires_at = $1,
     secret                     = $2,
     updated_at                 = NOW()
 WHERE id = $3 AND merchant_id = $4
-`, expiresAt, newSecret, id, merchantID)
+`, expiresAt, encryptedNewSecret, id, merchantID, encryptedCurrentSecret)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
