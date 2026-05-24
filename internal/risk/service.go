@@ -3,13 +3,17 @@ package risk
 import (
 	"context"
 	"log/slog"
+
+	"github.com/sanskarpan/PayGate/internal/payment"
 )
 
 // Service evaluates payment risk and manages risk event records.
 type Service struct {
-	repo    Repository
-	logger  *slog.Logger
-	alertFn AlertFunc
+	repo             Repository
+	logger           *slog.Logger
+	alertFn          AlertFunc
+	payments         *payment.Service
+	reserveEscalator func(ctx context.Context, ev RiskEvent) error
 }
 
 // WithAlertFunc returns a functional option that sets the alert function on the Service.
@@ -30,6 +34,18 @@ func NewService(repo Repository, logger *slog.Logger, opts ...func(*Service)) *S
 	return svc
 }
 
+func WithPaymentService(payments *payment.Service) func(*Service) {
+	return func(s *Service) {
+		s.payments = payments
+	}
+}
+
+func WithReserveEscalator(fn func(ctx context.Context, ev RiskEvent) error) func(*Service) {
+	return func(s *Service) {
+		s.reserveEscalator = fn
+	}
+}
+
 // EvaluatePayment performs a risk evaluation for a payment attempt.
 // It:
 //  1. Increments velocity counters for merchant_id and IP address.
@@ -40,6 +56,12 @@ func NewService(repo Repository, logger *slog.Logger, opts ...func(*Service)) *S
 // Errors in velocity counting are non-fatal — the evaluation continues
 // with whatever data is available.
 func (s *Service) EvaluatePayment(ctx context.Context, in EvalInput) (RiskEvent, error) {
+	cfg, err := s.repo.GetMerchantFraudConfig(ctx, in.MerchantID)
+	if err != nil {
+		s.logger.Warn("fetch merchant fraud config failed", "error", err)
+		cfg = DefaultMerchantFraudConfig(in.MerchantID)
+	}
+
 	merchantHourly, err := s.repo.UpsertVelocityCounter(ctx, "merchant_id", in.MerchantID, VelocityWindow1H, in.Amount)
 	if err != nil {
 		s.logger.Warn("upsert merchant velocity counter failed", "error", err)
@@ -55,6 +77,15 @@ func (s *Service) EvaluatePayment(ctx context.Context, in EvalInput) (RiskEvent,
 		}
 	}
 
+	deviceHourly := 0
+	if in.DeviceFingerprint != "" {
+		deviceHourly, err = s.repo.UpsertVelocityCounter(ctx, "device_fingerprint", in.DeviceFingerprint, VelocityWindow1H, in.Amount)
+		if err != nil {
+			s.logger.Warn("upsert device velocity counter failed", "error", err)
+			deviceHourly = 0
+		}
+	}
+
 	if in.MerchantAvgTxn == 0 {
 		avg, err := s.repo.MerchantAverageTxnAmount(ctx, in.MerchantID)
 		if err != nil {
@@ -63,14 +94,28 @@ func (s *Service) EvaluatePayment(ctx context.Context, in EvalInput) (RiskEvent,
 		in.MerchantAvgTxn = avg
 	}
 
-	result := Evaluate(in, merchantHourly, ipHourly)
+	result := Evaluate(in, cfg, merchantHourly, ipHourly, deviceHourly)
+
+	reviewStatus := ReviewStatusNotRequired
+	if result.Action == RiskActionHold {
+		reviewStatus = ReviewStatusPending
+	}
 
 	ev, err := s.repo.CreateRiskEvent(ctx, RiskEvent{
-		MerchantID:     in.MerchantID,
-		PaymentID:      in.PaymentID,
-		Score:          result.Score,
-		Action:         result.Action,
-		TriggeredRules: result.TriggeredRules,
+		MerchantID:            in.MerchantID,
+		PaymentID:             in.PaymentID,
+		Score:                 result.Score,
+		Action:                result.Action,
+		TriggeredRules:        result.TriggeredRules,
+		DeviceFingerprintHash: in.DeviceFingerprint,
+		BrowserLanguage:       in.BrowserLanguage,
+		UserAgent:             in.UserAgent,
+		CardBIN:               in.CardBIN,
+		CardNetwork:           in.CardNetwork,
+		IssuerCountry:         in.IssuerCountry,
+		CardCountry:           in.CardCountry,
+		FundingType:           in.FundingType,
+		ReviewStatus:          reviewStatus,
 	})
 	if err != nil {
 		return RiskEvent{}, err
@@ -89,9 +134,29 @@ func (s *Service) EvaluatePayment(ctx context.Context, in EvalInput) (RiskEvent,
 			// finish its own I/O independently.
 			go s.alertFn(context.WithoutCancel(ctx), ev)
 		}
+		if s.reserveEscalator != nil && shouldEscalateReserve(ev) {
+			go func() {
+				if err := s.reserveEscalator(context.WithoutCancel(ctx), ev); err != nil {
+					s.logger.Warn("reserve escalation callback failed", "merchant_id", ev.MerchantID, "payment_id", ev.PaymentID, "error", err)
+				}
+			}()
+		}
 	}
 
 	return ev, nil
+}
+
+func shouldEscalateReserve(ev RiskEvent) bool {
+	if ev.Score >= 90 {
+		return true
+	}
+	for _, rule := range ev.TriggeredRules {
+		switch rule {
+		case "blocked_country", "blocked_bin", "merchant_velocity_1h":
+			return true
+		}
+	}
+	return false
 }
 
 // GetRiskEvent returns a single risk event.
@@ -107,4 +172,43 @@ func (s *Service) ListRiskEvents(ctx context.Context, merchantID string, limit i
 // ResolveRiskEvent marks a risk event as manually reviewed and resolved.
 func (s *Service) ResolveRiskEvent(ctx context.Context, merchantID, eventID, resolvedBy string) error {
 	return s.repo.ResolveRiskEvent(ctx, merchantID, eventID, resolvedBy)
+}
+
+func (s *Service) AssignRiskEvent(ctx context.Context, merchantID, eventID, assignedTo string) error {
+	return s.repo.AssignRiskEvent(ctx, merchantID, eventID, assignedTo)
+}
+
+func (s *Service) ReviewRiskEvent(ctx context.Context, merchantID, eventID, decision, notes, actor string) (RiskEvent, error) {
+	ev, err := s.repo.GetRiskEvent(ctx, merchantID, eventID)
+	if err != nil {
+		return RiskEvent{}, err
+	}
+	status := ReviewStatusBlocked
+	if decision == "approve" {
+		status = ReviewStatusApproved
+		if s.payments != nil {
+			paymentRecord, err := s.payments.Get(ctx, merchantID, ev.PaymentID)
+			if err != nil {
+				return RiskEvent{}, err
+			}
+			if paymentRecord.Status == payment.StateAuthorized {
+				if _, err := s.payments.CaptureForMerchant(ctx, merchantID, ev.PaymentID, paymentRecord.Amount); err != nil {
+					return RiskEvent{}, err
+				}
+			}
+		}
+	} else if s.payments != nil {
+		if _, err := s.payments.ReverseAuthorization(ctx, merchantID, ev.PaymentID, "risk review blocked"); err != nil {
+			return RiskEvent{}, err
+		}
+	}
+	return s.repo.ReviewRiskEvent(ctx, merchantID, eventID, status, notes, actor)
+}
+
+func (s *Service) GetMerchantFraudConfig(ctx context.Context, merchantID string) (MerchantFraudConfig, error) {
+	return s.repo.GetMerchantFraudConfig(ctx, merchantID)
+}
+
+func (s *Service) UpsertMerchantFraudConfig(ctx context.Context, cfg MerchantFraudConfig) (MerchantFraudConfig, error) {
+	return s.repo.UpsertMerchantFraudConfig(ctx, cfg)
 }
