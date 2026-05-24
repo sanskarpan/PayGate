@@ -105,7 +105,7 @@ if [[ "${START_API}" == "true" ]]; then
 fi
 
 if [[ -z "${CHAOS_API_KEY_ID:-}" || -z "${CHAOS_API_KEY_SECRET:-}" ]]; then
-  eval "$(API_BASE_URL="${API_BASE_URL}" BOOTSTRAP_KEY_SCOPE=write "${ROOT_DIR}/scripts/test/bootstrap_test_merchant.sh")"
+  eval "$(API_BASE_URL="${API_BASE_URL}" BOOTSTRAP_KEY_SCOPE=admin "${ROOT_DIR}/scripts/test/bootstrap_test_merchant.sh")"
   export CHAOS_API_KEY_ID="${API_KEY}"
   export CHAOS_API_KEY_SECRET="${API_SECRET}"
   export CHAOS_AUTH_HEADER="${AUTH_HEADER}"
