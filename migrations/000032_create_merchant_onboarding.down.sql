@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS paygate_merchants.idx_merchant_onboarding_events_application_created;
+DROP TABLE IF EXISTS paygate_merchants.merchant_onboarding_events;
+DROP INDEX IF EXISTS paygate_merchants.idx_merchant_onboarding_state;
+DROP TABLE IF EXISTS paygate_merchants.merchant_onboarding_applications;
