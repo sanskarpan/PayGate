@@ -25,6 +25,7 @@ const (
 
 // DeliveryStatus is the state of a single delivery attempt.
 type DeliveryStatus string
+type SignatureMode string
 
 const (
 	DeliveryPending      DeliveryStatus = "pending"
@@ -32,6 +33,12 @@ const (
 	DeliveryFailed       DeliveryStatus = "failed"
 	DeliveryDeadLettered DeliveryStatus = "dead_lettered"
 	DeliveryCancelled    DeliveryStatus = "cancelled"
+)
+
+const (
+	SignatureModeHMAC        SignatureMode = "hmac_sha256"
+	SignatureModeCompat      SignatureMode = "compat"
+	SignatureModeHTTPMessage SignatureMode = "http_message_signatures"
 )
 
 // MaxDeliveryAttempts is the number of attempts before an event is dead-lettered.
@@ -48,6 +55,7 @@ var (
 	ErrInvalidTransition       = errors.New("invalid subscription state transition")
 	ErrInvalidURL              = errors.New("webhook URL must use https scheme")
 	ErrNoEvents                = errors.New("at least one event type must be specified")
+	ErrInvalidSignatureMode    = errors.New("invalid webhook signature mode")
 )
 
 // Transition returns the next SubscriptionStatus for the given event,
@@ -87,6 +95,7 @@ type WebhookSubscription struct {
 	// Nil when no rotation has occurred yet.
 	PreviousSecret          *string
 	PreviousSecretExpiresAt *time.Time
+	SignatureMode           SignatureMode
 	Status                  SubscriptionStatus
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
@@ -161,13 +170,26 @@ func (s *WebhookSubscription) MatchesEvent(eventType string) bool {
 
 // CreateInput carries validated fields for creating a new subscription.
 type CreateInput struct {
-	MerchantID string
-	URL        string
-	Events     []string
+	MerchantID    string
+	URL           string
+	Events        []string
+	SignatureMode SignatureMode
 }
 
 // UpdateInput carries mutable fields for updating a subscription.
 type UpdateInput struct {
-	URL    string
-	Events []string
+	URL           string
+	Events        []string
+	SignatureMode SignatureMode
+}
+
+func normalizeSignatureMode(mode SignatureMode) (SignatureMode, error) {
+	switch mode {
+	case "":
+		return SignatureModeCompat, nil
+	case SignatureModeCompat, SignatureModeHMAC, SignatureModeHTTPMessage:
+		return mode, nil
+	default:
+		return "", ErrInvalidSignatureMode
+	}
 }

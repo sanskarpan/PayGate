@@ -54,15 +54,15 @@ WHERE merchant_id = $1 AND id = $2
 func (r *PostgresRepository) CreateBeneficiary(ctx context.Context, beneficiary Beneficiary, actor, actorScope string) (Beneficiary, error) {
 	beneficiary.ID = idgen.New("bene")
 	beneficiary.Fingerprint = fingerprintBeneficiary(beneficiary)
-	accountHolderName, err := protect.Default().SealString(beneficiary.AccountHolderName)
+	accountHolderName, err := protect.Default().SealStringForDomain(protect.DomainPayoutBeneficiaryIdentity, beneficiary.AccountHolderName)
 	if err != nil {
 		return Beneficiary{}, err
 	}
-	bankIFSC, err := protect.Default().SealString(beneficiary.BankIFSC)
+	bankIFSC, err := protect.Default().SealStringForDomain(protect.DomainPayoutBeneficiaryIdentity, beneficiary.BankIFSC)
 	if err != nil {
 		return Beneficiary{}, err
 	}
-	vpa, err := protect.Default().SealString(beneficiary.VPA)
+	vpa, err := protect.Default().SealStringForDomain(protect.DomainPayoutBeneficiaryIdentity, beneficiary.VPA)
 	if err != nil {
 		return Beneficiary{}, err
 	}
@@ -333,15 +333,15 @@ func scanBeneficiary(row scannable) (Beneficiary, error) {
 	if err != nil {
 		return item, err
 	}
-	item.AccountHolderName, err = protect.Default().OpenString(item.AccountHolderName)
+	item.AccountHolderName, err = protect.Default().OpenStringForDomain(protect.DomainPayoutBeneficiaryIdentity, item.AccountHolderName)
 	if err != nil {
 		return Beneficiary{}, err
 	}
-	item.BankIFSC, err = protect.Default().OpenString(item.BankIFSC)
+	item.BankIFSC, err = protect.Default().OpenStringForDomain(protect.DomainPayoutBeneficiaryIdentity, item.BankIFSC)
 	if err != nil {
 		return Beneficiary{}, err
 	}
-	item.VPA, err = protect.Default().OpenString(item.VPA)
+	item.VPA, err = protect.Default().OpenStringForDomain(protect.DomainPayoutBeneficiaryIdentity, item.VPA)
 	if err != nil {
 		return Beneficiary{}, err
 	}

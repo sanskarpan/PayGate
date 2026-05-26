@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
+	"github.com/sanskarpan/PayGate/internal/common/protect"
 )
 
 func (r *PostgresRepository) ListOnboardingParties(ctx context.Context, merchantID string) ([]OnboardingParty, error) {
@@ -33,11 +34,11 @@ ORDER BY party_type, created_at, id
 		); err != nil {
 			return nil, err
 		}
-		item.Email, err = r.protector.OpenString(item.Email)
+		item.Email, err = r.protector.OpenStringForDomain(protect.DomainMerchantOnboardingPartyPII, item.Email)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt onboarding party email: %w", err)
 		}
-		item.Phone, err = r.protector.OpenString(item.Phone)
+		item.Phone, err = r.protector.OpenStringForDomain(protect.DomainMerchantOnboardingPartyPII, item.Phone)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt onboarding party phone: %w", err)
 		}
@@ -73,11 +74,11 @@ WHERE merchant_id = $1 AND superseded_at IS NULL
 		return nil, fmt.Errorf("supersede onboarding parties: %w", err)
 	}
 	for _, party := range parties {
-		email, err := r.protector.SealString(party.Email)
+		email, err := r.protector.SealStringForDomain(protect.DomainMerchantOnboardingPartyPII, party.Email)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt onboarding party email: %w", err)
 		}
-		phone, err := r.protector.SealString(party.Phone)
+		phone, err := r.protector.SealStringForDomain(protect.DomainMerchantOnboardingPartyPII, party.Phone)
 		if err != nil {
 			return nil, fmt.Errorf("encrypt onboarding party phone: %w", err)
 		}
@@ -124,7 +125,7 @@ ORDER BY created_at, id
 		); err != nil {
 			return nil, err
 		}
-		item.StorageKey, err = r.protector.OpenString(item.StorageKey)
+		item.StorageKey, err = r.protector.OpenStringForDomain(protect.DomainMerchantOnboardingDocument, item.StorageKey)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt onboarding storage key: %w", err)
 		}
@@ -167,7 +168,7 @@ func (r *PostgresRepository) UploadOnboardingDocument(ctx context.Context, merch
 		return OnboardingDocument{}, err
 	}
 	now := time.Now().UTC()
-	encryptedStorageKey, err := r.protector.SealString(doc.StorageKey)
+	encryptedStorageKey, err := r.protector.SealStringForDomain(protect.DomainMerchantOnboardingDocument, doc.StorageKey)
 	if err != nil {
 		return OnboardingDocument{}, fmt.Errorf("encrypt storage key: %w", err)
 	}
@@ -207,7 +208,7 @@ RETURNING id, application_id, merchant_id, document_type, file_name, content_typ
 			return OnboardingDocument{}, fmt.Errorf("insert onboarding document upload: %w", err)
 		}
 	}
-	doc.StorageKey, err = r.protector.OpenString(doc.StorageKey)
+	doc.StorageKey, err = r.protector.OpenStringForDomain(protect.DomainMerchantOnboardingDocument, doc.StorageKey)
 	if err != nil {
 		return OnboardingDocument{}, fmt.Errorf("decrypt storage key: %w", err)
 	}
@@ -246,7 +247,7 @@ RETURNING id, application_id, merchant_id, document_type, file_name, content_typ
 		}
 		return OnboardingDocument{}, fmt.Errorf("review onboarding document: %w", err)
 	}
-	doc.StorageKey, err = r.protector.OpenString(doc.StorageKey)
+	doc.StorageKey, err = r.protector.OpenStringForDomain(protect.DomainMerchantOnboardingDocument, doc.StorageKey)
 	if err != nil {
 		return OnboardingDocument{}, fmt.Errorf("decrypt storage key: %w", err)
 	}

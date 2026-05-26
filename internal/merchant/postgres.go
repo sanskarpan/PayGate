@@ -160,11 +160,11 @@ WHERE merchant_id = $1
 		}
 		return OnboardingApplication{}, fmt.Errorf("get onboarding application: %w", err)
 	}
-	app.RegistrationNumber, err = r.protector.OpenString(app.RegistrationNumber)
+	app.RegistrationNumber, err = r.protector.OpenStringForDomain(protect.DomainMerchantOnboardingIdentifier, app.RegistrationNumber)
 	if err != nil {
 		return OnboardingApplication{}, fmt.Errorf("decrypt registration number: %w", err)
 	}
-	app.TaxIdentifier, err = r.protector.OpenString(app.TaxIdentifier)
+	app.TaxIdentifier, err = r.protector.OpenStringForDomain(protect.DomainMerchantOnboardingIdentifier, app.TaxIdentifier)
 	if err != nil {
 		return OnboardingApplication{}, fmt.Errorf("decrypt tax identifier: %w", err)
 	}
@@ -176,11 +176,11 @@ func (r *PostgresRepository) UpsertOnboardingApplication(ctx context.Context, ap
 	if err != nil {
 		return OnboardingApplication{}, err
 	}
-	registrationNumber, err := r.protector.SealString(app.RegistrationNumber)
+	registrationNumber, err := r.protector.SealStringForDomain(protect.DomainMerchantOnboardingIdentifier, app.RegistrationNumber)
 	if err != nil {
 		return OnboardingApplication{}, fmt.Errorf("encrypt registration number: %w", err)
 	}
-	taxIdentifier, err := r.protector.SealString(app.TaxIdentifier)
+	taxIdentifier, err := r.protector.SealStringForDomain(protect.DomainMerchantOnboardingIdentifier, app.TaxIdentifier)
 	if err != nil {
 		return OnboardingApplication{}, fmt.Errorf("encrypt tax identifier: %w", err)
 	}

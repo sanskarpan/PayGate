@@ -3,6 +3,7 @@ package config
 import "testing"
 
 func TestFromEnvUsesDockerBackedLocalDefaults(t *testing.T) {
+	t.Setenv("APP_ENV", "")
 	t.Setenv("PORT", "")
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("REDIS_ADDR", "")
@@ -28,5 +29,27 @@ func TestFromEnvUsesDockerBackedLocalDefaults(t *testing.T) {
 	}
 	if cfg.DashboardOrigin != "http://localhost:3001" {
 		t.Fatalf("unexpected default dashboard origin %q", cfg.DashboardOrigin)
+	}
+	if cfg.AppEnv != "development" {
+		t.Fatalf("unexpected default app env %q", cfg.AppEnv)
+	}
+	if cfg.AppEncryptionProvider != "disabled" {
+		t.Fatalf("unexpected default encryption provider %q", cfg.AppEncryptionProvider)
+	}
+}
+
+func TestValidateRejectsEnvEncryptionProviderInProduction(t *testing.T) {
+	cfg := Config{
+		AppEnv:                 "production",
+		DatabaseURL:            "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable",
+		DashboardSessionSecret: "abcdefghijklmnopqrstuvwxyz012345",
+		PayoutRailSecret:       "abcdefghijklmnopqrstuvwxyz",
+		TrustedProxyCIDRs:      []string{"127.0.0.1/32"},
+		AppEncryptionProvider:  "env",
+		AppEncryptionKeys:      []string{"v1:abcd"},
+		AppEncryptionActiveKey: "v1",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for env encryption provider in production")
 	}
 }
