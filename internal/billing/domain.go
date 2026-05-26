@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/sanskarpan/PayGate/internal/upiverify"
 )
 
 type SubscriptionStatus string
@@ -14,6 +16,9 @@ type VirtualAccountStatus string
 type CollectionStatus string
 type ConnectedAccountStatus string
 type SplitDestinationType string
+type CollectionMethod string
+type UPIMandateStatus string
+type UPIMandateEventType string
 
 const (
 	SubscriptionActive   SubscriptionStatus = "active"
@@ -61,6 +66,31 @@ const (
 	SplitDestinationConnectedAccount SplitDestinationType = "connected_account"
 )
 
+const (
+	CollectionMethodCard       CollectionMethod = "card"
+	CollectionMethodUPIMandate CollectionMethod = "upi_mandate"
+)
+
+const (
+	UPIMandatePendingApproval UPIMandateStatus = "pending_approval"
+	UPIMandateActive          UPIMandateStatus = "active"
+	UPIMandatePaused          UPIMandateStatus = "paused"
+	UPIMandateRevoked         UPIMandateStatus = "revoked"
+	UPIMandateExpired         UPIMandateStatus = "expired"
+	UPIMandateFailed          UPIMandateStatus = "failed"
+)
+
+const (
+	MandateEventCreated   UPIMandateEventType = "created"
+	MandateEventActivated UPIMandateEventType = "activated"
+	MandateEventPaused    UPIMandateEventType = "paused"
+	MandateEventResumed   UPIMandateEventType = "resumed"
+	MandateEventRevoked   UPIMandateEventType = "revoked"
+	MandateEventExpired   UPIMandateEventType = "expired"
+	MandateEventChargeOK  UPIMandateEventType = "charge_succeeded"
+	MandateEventChargeErr UPIMandateEventType = "charge_failed"
+)
+
 var (
 	ErrCustomerNotFound         = errors.New("customer not found")
 	ErrVirtualAccountNotFound   = errors.New("virtual account not found")
@@ -68,15 +98,20 @@ var (
 	ErrConnectedAccountNotFound = errors.New("connected account not found")
 	ErrSubscriptionNotFound     = errors.New("subscription not found")
 	ErrInvoiceNotFound          = errors.New("invoice not found")
+	ErrUPIMandateNotFound       = errors.New("upi mandate not found")
 	ErrInvalidSubscription      = errors.New("invalid subscription")
 	ErrSubscriptionNotActive    = errors.New("subscription is not active")
 	ErrCardTokenNotReusable     = errors.New("subscription payment method token must be reusable")
 	ErrCustomerTokenMismatch    = errors.New("customer and payment method token do not match")
 	ErrSubscriptionAlreadyDone  = errors.New("subscription is already terminal")
+	ErrInvalidUPIMandate        = errors.New("invalid upi mandate")
+	ErrUPIMandateNotActive      = errors.New("upi mandate is not active")
+	ErrMandateCustomerMismatch  = errors.New("customer and upi mandate do not match")
 	ErrInvalidVirtualAccount    = errors.New("invalid virtual account")
 	ErrInvalidCollection        = errors.New("invalid inbound collection")
 	ErrInvalidConnectedAccount  = errors.New("invalid connected account")
 	ErrInvalidSplitInstruction  = errors.New("invalid split instruction")
+	ErrVPAVerificationRequired  = errors.New("upi vpa verification is required")
 )
 
 type Customer struct {
@@ -97,7 +132,9 @@ type Subscription struct {
 	MerchantID           string
 	CustomerID           string
 	PlanName             string
+	CollectionMethod     CollectionMethod
 	PaymentMethodTokenID string
+	UPIMandateID         string
 	Amount               int64
 	Currency             string
 	IntervalUnit         IntervalUnit
@@ -113,6 +150,48 @@ type Subscription struct {
 	Metadata             map[string]any
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+}
+
+type UPIMandate struct {
+	ID                           string
+	MerchantID                   string
+	CustomerID                   string
+	Reference                    string
+	DisplayName                  string
+	VPA                          string
+	AmountLimit                  int64
+	Currency                     string
+	IntervalUnit                 IntervalUnit
+	IntervalCount                int
+	RetryWindowHours             int
+	Status                       UPIMandateStatus
+	ApprovalToken                string
+	ApprovedAt                   *time.Time
+	PausedAt                     *time.Time
+	RevokedAt                    *time.Time
+	ExpiresAt                    *time.Time
+	Metadata                     map[string]any
+	LatestVerificationID         string
+	LatestVerificationVersion    int
+	LatestVerificationStatus     upiverify.Status
+	LatestVerificationProvider   string
+	LatestVerificationVerifiedAt *time.Time
+	LatestVerificationExpiresAt  *time.Time
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
+}
+
+type UPIMandateEvent struct {
+	ID         string
+	MerchantID string
+	MandateID  string
+	EventType  UPIMandateEventType
+	ActorType  string
+	ActorID    string
+	Reason     string
+	PaymentID  string
+	Metadata   map[string]any
+	CreatedAt  time.Time
 }
 
 type Invoice struct {
@@ -221,7 +300,19 @@ func (s Subscription) Validate() error {
 	if strings.TrimSpace(s.MerchantID) == "" || strings.TrimSpace(s.CustomerID) == "" {
 		return ErrInvalidSubscription
 	}
-	if strings.TrimSpace(s.PlanName) == "" || strings.TrimSpace(s.PaymentMethodTokenID) == "" {
+	if strings.TrimSpace(s.PlanName) == "" {
+		return ErrInvalidSubscription
+	}
+	switch s.CollectionMethod {
+	case "", CollectionMethodCard:
+		if strings.TrimSpace(s.PaymentMethodTokenID) == "" {
+			return ErrInvalidSubscription
+		}
+	case CollectionMethodUPIMandate:
+		if strings.TrimSpace(s.UPIMandateID) == "" {
+			return ErrInvalidSubscription
+		}
+	default:
 		return ErrInvalidSubscription
 	}
 	if s.Amount <= 0 || s.IntervalCount <= 0 || s.NextBillingAt.IsZero() {
@@ -232,6 +323,27 @@ func (s Subscription) Validate() error {
 	}
 	if strings.TrimSpace(s.Currency) == "" {
 		return ErrInvalidSubscription
+	}
+	return nil
+}
+
+func (m UPIMandate) Validate() error {
+	if strings.TrimSpace(m.MerchantID) == "" || strings.TrimSpace(m.CustomerID) == "" || strings.TrimSpace(m.Reference) == "" {
+		return ErrInvalidUPIMandate
+	}
+	if strings.TrimSpace(m.DisplayName) == "" || strings.TrimSpace(m.VPA) == "" || strings.TrimSpace(m.Currency) == "" {
+		return ErrInvalidUPIMandate
+	}
+	if m.AmountLimit <= 0 || m.IntervalCount <= 0 {
+		return ErrInvalidUPIMandate
+	}
+	if m.IntervalUnit != IntervalDay && m.IntervalUnit != IntervalWeek && m.IntervalUnit != IntervalMonth {
+		return ErrInvalidUPIMandate
+	}
+	switch m.Status {
+	case "", UPIMandatePendingApproval, UPIMandateActive, UPIMandatePaused, UPIMandateRevoked, UPIMandateExpired, UPIMandateFailed:
+	default:
+		return ErrInvalidUPIMandate
 	}
 	return nil
 }
