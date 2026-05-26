@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/sanskarpan/PayGate/internal/common/metrics"
 )
 
 // Option is a functional option for configuring a Service.
@@ -117,12 +118,13 @@ func (s *Service) DeliverEvent(ctx context.Context, eventID, merchantID, eventTy
 			continue
 		}
 
-		result := s.deliverer.Deliver(ctx, sub.URL, sub.Secret, eventType, body)
+		result := s.deliverer.Deliver(ctx, sub.URL, sub.Secret, eventType, body, sub.SignatureMode)
 
 		status := DeliveryFailed
 		if result.Succeeded {
 			status = DeliverySucceeded
 		}
+		metrics.WebhookSignatureDeliveriesTotal.WithLabelValues(string(sub.SignatureMode), string(status)).Inc()
 
 		attempt := WebhookDeliveryAttempt{
 			EventID:        eventID,
@@ -215,7 +217,7 @@ func (s *Service) RetryPendingDeliveries(ctx context.Context, limit int) (int, e
 			continue
 		}
 
-		result := s.deliverer.Deliver(ctx, sub.URL, sub.Secret, attempt.EventType, attempt.RequestBody)
+		result := s.deliverer.Deliver(ctx, sub.URL, sub.Secret, attempt.EventType, attempt.RequestBody, sub.SignatureMode)
 
 		nextAttempt := attempt.AttemptNumber + 1
 		var (
@@ -234,6 +236,7 @@ func (s *Service) RetryPendingDeliveries(ctx context.Context, limit int) (int, e
 			t := time.Now().Add(delay).Format(time.RFC3339)
 			nextRetryAt = &t
 		}
+		metrics.WebhookSignatureDeliveriesTotal.WithLabelValues(string(sub.SignatureMode), string(status)).Inc()
 
 		if _, err := s.repo.UpdateDeliveryAttempt(
 			ctx, attempt.ID, status,

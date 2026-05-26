@@ -1,4 +1,4 @@
-import { requireViewer, getPrometheusMetricSum } from "../../lib/api";
+import { requireViewer, getPrometheusMetricSeries, getPrometheusMetricSum } from "../../lib/api";
 import { formatCompactNumber } from "../../lib/types";
 
 export default async function ObservabilityPage() {
@@ -13,6 +13,10 @@ export default async function ObservabilityPage() {
     disputesTotal,
     payoutsTotal,
     httpRequests,
+    gatewayAuthTotals,
+    gatewayAuthLatencySum,
+    gatewayAuthLatencyCount,
+    webhookSignatureTotals,
   ] = await Promise.all([
     getPrometheusMetricSum("paygate_payments_total"),
     getPrometheusMetricSum("paygate_orders_total"),
@@ -22,6 +26,10 @@ export default async function ObservabilityPage() {
     getPrometheusMetricSum("paygate_disputes_total"),
     getPrometheusMetricSum("paygate_payouts_total"),
     getPrometheusMetricSum("paygate_http_requests_total"),
+    getPrometheusMetricSeries("paygate_gateway_authorizations_total"),
+    getPrometheusMetricSeries("paygate_gateway_authorization_duration_seconds_sum"),
+    getPrometheusMetricSeries("paygate_gateway_authorization_duration_seconds_count"),
+    getPrometheusMetricSeries("paygate_webhook_signature_deliveries_total"),
   ]);
 
   function fmt(n: number | null): string {
@@ -49,6 +57,57 @@ export default async function ObservabilityPage() {
     { label: "Payouts", value: payoutsTotal ?? 0, note: "transfers" },
   ];
   const maxCounter = Math.max(...counters.map((item) => item.value), 1);
+
+  const gatewayRows = (() => {
+    const totalMap = new Map<string, { method: string; provider: string; authorized: number; declined: number; requiresAction: number; error: number }>();
+    for (const point of gatewayAuthTotals) {
+      const method = point.labels.method || "unknown";
+      const provider = point.labels.provider || "unknown";
+      const outcome = point.labels.outcome || "unknown";
+      const key = `${method}:${provider}`;
+      const current = totalMap.get(key) || { method, provider, authorized: 0, declined: 0, requiresAction: 0, error: 0 };
+      if (outcome === "authorized") current.authorized += point.value;
+      if (outcome === "declined") current.declined += point.value;
+      if (outcome === "requires_action") current.requiresAction += point.value;
+      if (outcome === "error") current.error += point.value;
+      totalMap.set(key, current);
+    }
+    const latencySumMap = new Map<string, number>();
+    const latencyCountMap = new Map<string, number>();
+    for (const point of gatewayAuthLatencySum) {
+      const method = point.labels.method || "unknown";
+      const provider = point.labels.provider || "unknown";
+      latencySumMap.set(`${method}:${provider}`, point.value);
+    }
+    for (const point of gatewayAuthLatencyCount) {
+      const method = point.labels.method || "unknown";
+      const provider = point.labels.provider || "unknown";
+      latencyCountMap.set(`${method}:${provider}`, point.value);
+    }
+    return Array.from(totalMap.values()).map((row) => {
+      const key = `${row.method}:${row.provider}`;
+      const total = row.authorized + row.declined + row.requiresAction + row.error;
+      const successRate = total > 0 ? ((row.authorized + row.requiresAction) / total) * 100 : 0;
+      const avgLatencyMs = latencyCountMap.get(key)
+        ? ((latencySumMap.get(key) || 0) / (latencyCountMap.get(key) || 1)) * 1000
+        : 0;
+      return { ...row, total, successRate, avgLatencyMs };
+    });
+  })();
+
+  const webhookSignatureRows = (() => {
+    const byMode = new Map<string, { mode: string; succeeded: number; failed: number; deadLettered: number }>();
+    for (const point of webhookSignatureTotals) {
+      const mode = point.labels.signature_mode || "unknown";
+      const status = point.labels.status || "unknown";
+      const current = byMode.get(mode) || { mode, succeeded: 0, failed: 0, deadLettered: 0 };
+      if (status === "succeeded") current.succeeded += point.value;
+      if (status === "failed") current.failed += point.value;
+      if (status === "dead_lettered") current.deadLettered += point.value;
+      byMode.set(mode, current);
+    }
+    return Array.from(byMode.values());
+  })();
 
   return (
     <section className="stack fade-up">
@@ -194,6 +253,70 @@ export default async function ObservabilityPage() {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="detail-grid">
+        <div className="list-card">
+          <div className="section-head">
+            <div>
+              <h2>Method and provider SLOs</h2>
+              <div className="section-kicker">Live authorization success and mean latency by payment method and gateway provider</div>
+            </div>
+          </div>
+          {gatewayRows.length === 0 ? (
+            <div className="empty-state">
+              <strong>No gateway SLO samples yet</strong>
+              <span className="muted">Run payment traffic to populate method and provider breakdowns.</span>
+            </div>
+          ) : (
+            gatewayRows.map((row) => (
+              <div className="list-row" key={`${row.method}:${row.provider}`}>
+                <div>
+                  <div className="row-title">{row.method} · {row.provider}</div>
+                  <div className="row-meta">
+                    <span>{row.total.toFixed(0)} auth attempts</span>
+                    <span>{row.authorized.toFixed(0)} authorized</span>
+                    <span>{row.requiresAction.toFixed(0)} challenge/async</span>
+                    <span>{row.declined.toFixed(0)} declined</span>
+                    <span>{row.error.toFixed(0)} errors</span>
+                  </div>
+                </div>
+                <div className="row-actions">
+                  <div className="amount-pill">{row.successRate.toFixed(1)}% success</div>
+                  <div className="amount-pill">{row.avgLatencyMs.toFixed(0)}ms avg</div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="list-card">
+          <div className="section-head">
+            <div>
+              <h2>Webhook signing posture</h2>
+              <div className="section-kicker">Delivery behavior by signature mode</div>
+            </div>
+          </div>
+          {webhookSignatureRows.length === 0 ? (
+            <div className="empty-state">
+              <strong>No webhook deliveries yet</strong>
+              <span className="muted">Deliver events to see signature-mode adoption and failure posture.</span>
+            </div>
+          ) : (
+            webhookSignatureRows.map((row) => (
+              <div className="list-row" key={row.mode}>
+                <div>
+                  <div className="row-title">{row.mode}</div>
+                  <div className="row-meta">
+                    <span>{row.succeeded.toFixed(0)} succeeded</span>
+                    <span>{row.failed.toFixed(0)} failed</span>
+                    <span>{row.deadLettered.toFixed(0)} dead-lettered</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
