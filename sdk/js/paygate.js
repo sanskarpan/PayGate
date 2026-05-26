@@ -64,6 +64,18 @@ export function createClient({ baseUrl, keyId, keySecret, fetchImpl = fetch }) {
         body: JSON.stringify(payload),
       });
     },
+    createCardToken(payload) {
+      return request("/v1/card-tokens", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+    createWebhookSubscription(payload) {
+      return request("/v1/webhooks", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
     capturePayment(paymentId, payload = {}, idempotencyKey) {
       return request(`/v1/payments/${paymentId}/capture`, {
         method: "POST",
