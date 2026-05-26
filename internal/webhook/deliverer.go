@@ -47,7 +47,7 @@ func NewDeliverer() *Deliverer {
 // It returns the delivery result regardless of HTTP status code.
 // Only network/IO errors set result.Error; a 5xx response is a failed delivery,
 // not an error.
-func (d *Deliverer) Deliver(ctx context.Context, url, secret, eventType string, payload []byte) DeliveryResult {
+func (d *Deliverer) Deliver(ctx context.Context, url, secret, eventType string, payload []byte, mode SignatureMode) DeliveryResult {
 	sig := sign(secret, payload)
 	createdAt := time.Now().Unix()
 	ts := fmt.Sprintf("%d", createdAt)
@@ -60,12 +60,26 @@ func (d *Deliverer) Deliver(ctx context.Context, url, secret, eventType string, 
 	signatureInput := structuredSignatureInput(createdAt)
 	httpSig := structuredSignature(secret, req.Method, canonicalPath(req), digest, ts, eventType, signatureInput)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(signatureHeader, "sha256="+sig)
 	req.Header.Set(timestampHeader, ts)
 	req.Header.Set(eventTypeHeader, eventType)
-	req.Header.Set(contentDigestHeader, digest)
-	req.Header.Set(signatureInputHeader, signatureInput)
-	req.Header.Set(httpSignatureHeader, httpSig)
+	switch mode {
+	case "", SignatureModeCompat:
+		req.Header.Set(signatureHeader, "sha256="+sig)
+		req.Header.Set(contentDigestHeader, digest)
+		req.Header.Set(signatureInputHeader, signatureInput)
+		req.Header.Set(httpSignatureHeader, httpSig)
+	case SignatureModeHMAC:
+		req.Header.Set(signatureHeader, "sha256="+sig)
+	case SignatureModeHTTPMessage:
+		req.Header.Set(contentDigestHeader, digest)
+		req.Header.Set(signatureInputHeader, signatureInput)
+		req.Header.Set(httpSignatureHeader, httpSig)
+	default:
+		req.Header.Set(signatureHeader, "sha256="+sig)
+		req.Header.Set(contentDigestHeader, digest)
+		req.Header.Set(signatureInputHeader, signatureInput)
+		req.Header.Set(httpSignatureHeader, httpSig)
+	}
 
 	resp, err := d.client.Do(req)
 	if err != nil {
