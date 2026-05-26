@@ -10,6 +10,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/common/middleware"
 	"github.com/sanskarpan/PayGate/internal/ledger"
 	"github.com/sanskarpan/PayGate/internal/saga"
+	"github.com/sanskarpan/PayGate/internal/upiverify"
 )
 
 // Service orchestrates payout use-cases.
@@ -20,14 +21,25 @@ type Service struct {
 	sagaSvc          *saga.Service
 	transferExecutor func(context.Context, string, string, string) (map[string]any, error)
 	railSecret       string
+	vpaVerify        *upiverify.Service
 }
 
 // NewService creates a new Service.
-func NewService(repo Repository, logger *slog.Logger) *Service {
+func NewService(repo Repository, logger *slog.Logger, opts ...func(*Service)) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{repo: repo, logger: logger}
+	svc := &Service{repo: repo, logger: logger}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
+}
+
+func WithVPAVerifier(verifier *upiverify.Service) func(*Service) {
+	return func(s *Service) {
+		s.vpaVerify = verifier
+	}
 }
 
 func (s *Service) SetRailCallbackSecret(secret string) {
@@ -181,6 +193,13 @@ func (s *Service) Cancel(ctx context.Context, merchantID, payoutID, reason strin
 }
 
 func (s *Service) CreateBeneficiary(ctx context.Context, beneficiary Beneficiary, actor, actorScope string) (Beneficiary, error) {
+	if beneficiary.DestinationType == DestinationTypeVPA {
+		normalizedVPA, err := upiverify.NormalizeVPA(beneficiary.VPA)
+		if err != nil {
+			return Beneficiary{}, ErrBeneficiaryInvalid
+		}
+		beneficiary.VPA = normalizedVPA
+	}
 	if err := beneficiary.Validate(); err != nil {
 		return Beneficiary{}, err
 	}
@@ -196,7 +215,28 @@ func (s *Service) GetBeneficiary(ctx context.Context, merchantID, beneficiaryID 
 }
 
 func (s *Service) VerifyBeneficiary(ctx context.Context, merchantID, beneficiaryID string) (Beneficiary, BeneficiaryVerification, error) {
+	beneficiary, err := s.repo.GetBeneficiary(ctx, merchantID, beneficiaryID)
+	if err != nil {
+		return Beneficiary{}, BeneficiaryVerification{}, err
+	}
 	evidence := map[string]any{"method": "simulated_penny_drop", "result": "passed"}
+	if beneficiary.DestinationType == DestinationTypeVPA && s.vpaVerify != nil {
+		verification, err := s.vpaVerify.EnsureFresh(ctx, merchantID, beneficiary.VPA, upiverify.PurposePayoutDestination, 30*24*time.Hour)
+		if err != nil {
+			if err == upiverify.ErrInvalidVPA {
+				return Beneficiary{}, BeneficiaryVerification{}, ErrBeneficiaryInvalid
+			}
+			return Beneficiary{}, BeneficiaryVerification{}, err
+		}
+		evidence = map[string]any{
+			"method":              "upi_payee_verification",
+			"vpa_verification_id": verification.ID,
+			"version":             verification.Version,
+			"provider":            verification.Provider,
+			"status":              verification.Status,
+			"evidence":            verification.Evidence,
+		}
+	}
 	return s.repo.VerifyBeneficiary(ctx, merchantID, beneficiaryID, evidence)
 }
 

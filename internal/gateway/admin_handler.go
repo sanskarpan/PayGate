@@ -66,7 +66,7 @@ func (h *AdminHandler) upsert(w http.ResponseWriter, r *http.Request) {
 
 	mode := ScenarioMode(body.Mode)
 	switch mode {
-	case ModeSuccess, ModeSlow, ModeFlaky, ModeTimeout, ModeDecline, ModeLateCallback:
+	case ModeSuccess, ModeSlow, ModeFlaky, ModeTimeout, ModeDecline, ModeLateCallback, ModeChallenge:
 		// valid
 	default:
 		mode = ModeSuccess

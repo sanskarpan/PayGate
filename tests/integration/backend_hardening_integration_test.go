@@ -33,6 +33,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/saga"
 	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/tokenization"
+	"github.com/sanskarpan/PayGate/internal/upiverify"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
 
@@ -305,8 +306,11 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	orderSvc := order.NewService(order.NewPostgresRepository(db))
 	ledgerSvc := ledger.NewService(ledger.NewRepository(db))
 	cardTokenSvc := tokenization.NewService(tokenization.NewPostgresRepository(db))
-	paymentSvc := payment.NewService(payment.NewPostgresRepository(db, ledgerSvc, orderSvc), gateway.NewSimulator(), payment.WithCardTokenAuthorizer(cardTokenSvc))
-	billingSvc := billing.NewService(billing.NewPostgresRepository(db), orderSvc, paymentSvc, cardTokenSvc)
+	vpaVerifySvc := upiverify.NewService(upiverify.NewPostgresRepository(db), upiverify.NewSimulatorProvider())
+	scenarioStore := gateway.NewScenarioStore(db)
+	methodStore := gateway.NewMethodConfigStore(db)
+	paymentSvc := payment.NewService(payment.NewPostgresRepository(db, ledgerSvc, orderSvc), gateway.NewSimulatorWithStores(scenarioStore, methodStore), payment.WithCardTokenAuthorizer(cardTokenSvc))
+	billingSvc := billing.NewService(billing.NewPostgresRepository(db), orderSvc, paymentSvc, cardTokenSvc, billing.WithVPAVerifier(vpaVerifySvc))
 	refundSvc := refund.NewService(refund.NewPostgresRepository(db, ledgerSvc))
 	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
 	settlementRepo := settlement.NewPostgresRepository(db, ledgerSvc)
@@ -314,7 +318,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	settlementSvc := settlement.NewService(settlementRepo)
 	sagaSvc := saga.NewService(saga.NewPostgresRepository(db), nil)
 	go saga.NewWorker(sagaSvc, 10*time.Millisecond, nil).Start(context.Background())
-	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil)
+	payoutSvc := payout.NewService(payout.NewPostgresRepository(db, ledgerSvc), nil, payout.WithVPAVerifier(vpaVerifySvc))
 	payoutSvc.SetLedgerService(ledgerSvc)
 	payoutSvc.SetRailCallbackSecret("paygate-test-payout-rail-secret")
 	payoutSvc.EnableSagaOrchestration(sagaSvc)
@@ -341,6 +345,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	cardTokenHandler := tokenization.NewHandler(cardTokenSvc)
 	reportingHandler := reporting.NewHandler(reportingSvc)
 	retentionHandler := retention.NewHandler(retentionSvc)
+	gatewayAdminHandler := gateway.NewAdminHandler(scenarioStore)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
 		return authMw.RequireScope(scope, idemMw.Wrap(next))
@@ -379,6 +384,9 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	schemaHandler.RegisterRoutesWithAuth(mux, protected)
 	reportingHandler.RegisterRoutesWithAuth(mux, protected)
 	retentionHandler.RegisterRoutesWithAuth(mux, protected)
+	gatewayAdminHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
+		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
+	})
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, _ := httpx.PrincipalFromContext(r.Context())
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"merchant_id": p.MerchantID})

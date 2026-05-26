@@ -11,6 +11,13 @@ type Repository interface {
 	ListCustomers(ctx context.Context, merchantID string, limit int) ([]Customer, error)
 	UpdateCustomer(ctx context.Context, customer Customer) (Customer, error)
 
+	CreateUPIMandate(ctx context.Context, mandate UPIMandate, actorType, actorID string) (UPIMandate, error)
+	GetUPIMandate(ctx context.Context, merchantID, mandateID string) (UPIMandate, error)
+	ListUPIMandates(ctx context.Context, merchantID string, limit int) ([]UPIMandate, error)
+	UpdateUPIMandateStatus(ctx context.Context, merchantID, mandateID string, status UPIMandateStatus, actorType, actorID, reason string) (UPIMandate, error)
+	ListUPIMandateEvents(ctx context.Context, merchantID, mandateID string, limit int) ([]UPIMandateEvent, error)
+	RecordUPIMandateChargeResult(ctx context.Context, merchantID, mandateID string, eventType UPIMandateEventType, paymentID, reason string, metadata map[string]any) error
+
 	CreateVirtualAccount(ctx context.Context, account VirtualAccount) (VirtualAccount, error)
 	GetVirtualAccount(ctx context.Context, merchantID, virtualAccountID string) (VirtualAccount, error)
 	ListVirtualAccounts(ctx context.Context, merchantID string, limit int) ([]VirtualAccount, error)

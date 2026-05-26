@@ -49,6 +49,17 @@ func methodStateForFailure(method string) string {
 	}
 }
 
+func methodStateForChallengeFailure(status string) string {
+	switch status {
+	case "abandoned":
+		return MethodStateCard3DSAbandoned
+	case "expired":
+		return MethodStateCard3DSExpired
+	default:
+		return MethodStateCard3DSFailed
+	}
+}
+
 func methodStateForCapture(method string) string {
 	switch method {
 	case "upi":
@@ -205,6 +216,91 @@ SET card_token_id = EXCLUDED.card_token_id,
 	return nil
 }
 
+func (r *PostgresRepository) MarkAuthorizationRequiresAction(ctx context.Context, merchantID, paymentID string, in CardChallengeSessionInput) (CaptureResult, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return CaptureResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var attemptID, orderID, currentStatus string
+	err = tx.QueryRow(ctx, `
+SELECT attempt_id, order_id, status
+FROM paygate_payments.payments
+WHERE id = $1 AND merchant_id = $2
+FOR UPDATE
+`, paymentID, merchantID).Scan(&attemptID, &orderID, &currentStatus)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CaptureResult{}, ErrPaymentNotFound
+		}
+		return CaptureResult{}, err
+	}
+	switch PaymentState(currentStatus) {
+	case StateRequiresAction:
+		return r.GetPayment(ctx, merchantID, paymentID)
+	case StateCreated:
+	default:
+		return CaptureResult{}, ErrInvalidTransition
+	}
+
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET status = 'requires_action',
+    method_state = $3,
+    updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2
+`, paymentID, merchantID, MethodStateCard3DSRequired); err != nil {
+		return CaptureResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO paygate_payments.card_challenge_sessions
+    (payment_id, merchant_id, card_token_id, session_id, callback_token, status, redirect_url, challenge_reference, auto_capture_requested, expires_at)
+VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8,$9)
+ON CONFLICT (payment_id) DO UPDATE
+SET status = 'pending',
+    session_id = EXCLUDED.session_id,
+    callback_token = EXCLUDED.callback_token,
+    redirect_url = EXCLUDED.redirect_url,
+    challenge_reference = EXCLUDED.challenge_reference,
+    auto_capture_requested = EXCLUDED.auto_capture_requested,
+    expires_at = EXCLUDED.expires_at,
+    completed_at = NULL,
+    failure_code = '',
+    failure_description = '',
+    updated_at = NOW()
+`, paymentID, merchantID, in.CardTokenID, in.SessionID, in.CallbackToken, in.RedirectURL, in.ChallengeReference, in.AutoCaptureRequested, in.ExpiresAt); err != nil {
+		return CaptureResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payment_attempts
+SET status = 'requires_action',
+    gateway_reference = NULLIF($2, ''),
+    updated_at = NOW()
+WHERE id = $1
+`, attemptID, in.ChallengeReference); err != nil {
+		return CaptureResult{}, err
+	}
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{
+		AggregateType: "payment",
+		AggregateID:   paymentID,
+		EventType:     "payment.pending_customer_action",
+		MerchantID:    merchantID,
+		Payload: map[string]any{
+			"payment_id": paymentID,
+			"order_id":   orderID,
+			"method":     "card",
+			"flow_type":  "3ds",
+		},
+	}); err != nil {
+		return CaptureResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CaptureResult{}, err
+	}
+	return r.GetPayment(ctx, merchantID, paymentID)
+}
+
 func (r *PostgresRepository) MarkAuthorizationAuthorized(ctx context.Context, merchantID, paymentID, gatewayReference, authCode string, autoCaptureAt *time.Time) (CaptureResult, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
@@ -293,7 +389,7 @@ FOR UPDATE
 	switch PaymentState(status) {
 	case StateFailed:
 		return nil
-	case StateCreated:
+	case StateCreated, StateRequiresAction:
 	default:
 		return ErrInvalidTransition
 	}
@@ -324,6 +420,177 @@ WHERE id = $1
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (r *PostgresRepository) CompleteCardChallenge(ctx context.Context, merchantID, paymentID, callbackToken, gatewayReference, authCode string, completedAt time.Time) (CaptureResult, bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return CaptureResult{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var current CaptureResult
+	var attemptID, status string
+	var challengeStatus, challengeToken string
+	var autoCaptureRequested bool
+	var expiresAt time.Time
+	err = tx.QueryRow(ctx, `
+SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.created_at,
+       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0),
+       p.attempt_id, COALESCE(ccs.status, ''), COALESCE(ccs.callback_token, ''), COALESCE(ccs.auto_capture_requested, false), COALESCE(ccs.expires_at, NOW())
+FROM paygate_payments.payments p
+LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
+LEFT JOIN paygate_payments.card_challenge_sessions ccs ON ccs.payment_id = p.id
+WHERE p.id = $1 AND p.merchant_id = $2
+FOR UPDATE
+`, paymentID, merchantID).Scan(
+		&current.PaymentID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &current.MethodState, &current.MethodStateReason, &status, &current.Captured, &current.CreatedAt,
+		&current.PaymentMethodTokenID, &current.CardBrand, &current.CardLast4, &current.CardExpMonth, &current.CardExpYear,
+		&attemptID, &challengeStatus, &challengeToken, &autoCaptureRequested, &expiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CaptureResult{}, false, ErrPaymentNotFound
+		}
+		return CaptureResult{}, false, err
+	}
+	if challengeToken == "" || callbackToken == "" || challengeToken != callbackToken {
+		return CaptureResult{}, false, ErrCardChallengeRejected
+	}
+	if challengeStatus != "pending" {
+		out, err := r.GetPayment(ctx, merchantID, paymentID)
+		return out, false, err
+	}
+	if PaymentState(status) != StateRequiresAction {
+		out, err := r.GetPayment(ctx, merchantID, paymentID)
+		return out, false, err
+	}
+	if completedAt.After(expiresAt) {
+		if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.card_challenge_sessions
+SET status = 'expired', completed_at = $2, failure_code = 'CARD_3DS_EXPIRED', failure_description = 'challenge session expired', updated_at = NOW()
+WHERE payment_id = $1
+`, paymentID, completedAt); err != nil {
+			return CaptureResult{}, false, err
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET status = 'failed', method_state = $3, method_state_reason = 'challenge session expired', error_code = 'CARD_3DS_EXPIRED', error_description = 'challenge session expired', updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2
+`, paymentID, merchantID, MethodStateCard3DSExpired); err != nil {
+			return CaptureResult{}, false, err
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payment_attempts
+SET status = 'failed', error_code = 'CARD_3DS_EXPIRED', error_description = 'challenge session expired', updated_at = NOW()
+WHERE id = $1
+`, attemptID); err != nil {
+			return CaptureResult{}, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return CaptureResult{}, false, err
+		}
+		out, err := r.GetPayment(ctx, merchantID, paymentID)
+		return out, false, err
+	}
+	var autoCaptureAt *time.Time
+	if autoCaptureRequested {
+		t := completedAt.Add(30 * time.Second)
+		autoCaptureAt = &t
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET status = 'authorized',
+    method_state = $4,
+    gateway_reference = NULLIF($2, ''),
+    auth_code = NULLIF($3, ''),
+    authorized_at = $5,
+    auto_capture_at = $6,
+    updated_at = NOW()
+WHERE id = $1 AND merchant_id = $7
+`, paymentID, gatewayReference, authCode, MethodStateCard3DSAuthenticated, completedAt, autoCaptureAt, merchantID); err != nil {
+		return CaptureResult{}, false, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payment_attempts
+SET status = 'authorized', gateway_reference = NULLIF($2, ''), updated_at = NOW()
+WHERE id = $1
+`, attemptID, gatewayReference); err != nil {
+		return CaptureResult{}, false, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.card_challenge_sessions
+SET status = 'completed', completed_at = $2, failure_code = '', failure_description = '', updated_at = NOW()
+WHERE payment_id = $1
+`, paymentID, completedAt); err != nil {
+		return CaptureResult{}, false, err
+	}
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{AggregateType: "payment", AggregateID: paymentID, EventType: "payment.authorized", MerchantID: merchantID, Payload: map[string]any{"payment_id": paymentID, "order_id": current.OrderID, "flow_type": "3ds"}}); err != nil {
+		return CaptureResult{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CaptureResult{}, false, err
+	}
+	out, err := r.GetPayment(ctx, merchantID, paymentID)
+	return out, true, err
+}
+
+func (r *PostgresRepository) FailCardChallenge(ctx context.Context, merchantID, paymentID, callbackToken, errorCode, errorDescription string, challengeStatus string, failedAt time.Time) (CaptureResult, bool, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return CaptureResult{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var attemptID, orderID, currentStatus, storedToken string
+	err = tx.QueryRow(ctx, `
+SELECT p.attempt_id, p.order_id, p.status, COALESCE(ccs.callback_token, '')
+FROM paygate_payments.payments p
+LEFT JOIN paygate_payments.card_challenge_sessions ccs ON ccs.payment_id = p.id
+WHERE p.id = $1 AND p.merchant_id = $2
+FOR UPDATE
+`, paymentID, merchantID).Scan(&attemptID, &orderID, &currentStatus, &storedToken)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CaptureResult{}, false, ErrPaymentNotFound
+		}
+		return CaptureResult{}, false, err
+	}
+	if storedToken == "" || callbackToken == "" || storedToken != callbackToken {
+		return CaptureResult{}, false, ErrCardChallengeRejected
+	}
+	if PaymentState(currentStatus) != StateRequiresAction {
+		out, err := r.GetPayment(ctx, merchantID, paymentID)
+		return out, false, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.card_challenge_sessions
+SET status = $2, completed_at = $3, failure_code = $4, failure_description = $5, updated_at = NOW()
+WHERE payment_id = $1
+`, paymentID, challengeStatus, failedAt, errorCode, errorDescription); err != nil {
+		return CaptureResult{}, false, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET status = 'failed', method_state = $4, method_state_reason = NULLIF($5, ''), error_code = $2, error_description = $3, updated_at = NOW()
+WHERE id = $1 AND merchant_id = $6
+`, paymentID, errorCode, errorDescription, methodStateForChallengeFailure(challengeStatus), errorDescription, merchantID); err != nil {
+		return CaptureResult{}, false, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE paygate_payments.payment_attempts
+SET status = 'failed', error_code = $2, error_description = $3, updated_at = NOW()
+WHERE id = $1
+`, attemptID, errorCode, errorDescription); err != nil {
+		return CaptureResult{}, false, err
+	}
+	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{AggregateType: "payment_attempt", AggregateID: attemptID, EventType: "payment.failed", MerchantID: merchantID, Payload: map[string]any{"payment_id": paymentID, "order_id": orderID, "error_code": errorCode}}); err != nil {
+		return CaptureResult{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CaptureResult{}, false, err
+	}
+	out, err := r.GetPayment(ctx, merchantID, paymentID)
+	return out, true, err
 }
 
 func (r *PostgresRepository) ReverseAuthorization(ctx context.Context, merchantID, paymentID, reason string) (CaptureResult, error) {
@@ -491,11 +758,13 @@ func (r *PostgresRepository) GetPayment(ctx context.Context, merchantID, payment
 	var status string
 	err := r.db.QueryRow(ctx, `
 SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.captured_at, p.created_at, p.authorized_at,
-       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0)
+       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0),
+       COALESCE(ccs.session_id, ''), COALESCE(ccs.status, ''), COALESCE(ccs.redirect_url, ''), COALESCE(ccs.callback_token, ''), ccs.expires_at
 FROM paygate_payments.payments p
 LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
+LEFT JOIN paygate_payments.card_challenge_sessions ccs ON ccs.payment_id = p.id
 WHERE p.id=$1 AND p.merchant_id=$2
-`, paymentID, merchantID).Scan(&out.PaymentID, &out.MerchantID, &out.OrderID, &out.Amount, &out.Currency, &out.Method, &out.MethodState, &out.MethodStateReason, &status, &out.Captured, &out.CapturedAt, &out.CreatedAt, &out.AuthorizedAt, &out.PaymentMethodTokenID, &out.CardBrand, &out.CardLast4, &out.CardExpMonth, &out.CardExpYear)
+`, paymentID, merchantID).Scan(&out.PaymentID, &out.MerchantID, &out.OrderID, &out.Amount, &out.Currency, &out.Method, &out.MethodState, &out.MethodStateReason, &status, &out.Captured, &out.CapturedAt, &out.CreatedAt, &out.AuthorizedAt, &out.PaymentMethodTokenID, &out.CardBrand, &out.CardLast4, &out.CardExpMonth, &out.CardExpYear, &out.ChallengeSessionID, &out.ChallengeStatus, &out.ChallengeRedirectURL, &out.ChallengeCallbackToken, &out.ChallengeExpiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CaptureResult{}, ErrPaymentNotFound
@@ -514,9 +783,11 @@ func (r *PostgresRepository) ListPayments(ctx context.Context, f ListFilter) (Li
 	args := []any{f.MerchantID}
 	query := `
 SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.captured_at, p.created_at, p.authorized_at,
-       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0)
+       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0),
+       COALESCE(ccs.session_id, ''), COALESCE(ccs.status, ''), COALESCE(ccs.redirect_url, ''), COALESCE(ccs.callback_token, ''), ccs.expires_at
 FROM paygate_payments.payments p
 LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
+LEFT JOIN paygate_payments.card_challenge_sessions ccs ON ccs.payment_id = p.id
 WHERE p.merchant_id = $1`
 	if f.OrderID != "" {
 		query += ` AND p.order_id = $2`
@@ -559,6 +830,11 @@ WHERE p.merchant_id = $1`
 			&item.CardLast4,
 			&item.CardExpMonth,
 			&item.CardExpYear,
+			&item.ChallengeSessionID,
+			&item.ChallengeStatus,
+			&item.ChallengeRedirectURL,
+			&item.ChallengeCallbackToken,
+			&item.ChallengeExpiresAt,
 		); err != nil {
 			return ListResult{}, err
 		}

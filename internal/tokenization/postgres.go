@@ -97,14 +97,13 @@ func (r *PostgresRepository) PrepareCardTokenAuthorization(ctx context.Context, 
 	if out.TokenClass == CardTokenClassSingleUse {
 		if _, err := tx.Exec(ctx, `
 UPDATE paygate_vault.card_tokens
-SET status = 'consumed', last_used_at = $2, consumed_at = $2
+SET status = 'reserved', last_used_at = $2, reserved_at = $2, reserved_payment_id = $3
 WHERE id = $1
-`, tokenID, usedAt); err != nil {
+`, tokenID, usedAt, paymentID); err != nil {
 			return CardToken{}, fmt.Errorf("consume card token: %w", err)
 		}
-		out.Status = CardTokenStatusConsumed
+		out.Status = CardTokenStatusReserved
 		out.LastUsedAt = &usedAt
-		out.ConsumedAt = &usedAt
 	} else {
 		if _, err := tx.Exec(ctx, `
 UPDATE paygate_vault.card_tokens
@@ -122,6 +121,45 @@ WHERE id = $1
 		return CardToken{}, err
 	}
 	return out, nil
+}
+
+func (r *PostgresRepository) CompleteCardTokenAuthorization(ctx context.Context, merchantID, tokenID, paymentID string, success bool, reason string, usedAt time.Time) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	out, err := getCardTokenTx(ctx, tx, merchantID, tokenID, true)
+	if err != nil {
+		return err
+	}
+	if out.TokenClass == CardTokenClassSingleUse {
+		if success {
+			_, err = tx.Exec(ctx, `
+UPDATE paygate_vault.card_tokens
+SET status = 'consumed', consumed_at = $2, reserved_at = NULL, reserved_payment_id = ''
+WHERE id = $1
+`, tokenID, usedAt)
+		} else {
+			_, err = tx.Exec(ctx, `
+UPDATE paygate_vault.card_tokens
+SET status = 'active', reserved_at = NULL, reserved_payment_id = ''
+WHERE id = $1
+`, tokenID)
+		}
+		if err != nil {
+			return fmt.Errorf("finalize card token authorization: %w", err)
+		}
+	}
+	action := "authorize_complete"
+	if !success {
+		action = "authorize_release"
+	}
+	if err := writeAuditTx(ctx, tx, out.ID, out.MerchantID, paymentID, action, reason, "payment_service"); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *PostgresRepository) DisableCardToken(ctx context.Context, merchantID, tokenID, reason, actor string, disabledAt time.Time) (CardToken, error) {

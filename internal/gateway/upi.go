@@ -14,12 +14,26 @@ func (s *Simulator) CreateUPIIntent(_ context.Context, in payment.GatewayUPIInte
 	amount := fmt.Sprintf("%.2f", float64(in.Amount)/100)
 	values := url.Values{}
 	values.Set("pa", payee)
-	values.Set("pn", "PayGate")
+	name := in.DisplayName
+	if name == "" {
+		name = "PayGate"
+	}
+	values.Set("pn", name)
 	values.Set("tr", in.PaymentID)
-	values.Set("tn", "PayGate Order "+in.OrderID)
+	values.Set("tn", name+" Order "+in.OrderID)
 	values.Set("am", amount)
 	values.Set("cu", in.Currency)
 	intentURI := "upi://pay?" + values.Encode()
+	if in.FlowType == "qr" {
+		return payment.GatewayUPIIntentResult{
+			GatewayReference: "upi_qr_ref_" + in.PaymentID,
+			QRPayload:        intentURI,
+			QRImageURL:       "https://sandbox.paygate.local/qr/" + in.PaymentID + ".png",
+			DeepLink:         intentURI,
+			IntentURI:        intentURI,
+			ExpiresAt:        in.ExpiresAt,
+		}, nil
+	}
 	return payment.GatewayUPIIntentResult{
 		GatewayReference: "upi_ref_" + in.PaymentID,
 		DeepLink:         intentURI,

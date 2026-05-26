@@ -49,9 +49,14 @@ func WithCapabilityChecker(c CapabilityChecker) func(*Handler) {
 
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("POST /v1/payments/upi/intents", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createUPIIntent)))
+	mux.Handle("POST /v1/payments/upi/qrs", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createUPIQR)))
 	mux.Handle("GET /v1/payments/{paymentID}/upi-intent", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getUPIIntent)))
+	mux.Handle("GET /v1/payments/{paymentID}/upi-qr", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getUPIQR)))
+	mux.Handle("GET /v1/payments/{paymentID}/card-challenge", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getCardChallenge)))
 	mux.Handle("POST /v1/payments/{paymentID}/upi-intent/poll", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.pollUPIIntent)))
+	mux.Handle("POST /v1/payments/{paymentID}/upi-qr/poll", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.pollUPIQR)))
 	mux.Handle("POST /v1/payments/{paymentID}/upi-intent/abandon", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.abandonUPIIntent)))
+	mux.Handle("POST /v1/payments/{paymentID}/upi-qr/abandon", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.abandonUPIQR)))
 	mux.Handle("POST /v1/payments/authorize", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.authorize)))
 	mux.Handle("POST /v1/payments/{paymentID}/capture", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.capture)))
 	mux.Handle("POST /v1/payments/{paymentID}/reverse-authorization", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.reverseAuthorization)))
@@ -61,6 +66,8 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/payments/{paymentID}/upi-intent/callbacks", http.HandlerFunc(h.upiCallback))
+	mux.Handle("POST /v1/payments/{paymentID}/upi-qr/callbacks", http.HandlerFunc(h.upiQRCallback))
+	mux.Handle("POST /v1/payments/{paymentID}/card-challenge/callbacks", http.HandlerFunc(h.cardChallengeCallback))
 }
 
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +156,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.WriteJSON(w, http.StatusCreated, present(out))
+	httpx.WriteJSON(w, http.StatusCreated, present(out, r))
 }
 
 func (h *Handler) createUPIIntent(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +190,7 @@ func (h *Handler) createUPIIntent(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusCreated, presentUPIIntent(out, callbackURL(r, out.PaymentID, out.CallbackToken)))
+	httpx.WriteJSON(w, http.StatusCreated, presentUPIIntent(out, callbackURL(r, out)))
 }
 
 func (h *Handler) getUPIIntent(w http.ResponseWriter, r *http.Request) {
@@ -197,7 +204,7 @@ func (h *Handler) getUPIIntent(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, presentUPIIntent(out, callbackURL(r, out.PaymentID, out.CallbackToken)))
+	httpx.WriteJSON(w, http.StatusOK, presentUPIIntent(out, callbackURL(r, out)))
 }
 
 func (h *Handler) pollUPIIntent(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +218,7 @@ func (h *Handler) pollUPIIntent(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, presentUPIIntent(out, callbackURL(r, out.PaymentID, out.CallbackToken)))
+	httpx.WriteJSON(w, http.StatusOK, presentUPIIntent(out, callbackURL(r, out)))
 }
 
 func (h *Handler) abandonUPIIntent(w http.ResponseWriter, r *http.Request) {
@@ -234,7 +241,7 @@ func (h *Handler) abandonUPIIntent(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, presentUPIIntent(out, callbackURL(r, out.PaymentID, out.CallbackToken)))
+	httpx.WriteJSON(w, http.StatusOK, presentUPIIntent(out, callbackURL(r, out)))
 }
 
 func (h *Handler) upiCallback(w http.ResponseWriter, r *http.Request) {
@@ -268,7 +275,109 @@ func (h *Handler) upiCallback(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
 		"entity":    "upi_callback_result",
 		"processed": processed,
-		"payment":   presentUPIIntent(out, callbackURL(r, out.PaymentID, out.CallbackToken)),
+		"payment":   presentUPIIntent(out, callbackURL(r, out)),
+	})
+}
+
+func (h *Handler) createUPIQR(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req CreateUPIQRInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	req.MerchantID = p.MerchantID
+	if h.capabilities != nil {
+		if err := h.capabilities.CheckCapability(r.Context(), p.MerchantID, merchant.CapabilityPayments); err != nil {
+			handleError(w, err)
+			return
+		}
+		if err := h.capabilities.CheckCapability(r.Context(), p.MerchantID, merchant.CapabilityUPI); err != nil {
+			handleError(w, err)
+			return
+		}
+	}
+	req.IdempotencyKey = r.Header.Get("Idempotency-Key")
+	if req.Currency == "" {
+		req.Currency = "INR"
+	}
+	out, err := h.svc.CreateUPIQR(r.Context(), req)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, presentUPIIntent(out, callbackURL(r, out)))
+}
+
+func (h *Handler) getUPIQR(w http.ResponseWriter, r *http.Request) {
+	h.getUPIIntent(w, r)
+}
+
+func (h *Handler) pollUPIQR(w http.ResponseWriter, r *http.Request) {
+	h.pollUPIIntent(w, r)
+}
+
+func (h *Handler) abandonUPIQR(w http.ResponseWriter, r *http.Request) {
+	h.abandonUPIIntent(w, r)
+}
+
+func (h *Handler) upiQRCallback(w http.ResponseWriter, r *http.Request) {
+	h.upiCallback(w, r)
+}
+
+func (h *Handler) getCardChallenge(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	out, err := h.svc.Get(r.Context(), p.MerchantID, r.PathValue("paymentID"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	if out.Method != "card" || out.ChallengeSessionID == "" {
+		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: "card challenge not found"})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentCardChallenge(r, out))
+}
+
+func (h *Handler) cardChallengeCallback(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MerchantID       string `json:"merchant_id"`
+		Status           string `json:"status"`
+		GatewayReference string `json:"gateway_reference"`
+		AuthCode         string `json:"auth_code"`
+		ErrorCode        string `json:"error_code"`
+		ErrorDescription string `json:"error_description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	out, processed, err := h.svc.CompleteCardChallenge(r.Context(), CompleteCardChallengeInput{
+		MerchantID:       req.MerchantID,
+		PaymentID:        r.PathValue("paymentID"),
+		CallbackToken:    r.URL.Query().Get("token"),
+		GatewayReference: req.GatewayReference,
+		AuthCode:         req.AuthCode,
+		ErrorCode:        req.ErrorCode,
+		ErrorDescription: req.ErrorDescription,
+		Status:           req.Status,
+	})
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{
+		"entity":    "card_challenge_result",
+		"processed": processed,
+		"payment":   present(out, r),
 	})
 }
 
@@ -290,7 +399,7 @@ func (h *Handler) capture(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, present(out))
+	httpx.WriteJSON(w, http.StatusOK, present(out, r))
 }
 
 func (h *Handler) reverseAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -313,7 +422,7 @@ func (h *Handler) reverseAuthorization(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, present(out))
+	httpx.WriteJSON(w, http.StatusOK, present(out, r))
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +436,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		handleError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, present(out))
+	httpx.WriteJSON(w, http.StatusOK, present(out, r))
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +457,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(out.Items))
 	for _, item := range out.Items {
-		items = append(items, present(item))
+		items = append(items, present(item, nil))
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"entity": "collection",
@@ -357,7 +466,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func present(out CaptureResult) map[string]any {
+func present(out CaptureResult, r *http.Request) map[string]any {
 	var capturedAt int64
 	if out.CapturedAt != nil {
 		capturedAt = out.CapturedAt.Unix()
@@ -388,6 +497,25 @@ func present(out CaptureResult) map[string]any {
 			"exp_year":  out.CardExpYear,
 		},
 	}
+	if out.ChallengeSessionID != "" {
+		resp["card_challenge"] = presentCardChallenge(r, out)
+	}
+	if out.Status == StateRequiresAction && out.Method == "card" && out.ChallengeRedirectURL != "" {
+		var expiresAt int64
+		if out.ChallengeExpiresAt != nil {
+			expiresAt = out.ChallengeExpiresAt.Unix()
+		}
+		resp["next_action"] = map[string]any{
+			"type":                 "card_3ds_challenge",
+			"redirect_url":         out.ChallengeRedirectURL,
+			"challenge_session_id": out.ChallengeSessionID,
+			"challenge_status":     out.ChallengeStatus,
+			"expires_at":           expiresAt,
+		}
+		resp["sandbox"] = map[string]any{
+			"callback_url": cardChallengeCallbackURL(r, out),
+		}
+	}
 	if len(out.Splits) > 0 {
 		splits := make([]map[string]any, 0, len(out.Splits))
 		for _, split := range out.Splits {
@@ -405,8 +533,24 @@ func present(out CaptureResult) map[string]any {
 }
 
 func presentUPIIntent(out UPIIntentResult, callbackURL string) map[string]any {
-	resp := present(out.CaptureResult)
-	resp["entity"] = "upi_intent_payment"
+	resp := present(out.CaptureResult, nil)
+	entity := "upi_intent_payment"
+	nextActionType := "upi_intent"
+	if out.FlowType == "qr" {
+		entity = "upi_qr_payment"
+		nextActionType = "upi_qr"
+	} else if out.FlowType == "mandate" {
+		entity = "upi_mandate_payment"
+		nextActionType = "upi_mandate"
+	}
+	resp["entity"] = entity
+	resp["flow_type"] = out.FlowType
+	resp["mandate_id"] = out.MandateID
+	resp["qr_mode"] = out.QRMode
+	resp["qr_payload"] = out.QRPayload
+	resp["qr_image_url"] = out.QRImageURL
+	resp["display_name"] = out.DisplayName
+	resp["is_reusable"] = out.IsReusable
 	resp["vpa"] = out.VPA
 	resp["provider_status"] = out.ProviderStatus
 	resp["gateway_reference"] = out.GatewayReference
@@ -420,10 +564,13 @@ func presentUPIIntent(out UPIIntentResult, callbackURL string) map[string]any {
 		resp["last_polled_at"] = out.LastPolledAt.Unix()
 	}
 	resp["next_action"] = map[string]any{
-		"type":       "upi_intent",
-		"deep_link":  out.DeepLink,
-		"intent_uri": out.IntentURI,
-		"expires_at": out.ExpiresAt.Unix(),
+		"type":         nextActionType,
+		"deep_link":    out.DeepLink,
+		"intent_uri":   out.IntentURI,
+		"qr_payload":   out.QRPayload,
+		"qr_image_url": out.QRImageURL,
+		"qr_mode":      out.QRMode,
+		"expires_at":   out.ExpiresAt.Unix(),
 	}
 	resp["sandbox"] = map[string]any{
 		"callback_url": callbackURL,
@@ -431,15 +578,49 @@ func presentUPIIntent(out UPIIntentResult, callbackURL string) map[string]any {
 	return resp
 }
 
-func callbackURL(r *http.Request, paymentID, token string) string {
-	if paymentID == "" || token == "" {
+func callbackURL(r *http.Request, out UPIIntentResult) string {
+	if r == nil {
+		return ""
+	}
+	if out.PaymentID == "" || out.CallbackToken == "" {
 		return ""
 	}
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	return scheme + "://" + r.Host + "/v1/payments/" + paymentID + "/upi-intent/callbacks?token=" + token
+	path := "upi-intent"
+	if out.FlowType == "qr" {
+		path = "upi-qr"
+	}
+	return scheme + "://" + r.Host + "/v1/payments/" + out.PaymentID + "/" + path + "/callbacks?token=" + out.CallbackToken
+}
+
+func presentCardChallenge(r *http.Request, out CaptureResult) map[string]any {
+	var expiresAt int64
+	if out.ChallengeExpiresAt != nil {
+		expiresAt = out.ChallengeExpiresAt.Unix()
+	}
+	return map[string]any{
+		"entity":               "card_challenge",
+		"payment_id":           out.PaymentID,
+		"session_id":           out.ChallengeSessionID,
+		"status":               out.ChallengeStatus,
+		"redirect_url":         out.ChallengeRedirectURL,
+		"expires_at":           expiresAt,
+		"sandbox_callback_url": cardChallengeCallbackURL(r, out),
+	}
+}
+
+func cardChallengeCallbackURL(r *http.Request, out CaptureResult) string {
+	if r == nil || out.PaymentID == "" || out.ChallengeCallbackToken == "" {
+		return ""
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + "/v1/payments/" + out.PaymentID + "/card-challenge/callbacks?token=" + out.ChallengeCallbackToken
 }
 
 func handleError(w http.ResponseWriter, err error) {
@@ -450,10 +631,13 @@ func handleError(w http.ResponseWriter, err error) {
 		errors.Is(err, ErrCurrencyMismatch),
 		errors.Is(err, ErrAmountMismatch),
 		errors.Is(err, ErrInvalidPaymentAmount),
+		errors.Is(err, ErrInvalidUPIVPA),
 		errors.Is(err, ErrPaymentMethodTokenRequired),
 		errors.Is(err, ErrPaymentMethodTokenInvalid):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	case errors.Is(err, ErrUPICallbackRejected):
+		httpx.WriteError(w, http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Description: err.Error()})
+	case errors.Is(err, ErrCardChallengeRejected):
 		httpx.WriteError(w, http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Description: err.Error()})
 	case errors.Is(err, ErrUPIIntentNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})

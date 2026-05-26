@@ -23,6 +23,16 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 	mux.Handle("GET /v1/customers/{id}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getCustomer)))
 	mux.Handle("PATCH /v1/customers/{id}", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.updateCustomer)))
 
+	mux.Handle("POST /v1/upi-mandates", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createUPIMandate)))
+	mux.Handle("GET /v1/upi-mandates", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listUPIMandates)))
+	mux.Handle("GET /v1/upi-mandates/{id}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getUPIMandate)))
+	mux.Handle("GET /v1/upi-mandates/{id}/events", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listUPIMandateEvents)))
+	mux.Handle("POST /v1/upi-mandates/{id}/activate", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.activateUPIMandate)))
+	mux.Handle("POST /v1/upi-mandates/{id}/pause", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.pauseUPIMandate)))
+	mux.Handle("POST /v1/upi-mandates/{id}/resume", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.resumeUPIMandate)))
+	mux.Handle("POST /v1/upi-mandates/{id}/revoke", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.revokeUPIMandate)))
+	mux.Handle("POST /v1/upi-mandates/{id}/expire", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.expireUPIMandate)))
+
 	mux.Handle("POST /v1/virtual-accounts", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createVirtualAccount)))
 	mux.Handle("GET /v1/virtual-accounts", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listVirtualAccounts)))
 	mux.Handle("GET /v1/virtual-accounts/{id}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getVirtualAccount)))
@@ -234,6 +244,136 @@ func (h *Handler) createCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, presentCustomer(out))
+}
+
+func (h *Handler) createUPIMandate(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req CreateUPIMandateInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	req.MerchantID = p.MerchantID
+	out, err := h.svc.CreateUPIMandate(r.Context(), req, p.AuthType, firstNonEmpty(p.UserID, p.KeyID))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, presentUPIMandate(out))
+}
+
+func (h *Handler) listUPIMandates(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("count"))
+	items, err := h.svc.ListUPIMandates(r.Context(), p.MerchantID, limit)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	resp := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, presentUPIMandate(item))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"entity": "collection", "count": len(resp), "items": resp})
+}
+
+func (h *Handler) getUPIMandate(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	out, err := h.svc.GetUPIMandate(r.Context(), p.MerchantID, r.PathValue("id"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentUPIMandate(out))
+}
+
+func (h *Handler) listUPIMandateEvents(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("count"))
+	items, err := h.svc.ListUPIMandateEvents(r.Context(), p.MerchantID, r.PathValue("id"), limit)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	resp := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, presentUPIMandateEvent(item))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"entity": "collection", "count": len(resp), "items": resp})
+}
+
+func (h *Handler) activateUPIMandate(w http.ResponseWriter, r *http.Request) {
+	h.transitionUPIMandate(w, r, "activate")
+}
+
+func (h *Handler) pauseUPIMandate(w http.ResponseWriter, r *http.Request) {
+	h.transitionUPIMandate(w, r, "pause")
+}
+
+func (h *Handler) resumeUPIMandate(w http.ResponseWriter, r *http.Request) {
+	h.transitionUPIMandate(w, r, "resume")
+}
+
+func (h *Handler) revokeUPIMandate(w http.ResponseWriter, r *http.Request) {
+	h.transitionUPIMandate(w, r, "revoke")
+}
+
+func (h *Handler) expireUPIMandate(w http.ResponseWriter, r *http.Request) {
+	h.transitionUPIMandate(w, r, "expire")
+}
+
+func (h *Handler) transitionUPIMandate(w http.ResponseWriter, r *http.Request, action string) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+			return
+		}
+	}
+	actorType := p.AuthType
+	actorID := firstNonEmpty(p.UserID, p.KeyID)
+	var (
+		out UPIMandate
+		err error
+	)
+	switch action {
+	case "activate", "resume":
+		out, err = h.svc.ActivateUPIMandate(r.Context(), p.MerchantID, r.PathValue("id"), actorType, actorID, req.Reason)
+	case "pause":
+		out, err = h.svc.PauseUPIMandate(r.Context(), p.MerchantID, r.PathValue("id"), actorType, actorID, req.Reason)
+	case "revoke":
+		out, err = h.svc.RevokeUPIMandate(r.Context(), p.MerchantID, r.PathValue("id"), actorType, actorID, req.Reason)
+	case "expire":
+		out, err = h.svc.ExpireUPIMandate(r.Context(), p.MerchantID, r.PathValue("id"), actorType, actorID, req.Reason)
+	}
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentUPIMandate(out))
 }
 
 func (h *Handler) listCustomers(w http.ResponseWriter, r *http.Request) {
@@ -494,6 +634,74 @@ func presentCustomer(customer Customer) map[string]any {
 	}
 }
 
+func presentUPIMandate(mandate UPIMandate) map[string]any {
+	resp := map[string]any{
+		"entity":             "upi_mandate",
+		"id":                 mandate.ID,
+		"merchant_id":        mandate.MerchantID,
+		"customer_id":        mandate.CustomerID,
+		"reference":          mandate.Reference,
+		"display_name":       mandate.DisplayName,
+		"vpa":                mandate.VPA,
+		"amount_limit":       mandate.AmountLimit,
+		"currency":           mandate.Currency,
+		"interval_unit":      mandate.IntervalUnit,
+		"interval_count":     mandate.IntervalCount,
+		"retry_window_hours": mandate.RetryWindowHours,
+		"status":             mandate.Status,
+		"metadata":           mandate.Metadata,
+		"created_at":         mandate.CreatedAt.Unix(),
+		"updated_at":         mandate.UpdatedAt.Unix(),
+		"sandbox": map[string]any{
+			"approval_token": mandate.ApprovalToken,
+		},
+	}
+	if mandate.ApprovedAt != nil {
+		resp["approved_at"] = mandate.ApprovedAt.Unix()
+	}
+	if mandate.PausedAt != nil {
+		resp["paused_at"] = mandate.PausedAt.Unix()
+	}
+	if mandate.RevokedAt != nil {
+		resp["revoked_at"] = mandate.RevokedAt.Unix()
+	}
+	if mandate.ExpiresAt != nil {
+		resp["expires_at"] = mandate.ExpiresAt.Unix()
+	}
+	if mandate.LatestVerificationID != "" {
+		verification := map[string]any{
+			"id":       mandate.LatestVerificationID,
+			"version":  mandate.LatestVerificationVersion,
+			"status":   mandate.LatestVerificationStatus,
+			"provider": mandate.LatestVerificationProvider,
+		}
+		if mandate.LatestVerificationVerifiedAt != nil {
+			verification["verified_at"] = mandate.LatestVerificationVerifiedAt.Unix()
+		}
+		if mandate.LatestVerificationExpiresAt != nil {
+			verification["expires_at"] = mandate.LatestVerificationExpiresAt.Unix()
+		}
+		resp["latest_verification"] = verification
+	}
+	return resp
+}
+
+func presentUPIMandateEvent(event UPIMandateEvent) map[string]any {
+	return map[string]any{
+		"entity":      "upi_mandate_event",
+		"id":          event.ID,
+		"merchant_id": event.MerchantID,
+		"mandate_id":  event.MandateID,
+		"event_type":  event.EventType,
+		"actor_type":  event.ActorType,
+		"actor_id":    event.ActorID,
+		"reason":      event.Reason,
+		"payment_id":  event.PaymentID,
+		"metadata":    event.Metadata,
+		"created_at":  event.CreatedAt.Unix(),
+	}
+}
+
 func presentVirtualAccount(account VirtualAccount) map[string]any {
 	return map[string]any{
 		"entity":         "virtual_account",
@@ -563,7 +771,9 @@ func presentSubscription(subscription Subscription) map[string]any {
 		"merchant_id":             subscription.MerchantID,
 		"customer_id":             subscription.CustomerID,
 		"plan_name":               subscription.PlanName,
+		"collection_method":       subscription.CollectionMethod,
 		"payment_method_token_id": subscription.PaymentMethodTokenID,
+		"upi_mandate_id":          subscription.UPIMandateID,
 		"amount":                  subscription.Amount,
 		"currency":                subscription.Currency,
 		"interval_unit":           subscription.IntervalUnit,
@@ -610,11 +820,20 @@ func presentInvoice(invoice Invoice) map[string]any {
 
 func handleError(w http.ResponseWriter, err error) {
 	switch err {
-	case ErrCustomerNotFound, ErrVirtualAccountNotFound, ErrCollectionNotFound, ErrConnectedAccountNotFound, ErrSubscriptionNotFound, ErrInvoiceNotFound:
+	case ErrCustomerNotFound, ErrVirtualAccountNotFound, ErrCollectionNotFound, ErrConnectedAccountNotFound, ErrSubscriptionNotFound, ErrInvoiceNotFound, ErrUPIMandateNotFound:
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
-	case ErrInvalidSubscription, ErrInvalidVirtualAccount, ErrInvalidCollection, ErrInvalidConnectedAccount, ErrInvalidSplitInstruction, ErrCardTokenNotReusable, ErrCustomerTokenMismatch, ErrSubscriptionNotActive:
+	case ErrInvalidSubscription, ErrInvalidVirtualAccount, ErrInvalidCollection, ErrInvalidConnectedAccount, ErrInvalidSplitInstruction, ErrCardTokenNotReusable, ErrCustomerTokenMismatch, ErrSubscriptionNotActive, ErrInvalidUPIMandate, ErrUPIMandateNotActive, ErrMandateCustomerMismatch, ErrVPAVerificationRequired:
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: err.Error()})
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

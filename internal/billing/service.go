@@ -10,6 +10,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/order"
 	"github.com/sanskarpan/PayGate/internal/payment"
 	"github.com/sanskarpan/PayGate/internal/tokenization"
+	"github.com/sanskarpan/PayGate/internal/upiverify"
 )
 
 type Service struct {
@@ -17,10 +18,21 @@ type Service struct {
 	orderSvc   *order.Service
 	paymentSvc *payment.Service
 	tokenSvc   *tokenization.Service
+	vpaVerify  *upiverify.Service
 }
 
-func NewService(repo Repository, orderSvc *order.Service, paymentSvc *payment.Service, tokenSvc *tokenization.Service) *Service {
-	return &Service{repo: repo, orderSvc: orderSvc, paymentSvc: paymentSvc, tokenSvc: tokenSvc}
+func NewService(repo Repository, orderSvc *order.Service, paymentSvc *payment.Service, tokenSvc *tokenization.Service, opts ...func(*Service)) *Service {
+	svc := &Service{repo: repo, orderSvc: orderSvc, paymentSvc: paymentSvc, tokenSvc: tokenSvc}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
+}
+
+func WithVPAVerifier(verifier *upiverify.Service) func(*Service) {
+	return func(s *Service) {
+		s.vpaVerify = verifier
+	}
 }
 
 type CreateCustomerInput struct {
@@ -64,18 +76,35 @@ type CreateConnectedAccountInput struct {
 }
 
 type CreateSubscriptionInput struct {
-	MerchantID           string         `json:"-"`
-	CustomerID           string         `json:"customer_id"`
-	PlanName             string         `json:"plan_name"`
-	PaymentMethodTokenID string         `json:"payment_method_token_id"`
-	Amount               int64          `json:"amount"`
-	Currency             string         `json:"currency"`
-	IntervalUnit         IntervalUnit   `json:"interval_unit"`
-	IntervalCount        int            `json:"interval_count"`
-	StartsAt             int64          `json:"starts_at"`
-	MaxRetryCount        int            `json:"max_retry_count"`
-	RetryIntervalHours   int            `json:"retry_interval_hours"`
-	Metadata             map[string]any `json:"metadata"`
+	MerchantID           string           `json:"-"`
+	CustomerID           string           `json:"customer_id"`
+	PlanName             string           `json:"plan_name"`
+	CollectionMethod     CollectionMethod `json:"collection_method"`
+	PaymentMethodTokenID string           `json:"payment_method_token_id"`
+	UPIMandateID         string           `json:"upi_mandate_id"`
+	Amount               int64            `json:"amount"`
+	Currency             string           `json:"currency"`
+	IntervalUnit         IntervalUnit     `json:"interval_unit"`
+	IntervalCount        int              `json:"interval_count"`
+	StartsAt             int64            `json:"starts_at"`
+	MaxRetryCount        int              `json:"max_retry_count"`
+	RetryIntervalHours   int              `json:"retry_interval_hours"`
+	Metadata             map[string]any   `json:"metadata"`
+}
+
+type CreateUPIMandateInput struct {
+	MerchantID       string         `json:"-"`
+	CustomerID       string         `json:"customer_id"`
+	Reference        string         `json:"reference"`
+	DisplayName      string         `json:"display_name"`
+	VPA              string         `json:"vpa"`
+	AmountLimit      int64          `json:"amount_limit"`
+	Currency         string         `json:"currency"`
+	IntervalUnit     IntervalUnit   `json:"interval_unit"`
+	IntervalCount    int            `json:"interval_count"`
+	RetryWindowHours int            `json:"retry_window_hours"`
+	ExpiresAt        int64          `json:"expires_at"`
+	Metadata         map[string]any `json:"metadata"`
 }
 
 func (s *Service) CreateCustomer(ctx context.Context, in CreateCustomerInput) (Customer, error) {
@@ -92,6 +121,155 @@ func (s *Service) CreateCustomer(ctx context.Context, in CreateCustomerInput) (C
 		return Customer{}, err
 	}
 	return s.repo.CreateCustomer(ctx, customer)
+}
+
+func (s *Service) CreateUPIMandate(ctx context.Context, in CreateUPIMandateInput, actorType, actorID string) (UPIMandate, error) {
+	if _, err := s.repo.GetCustomer(ctx, in.MerchantID, in.CustomerID); err != nil {
+		return UPIMandate{}, err
+	}
+	normalizedVPA := strings.TrimSpace(strings.ToLower(in.VPA))
+	verification, err := s.ensureFreshVPAVerification(ctx, in.MerchantID, normalizedVPA, upiverify.PurposeMandate)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	mandate := UPIMandate{
+		MerchantID:       in.MerchantID,
+		CustomerID:       strings.TrimSpace(in.CustomerID),
+		Reference:        strings.TrimSpace(in.Reference),
+		DisplayName:      strings.TrimSpace(in.DisplayName),
+		VPA:              normalizedVPA,
+		AmountLimit:      in.AmountLimit,
+		Currency:         strings.ToUpper(strings.TrimSpace(in.Currency)),
+		IntervalUnit:     in.IntervalUnit,
+		IntervalCount:    in.IntervalCount,
+		RetryWindowHours: in.RetryWindowHours,
+		Status:           UPIMandatePendingApproval,
+		ApprovalToken:    idgen.New("mandatecb"),
+		Metadata:         in.Metadata,
+	}
+	if mandate.Reference == "" {
+		mandate.Reference = "mandate-" + idgen.New("ref")
+	}
+	if mandate.DisplayName == "" {
+		mandate.DisplayName = "PayGate AutoPay"
+	}
+	if mandate.Currency == "" {
+		mandate.Currency = "INR"
+	}
+	if mandate.RetryWindowHours <= 0 {
+		mandate.RetryWindowHours = 24
+	}
+	if in.ExpiresAt > 0 {
+		exp := time.Unix(in.ExpiresAt, 0).UTC()
+		mandate.ExpiresAt = &exp
+	}
+	if err := mandate.Validate(); err != nil {
+		return UPIMandate{}, err
+	}
+	out, err := s.repo.CreateUPIMandate(ctx, mandate, actorType, actorID)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	return s.attachMandateVerification(out, verification), nil
+}
+
+func (s *Service) GetUPIMandate(ctx context.Context, merchantID, mandateID string) (UPIMandate, error) {
+	out, err := s.repo.GetUPIMandate(ctx, merchantID, mandateID)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	return s.hydrateMandateVerification(ctx, out)
+}
+
+func (s *Service) ListUPIMandates(ctx context.Context, merchantID string, limit int) ([]UPIMandate, error) {
+	items, err := s.repo.ListUPIMandates(ctx, merchantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i], _ = s.hydrateMandateVerification(ctx, items[i])
+	}
+	return items, nil
+}
+
+func (s *Service) ListUPIMandateEvents(ctx context.Context, merchantID, mandateID string, limit int) ([]UPIMandateEvent, error) {
+	return s.repo.ListUPIMandateEvents(ctx, merchantID, mandateID, limit)
+}
+
+func (s *Service) ActivateUPIMandate(ctx context.Context, merchantID, mandateID, actorType, actorID, reason string) (UPIMandate, error) {
+	current, err := s.repo.GetUPIMandate(ctx, merchantID, mandateID)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	verification, err := s.ensureFreshVPAVerification(ctx, merchantID, current.VPA, upiverify.PurposeMandate)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	out, err := s.repo.UpdateUPIMandateStatus(ctx, merchantID, mandateID, UPIMandateActive, actorType, actorID, reason)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	return s.attachMandateVerification(out, verification), nil
+}
+
+func (s *Service) PauseUPIMandate(ctx context.Context, merchantID, mandateID, actorType, actorID, reason string) (UPIMandate, error) {
+	return s.repo.UpdateUPIMandateStatus(ctx, merchantID, mandateID, UPIMandatePaused, actorType, actorID, reason)
+}
+
+func (s *Service) RevokeUPIMandate(ctx context.Context, merchantID, mandateID, actorType, actorID, reason string) (UPIMandate, error) {
+	return s.repo.UpdateUPIMandateStatus(ctx, merchantID, mandateID, UPIMandateRevoked, actorType, actorID, reason)
+}
+
+func (s *Service) ExpireUPIMandate(ctx context.Context, merchantID, mandateID, actorType, actorID, reason string) (UPIMandate, error) {
+	return s.repo.UpdateUPIMandateStatus(ctx, merchantID, mandateID, UPIMandateExpired, actorType, actorID, reason)
+}
+
+func (s *Service) ensureFreshVPAVerification(ctx context.Context, merchantID, vpa string, purpose upiverify.Purpose) (upiverify.Verification, error) {
+	if s.vpaVerify == nil {
+		normalized, err := upiverify.NormalizeVPA(vpa)
+		if err != nil {
+			return upiverify.Verification{}, ErrInvalidUPIMandate
+		}
+		return upiverify.Verification{VPA: normalized, Status: upiverify.StatusVerified}, nil
+	}
+	verification, err := s.vpaVerify.EnsureFresh(ctx, merchantID, vpa, purpose, 30*24*time.Hour)
+	if err != nil {
+		if err == upiverify.ErrInvalidVPA {
+			return upiverify.Verification{}, ErrInvalidUPIMandate
+		}
+		return upiverify.Verification{}, err
+	}
+	if verification.Status != upiverify.StatusVerified {
+		return upiverify.Verification{}, ErrVPAVerificationRequired
+	}
+	return verification, nil
+}
+
+func (s *Service) hydrateMandateVerification(ctx context.Context, mandate UPIMandate) (UPIMandate, error) {
+	if s.vpaVerify == nil || strings.TrimSpace(mandate.VPA) == "" {
+		return mandate, nil
+	}
+	verification, err := s.vpaVerify.GetLatest(ctx, mandate.MerchantID, mandate.VPA, upiverify.PurposeMandate)
+	if err != nil {
+		if err == upiverify.ErrVPAVerificationMiss {
+			return mandate, nil
+		}
+		return UPIMandate{}, err
+	}
+	return s.attachMandateVerification(mandate, verification), nil
+}
+
+func (s *Service) attachMandateVerification(mandate UPIMandate, verification upiverify.Verification) UPIMandate {
+	if verification.ID == "" {
+		return mandate
+	}
+	mandate.LatestVerificationID = verification.ID
+	mandate.LatestVerificationVersion = verification.Version
+	mandate.LatestVerificationStatus = verification.Status
+	mandate.LatestVerificationProvider = verification.Provider
+	mandate.LatestVerificationVerifiedAt = &verification.VerifiedAt
+	mandate.LatestVerificationExpiresAt = &verification.ExpiresAt
+	return mandate
 }
 
 func (s *Service) CreateVirtualAccount(ctx context.Context, in CreateVirtualAccountInput) (VirtualAccount, error) {
@@ -232,15 +410,38 @@ func (s *Service) CreateSubscription(ctx context.Context, in CreateSubscriptionI
 	if err != nil {
 		return Subscription{}, err
 	}
-	token, err := s.tokenSvc.GetCardToken(ctx, in.MerchantID, in.PaymentMethodTokenID)
-	if err != nil {
-		return Subscription{}, err
+	normalizedCurrency := strings.ToUpper(strings.TrimSpace(in.Currency))
+	if normalizedCurrency == "" {
+		normalizedCurrency = "INR"
 	}
-	if token.TokenClass != tokenization.CardTokenClassReusable {
-		return Subscription{}, ErrCardTokenNotReusable
+	if in.CollectionMethod == "" {
+		in.CollectionMethod = CollectionMethodCard
 	}
-	if token.CustomerRef != "" && token.CustomerRef != customer.ID {
-		return Subscription{}, ErrCustomerTokenMismatch
+	if in.CollectionMethod == CollectionMethodCard {
+		token, err := s.tokenSvc.GetCardToken(ctx, in.MerchantID, in.PaymentMethodTokenID)
+		if err != nil {
+			return Subscription{}, err
+		}
+		if token.TokenClass != tokenization.CardTokenClassReusable {
+			return Subscription{}, ErrCardTokenNotReusable
+		}
+		if token.CustomerRef != "" && token.CustomerRef != customer.ID {
+			return Subscription{}, ErrCustomerTokenMismatch
+		}
+	} else if in.CollectionMethod == CollectionMethodUPIMandate {
+		mandate, err := s.repo.GetUPIMandate(ctx, in.MerchantID, in.UPIMandateID)
+		if err != nil {
+			return Subscription{}, err
+		}
+		if mandate.CustomerID != customer.ID {
+			return Subscription{}, ErrMandateCustomerMismatch
+		}
+		if mandate.Status != UPIMandateActive {
+			return Subscription{}, ErrUPIMandateNotActive
+		}
+		if mandate.AmountLimit < in.Amount || mandate.Currency != normalizedCurrency {
+			return Subscription{}, ErrInvalidUPIMandate
+		}
 	}
 	startAt := time.Now().UTC()
 	if in.StartsAt > 0 {
@@ -256,9 +457,11 @@ func (s *Service) CreateSubscription(ctx context.Context, in CreateSubscriptionI
 		MerchantID:           in.MerchantID,
 		CustomerID:           customer.ID,
 		PlanName:             strings.TrimSpace(in.PlanName),
+		CollectionMethod:     in.CollectionMethod,
 		PaymentMethodTokenID: in.PaymentMethodTokenID,
+		UPIMandateID:         strings.TrimSpace(in.UPIMandateID),
 		Amount:               in.Amount,
-		Currency:             strings.ToUpper(strings.TrimSpace(in.Currency)),
+		Currency:             normalizedCurrency,
 		IntervalUnit:         in.IntervalUnit,
 		IntervalCount:        in.IntervalCount,
 		Status:               SubscriptionActive,
@@ -266,9 +469,6 @@ func (s *Service) CreateSubscription(ctx context.Context, in CreateSubscriptionI
 		MaxRetryCount:        in.MaxRetryCount,
 		RetryIntervalHours:   in.RetryIntervalHours,
 		Metadata:             in.Metadata,
-	}
-	if subscription.Currency == "" {
-		subscription.Currency = "INR"
 	}
 	if err := subscription.Validate(); err != nil {
 		return Subscription{}, err
@@ -382,32 +582,70 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 		return invoice, payment.CaptureResult{}, err
 	}
 	_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptStarted, orderResult.ID, "", "", "")
-	authResult, err := s.paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID:           subscription.MerchantID,
-		OrderID:              orderResult.ID,
-		Amount:               subscription.Amount,
-		Currency:             subscription.Currency,
-		Method:               "card",
-		PaymentMethodTokenID: subscription.PaymentMethodTokenID,
-		IdempotencyKey:       "invoice-payment:" + invoice.ID,
-		PaymentID:            idgen.New("pay"),
-	})
-	if err != nil {
-		nextAt, retryCount := subscriptionFailureSchedule(subscription)
-		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "AUTH_FAILED", err.Error())
-		invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "AUTH_FAILED", err.Error(), nextAt, retryCount)
-		return invoice, payment.CaptureResult{}, err
+	var captureResult payment.CaptureResult
+	if subscription.CollectionMethod == CollectionMethodUPIMandate {
+		mandate, err := s.repo.GetUPIMandate(ctx, subscription.MerchantID, subscription.UPIMandateID)
+		if err != nil {
+			nextAt, retryCount := subscriptionFailureSchedule(subscription)
+			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "MANDATE_LOOKUP_FAILED", err.Error())
+			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "MANDATE_LOOKUP_FAILED", err.Error(), nextAt, retryCount)
+			return invoice, payment.CaptureResult{}, err
+		}
+		if mandate.Status != UPIMandateActive {
+			nextAt, retryCount := subscriptionFailureSchedule(subscription)
+			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "MANDATE_NOT_ACTIVE", ErrUPIMandateNotActive.Error())
+			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "MANDATE_NOT_ACTIVE", ErrUPIMandateNotActive.Error(), nextAt, retryCount)
+			return invoice, payment.CaptureResult{}, ErrUPIMandateNotActive
+		}
+		upiResult, err := s.paymentSvc.CreateUPIMandateCharge(ctx, payment.CreateUPIMandateChargeInput{
+			MerchantID:     subscription.MerchantID,
+			OrderID:        orderResult.ID,
+			Amount:         subscription.Amount,
+			Currency:       subscription.Currency,
+			MandateID:      mandate.ID,
+			DisplayName:    mandate.DisplayName,
+			VPA:            mandate.VPA,
+			IdempotencyKey: "invoice-payment:" + invoice.ID,
+			PaymentID:      idgen.New("pay"),
+		})
+		if err != nil {
+			nextAt, retryCount := subscriptionFailureSchedule(subscription)
+			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "MANDATE_CHARGE_FAILED", err.Error())
+			_ = s.repo.RecordUPIMandateChargeResult(ctx, subscription.MerchantID, mandate.ID, MandateEventChargeErr, "", err.Error(), map[string]any{"invoice_id": invoice.ID, "subscription_id": subscription.ID})
+			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "MANDATE_CHARGE_FAILED", err.Error(), nextAt, retryCount)
+			return invoice, payment.CaptureResult{}, err
+		}
+		captureResult = upiResult.CaptureResult
+		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptCaptured, orderResult.ID, captureResult.PaymentID, "", "")
+		_ = s.repo.RecordUPIMandateChargeResult(ctx, subscription.MerchantID, mandate.ID, MandateEventChargeOK, captureResult.PaymentID, "", map[string]any{"invoice_id": invoice.ID, "subscription_id": subscription.ID})
+	} else {
+		authResult, err := s.paymentSvc.Authorize(ctx, payment.AuthorizeInput{
+			MerchantID:           subscription.MerchantID,
+			OrderID:              orderResult.ID,
+			Amount:               subscription.Amount,
+			Currency:             subscription.Currency,
+			Method:               "card",
+			PaymentMethodTokenID: subscription.PaymentMethodTokenID,
+			IdempotencyKey:       "invoice-payment:" + invoice.ID,
+			PaymentID:            idgen.New("pay"),
+		})
+		if err != nil {
+			nextAt, retryCount := subscriptionFailureSchedule(subscription)
+			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "AUTH_FAILED", err.Error())
+			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "AUTH_FAILED", err.Error(), nextAt, retryCount)
+			return invoice, payment.CaptureResult{}, err
+		}
+		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptAuthorized, orderResult.ID, authResult.PaymentID, "", "")
+		captureResult, err = s.paymentSvc.CaptureForMerchant(ctx, subscription.MerchantID, authResult.PaymentID, subscription.Amount)
+		if err != nil {
+			_, _ = s.paymentSvc.ReverseAuthorization(ctx, subscription.MerchantID, authResult.PaymentID, "subscription capture failed")
+			nextAt, retryCount := subscriptionFailureSchedule(subscription)
+			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, authResult.PaymentID, "CAPTURE_FAILED", err.Error())
+			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "CAPTURE_FAILED", err.Error(), nextAt, retryCount)
+			return invoice, payment.CaptureResult{}, err
+		}
+		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptCaptured, orderResult.ID, captureResult.PaymentID, "", "")
 	}
-	_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptAuthorized, orderResult.ID, authResult.PaymentID, "", "")
-	captureResult, err := s.paymentSvc.CaptureForMerchant(ctx, subscription.MerchantID, authResult.PaymentID, subscription.Amount)
-	if err != nil {
-		_, _ = s.paymentSvc.ReverseAuthorization(ctx, subscription.MerchantID, authResult.PaymentID, "subscription capture failed")
-		nextAt, retryCount := subscriptionFailureSchedule(subscription)
-		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, authResult.PaymentID, "CAPTURE_FAILED", err.Error())
-		invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "CAPTURE_FAILED", err.Error(), nextAt, retryCount)
-		return invoice, payment.CaptureResult{}, err
-	}
-	_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptCaptured, orderResult.ID, captureResult.PaymentID, "", "")
 	invoice, err = s.repo.MarkInvoicePaid(ctx, subscription.MerchantID, invoice.ID, orderResult.ID, captureResult.PaymentID, periodEnd)
 	if err != nil {
 		return Invoice{}, payment.CaptureResult{}, err

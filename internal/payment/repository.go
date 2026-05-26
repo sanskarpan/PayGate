@@ -21,6 +21,11 @@ type CaptureResult struct {
 	MethodState          string
 	MethodStateReason    string
 	Status               PaymentState
+	ChallengeSessionID   string
+	ChallengeStatus      string
+	ChallengeRedirectURL string
+	ChallengeCallbackToken string
+	ChallengeExpiresAt   *time.Time
 	Captured             bool
 	CapturedAt           *time.Time
 	CreatedAt            time.Time
@@ -33,7 +38,10 @@ type Repository interface {
 	AttachCardPaymentDetails(ctx context.Context, merchantID, paymentID string, in CardPaymentDetailsInput) error
 	CreateFailedAttempt(ctx context.Context, in CreateAuthorizedInput, errorCode, errorDescription string) error
 	MarkAuthorizationAuthorized(ctx context.Context, merchantID, paymentID, gatewayReference, authCode string, autoCaptureAt *time.Time) (CaptureResult, error)
+	MarkAuthorizationRequiresAction(ctx context.Context, merchantID, paymentID string, in CardChallengeSessionInput) (CaptureResult, error)
 	MarkAuthorizationFailed(ctx context.Context, merchantID, paymentID, errorCode, errorDescription string) error
+	CompleteCardChallenge(ctx context.Context, merchantID, paymentID, callbackToken, gatewayReference, authCode string, completedAt time.Time) (CaptureResult, bool, error)
+	FailCardChallenge(ctx context.Context, merchantID, paymentID, callbackToken, errorCode, errorDescription string, status string, failedAt time.Time) (CaptureResult, bool, error)
 	CreateUPIIntent(ctx context.Context, in CreateUPIIntentRecordInput) (UPIIntentResult, error)
 	AttachUPIIntentGatewayData(ctx context.Context, merchantID, paymentID string, gatewayResult GatewayUPIIntentResult) (UPIIntentResult, error)
 	GetUPIIntent(ctx context.Context, merchantID, paymentID string) (UPIIntentResult, error)
@@ -92,6 +100,16 @@ type CardPaymentDetailsInput struct {
 	CardExpYear          int
 }
 
+type CardChallengeSessionInput struct {
+	SessionID            string
+	CardTokenID          string
+	RedirectURL          string
+	ChallengeReference   string
+	CallbackToken        string
+	AutoCaptureRequested bool
+	ExpiresAt            time.Time
+}
+
 type CreateUPIIntentRecordInput struct {
 	PaymentID      string
 	MerchantID     string
@@ -100,6 +118,13 @@ type CreateUPIIntentRecordInput struct {
 	Currency       string
 	Method         string
 	IdempotencyKey string
+	FlowType       string
+	MandateID      string
+	QRMode         string
+	QRPayload      string
+	QRImageURL     string
+	DisplayName    string
+	IsReusable     bool
 	VPA            string
 	ExpiresAt      time.Time
 	CallbackToken  string
@@ -127,6 +152,13 @@ type PaymentSplit struct {
 
 type UPIIntentResult struct {
 	CaptureResult
+	FlowType           string
+	MandateID          string
+	QRMode             string
+	QRPayload          string
+	QRImageURL         string
+	DisplayName        string
+	IsReusable         bool
 	VPA                string
 	DeepLink           string
 	IntentURI          string

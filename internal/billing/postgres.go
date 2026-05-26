@@ -10,25 +10,41 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
+	"github.com/sanskarpan/PayGate/internal/common/protect"
+	"github.com/sanskarpan/PayGate/internal/outbox"
 )
 
 type PostgresRepository struct {
-	db *pgxpool.Pool
+	db        *pgxpool.Pool
+	outbox    *outbox.Writer
+	protector *protect.Protector
 }
 
 func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
-	return &PostgresRepository{db: db}
+	return &PostgresRepository{db: db, outbox: outbox.NewWriter(), protector: protect.Default()}
 }
 
 func (r *PostgresRepository) CreateCustomer(ctx context.Context, customer Customer) (Customer, error) {
 	meta, _ := json.Marshal(customer.Metadata)
 	customer.ID = idgen.New("cust")
-	err := r.db.QueryRow(ctx, `
+	email, err := r.protector.SealStringForDomain(protect.DomainBillingCustomerPII, customer.Email)
+	if err != nil {
+		return Customer{}, err
+	}
+	phone, err := r.protector.SealStringForDomain(protect.DomainBillingCustomerPII, customer.Phone)
+	if err != nil {
+		return Customer{}, err
+	}
+	externalReference, err := r.protector.SealStringForDomain(protect.DomainBillingCustomerPII, customer.ExternalReference)
+	if err != nil {
+		return Customer{}, err
+	}
+	err = r.db.QueryRow(ctx, `
 INSERT INTO paygate_billing.customers
     (id, merchant_id, name, email, phone, external_reference, default_payment_token_id, metadata_json)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 RETURNING created_at, updated_at
-`, customer.ID, customer.MerchantID, customer.Name, customer.Email, customer.Phone, customer.ExternalReference, customer.DefaultPaymentTokenID, meta).
+`, customer.ID, customer.MerchantID, customer.Name, email, phone, externalReference, customer.DefaultPaymentTokenID, meta).
 		Scan(&customer.CreatedAt, &customer.UpdatedAt)
 	return customer, err
 }
@@ -48,6 +64,10 @@ WHERE merchant_id = $1 AND id = $2
 		return Customer{}, err
 	}
 	_ = json.Unmarshal(meta, &customer.Metadata)
+	customer, err = r.decryptCustomer(customer)
+	if err != nil {
+		return Customer{}, err
+	}
 	return customer, nil
 }
 
@@ -74,6 +94,10 @@ LIMIT $2
 			return nil, err
 		}
 		_ = json.Unmarshal(meta, &customer.Metadata)
+		customer, err = r.decryptCustomer(customer)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, customer)
 	}
 	return out, rows.Err()
@@ -81,7 +105,19 @@ LIMIT $2
 
 func (r *PostgresRepository) UpdateCustomer(ctx context.Context, customer Customer) (Customer, error) {
 	meta, _ := json.Marshal(customer.Metadata)
-	err := r.db.QueryRow(ctx, `
+	email, err := r.protector.SealStringForDomain(protect.DomainBillingCustomerPII, customer.Email)
+	if err != nil {
+		return Customer{}, err
+	}
+	phone, err := r.protector.SealStringForDomain(protect.DomainBillingCustomerPII, customer.Phone)
+	if err != nil {
+		return Customer{}, err
+	}
+	externalReference, err := r.protector.SealStringForDomain(protect.DomainBillingCustomerPII, customer.ExternalReference)
+	if err != nil {
+		return Customer{}, err
+	}
+	err = r.db.QueryRow(ctx, `
 UPDATE paygate_billing.customers
 SET name = $3,
     email = $4,
@@ -92,7 +128,7 @@ SET name = $3,
     updated_at = NOW()
 WHERE merchant_id = $1 AND id = $2
 RETURNING created_at, updated_at
-`, customer.MerchantID, customer.ID, customer.Name, customer.Email, customer.Phone, customer.ExternalReference, customer.DefaultPaymentTokenID, meta).
+`, customer.MerchantID, customer.ID, customer.Name, email, phone, externalReference, customer.DefaultPaymentTokenID, meta).
 		Scan(&customer.CreatedAt, &customer.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -101,6 +137,261 @@ RETURNING created_at, updated_at
 		return Customer{}, err
 	}
 	return customer, nil
+}
+
+func (r *PostgresRepository) decryptCustomer(customer Customer) (Customer, error) {
+	var err error
+	customer.Email, err = r.protector.OpenStringForDomain(protect.DomainBillingCustomerPII, customer.Email)
+	if err != nil {
+		return Customer{}, err
+	}
+	customer.Phone, err = r.protector.OpenStringForDomain(protect.DomainBillingCustomerPII, customer.Phone)
+	if err != nil {
+		return Customer{}, err
+	}
+	customer.ExternalReference, err = r.protector.OpenStringForDomain(protect.DomainBillingCustomerPII, customer.ExternalReference)
+	if err != nil {
+		return Customer{}, err
+	}
+	return customer, nil
+}
+
+func scanUPIMandate(row pgx.Row) (UPIMandate, error) {
+	var mandate UPIMandate
+	var meta []byte
+	err := row.Scan(
+		&mandate.ID, &mandate.MerchantID, &mandate.CustomerID, &mandate.Reference, &mandate.DisplayName, &mandate.VPA,
+		&mandate.AmountLimit, &mandate.Currency, &mandate.IntervalUnit, &mandate.IntervalCount, &mandate.RetryWindowHours,
+		&mandate.Status, &mandate.ApprovalToken, &mandate.ApprovedAt, &mandate.PausedAt, &mandate.RevokedAt, &mandate.ExpiresAt,
+		&meta, &mandate.CreatedAt, &mandate.UpdatedAt,
+	)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	_ = json.Unmarshal(meta, &mandate.Metadata)
+	return mandate, nil
+}
+
+func scanUPIMandateEvent(row pgx.Row) (UPIMandateEvent, error) {
+	var event UPIMandateEvent
+	var meta []byte
+	err := row.Scan(&event.ID, &event.MerchantID, &event.MandateID, &event.EventType, &event.ActorType, &event.ActorID, &event.Reason, &event.PaymentID, &meta, &event.CreatedAt)
+	if err != nil {
+		return UPIMandateEvent{}, err
+	}
+	_ = json.Unmarshal(meta, &event.Metadata)
+	return event, nil
+}
+
+func (r *PostgresRepository) CreateUPIMandate(ctx context.Context, mandate UPIMandate, actorType, actorID string) (UPIMandate, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	meta, _ := json.Marshal(mandate.Metadata)
+	mandate.ID = idgen.New("mandate")
+	if mandate.Status == "" {
+		mandate.Status = UPIMandatePendingApproval
+	}
+	err = tx.QueryRow(ctx, `
+INSERT INTO paygate_billing.upi_mandates
+    (id, merchant_id, customer_id, reference, display_name, vpa, amount_limit, currency, interval_unit, interval_count, retry_window_hours, status, approval_token, expires_at, metadata_json)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+RETURNING approved_at, paused_at, revoked_at, created_at, updated_at
+`, mandate.ID, mandate.MerchantID, mandate.CustomerID, mandate.Reference, mandate.DisplayName, mandate.VPA, mandate.AmountLimit, mandate.Currency, mandate.IntervalUnit, mandate.IntervalCount, mandate.RetryWindowHours, mandate.Status, mandate.ApprovalToken, mandate.ExpiresAt, meta).
+		Scan(&mandate.ApprovedAt, &mandate.PausedAt, &mandate.RevokedAt, &mandate.CreatedAt, &mandate.UpdatedAt)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	if err := r.insertUPIMandateEventTx(ctx, tx, mandate.MerchantID, mandate.ID, MandateEventCreated, actorType, actorID, "", "", nil); err != nil {
+		return UPIMandate{}, err
+	}
+	if err := r.writeUPIMandateOutboxTx(ctx, tx, mandate, "upi_mandate.created"); err != nil {
+		return UPIMandate{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return UPIMandate{}, err
+	}
+	return mandate, nil
+}
+
+func (r *PostgresRepository) GetUPIMandate(ctx context.Context, merchantID, mandateID string) (UPIMandate, error) {
+	mandate, err := scanUPIMandate(r.db.QueryRow(ctx, `
+SELECT id, merchant_id, customer_id, reference, display_name, vpa, amount_limit, currency, interval_unit, interval_count,
+       retry_window_hours, status, COALESCE(approval_token, ''), approved_at, paused_at, revoked_at, expires_at,
+       metadata_json, created_at, updated_at
+FROM paygate_billing.upi_mandates
+WHERE merchant_id = $1 AND id = $2
+`, merchantID, mandateID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return UPIMandate{}, ErrUPIMandateNotFound
+		}
+		return UPIMandate{}, err
+	}
+	return mandate, nil
+}
+
+func (r *PostgresRepository) ListUPIMandates(ctx context.Context, merchantID string, limit int) ([]UPIMandate, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT id, merchant_id, customer_id, reference, display_name, vpa, amount_limit, currency, interval_unit, interval_count,
+       retry_window_hours, status, COALESCE(approval_token, ''), approved_at, paused_at, revoked_at, expires_at,
+       metadata_json, created_at, updated_at
+FROM paygate_billing.upi_mandates
+WHERE merchant_id = $1
+ORDER BY created_at DESC
+LIMIT $2
+`, merchantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UPIMandate
+	for rows.Next() {
+		item, err := scanUPIMandate(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) UpdateUPIMandateStatus(ctx context.Context, merchantID, mandateID string, status UPIMandateStatus, actorType, actorID, reason string) (UPIMandate, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return UPIMandate{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var eventType UPIMandateEventType
+	switch status {
+	case UPIMandateActive:
+		eventType = MandateEventActivated
+	case UPIMandatePaused:
+		eventType = MandateEventPaused
+	case UPIMandateRevoked:
+		eventType = MandateEventRevoked
+	case UPIMandateExpired:
+		eventType = MandateEventExpired
+	default:
+		return UPIMandate{}, ErrInvalidUPIMandate
+	}
+	var mandate UPIMandate
+	query := `
+UPDATE paygate_billing.upi_mandates
+SET status = $3,
+    approved_at = CASE WHEN $3 = 'active' AND approved_at IS NULL THEN NOW() ELSE approved_at END,
+    paused_at = CASE WHEN $3 = 'paused' THEN NOW() WHEN $3 = 'active' THEN NULL ELSE paused_at END,
+    revoked_at = CASE WHEN $3 = 'revoked' THEN NOW() ELSE revoked_at END,
+    approval_token = CASE WHEN $3 = 'active' THEN '' ELSE approval_token END,
+    updated_at = NOW()
+WHERE merchant_id = $1 AND id = $2
+RETURNING id, merchant_id, customer_id, reference, display_name, vpa, amount_limit, currency, interval_unit, interval_count,
+       retry_window_hours, status, COALESCE(approval_token, ''), approved_at, paused_at, revoked_at, expires_at,
+       metadata_json, created_at, updated_at`
+	mandate, err = scanUPIMandate(tx.QueryRow(ctx, query, merchantID, mandateID, status))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return UPIMandate{}, ErrUPIMandateNotFound
+		}
+		return UPIMandate{}, err
+	}
+	if err := r.insertUPIMandateEventTx(ctx, tx, merchantID, mandateID, eventType, actorType, actorID, reason, "", nil); err != nil {
+		return UPIMandate{}, err
+	}
+	eventName := map[UPIMandateEventType]string{
+		MandateEventActivated: "upi_mandate.activated",
+		MandateEventPaused:    "upi_mandate.paused",
+		MandateEventRevoked:   "upi_mandate.revoked",
+		MandateEventExpired:   "upi_mandate.expired",
+	}[eventType]
+	if err := r.writeUPIMandateOutboxTx(ctx, tx, mandate, eventName); err != nil {
+		return UPIMandate{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return UPIMandate{}, err
+	}
+	return mandate, nil
+}
+
+func (r *PostgresRepository) ListUPIMandateEvents(ctx context.Context, merchantID, mandateID string, limit int) ([]UPIMandateEvent, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT id, merchant_id, mandate_id, event_type, actor_type, actor_id, COALESCE(reason, ''), COALESCE(payment_id, ''), metadata_json, created_at
+FROM paygate_billing.upi_mandate_events
+WHERE merchant_id = $1 AND mandate_id = $2
+ORDER BY created_at DESC
+LIMIT $3
+`, merchantID, mandateID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UPIMandateEvent
+	for rows.Next() {
+		item, err := scanUPIMandateEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) RecordUPIMandateChargeResult(ctx context.Context, merchantID, mandateID string, eventType UPIMandateEventType, paymentID, reason string, metadata map[string]any) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := r.insertUPIMandateEventTx(ctx, tx, merchantID, mandateID, eventType, "system", "subscription_runner", reason, paymentID, metadata); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *PostgresRepository) insertUPIMandateEventTx(ctx context.Context, tx pgx.Tx, merchantID, mandateID string, eventType UPIMandateEventType, actorType, actorID, reason, paymentID string, metadata map[string]any) error {
+	meta, _ := json.Marshal(metadata)
+	_, err := tx.Exec(ctx, `
+INSERT INTO paygate_billing.upi_mandate_events
+    (id, merchant_id, mandate_id, event_type, actor_type, actor_id, reason, payment_id, metadata_json)
+VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8, ''),$9)
+`, idgen.New("mtev"), merchantID, mandateID, eventType, actorType, actorID, reason, paymentID, meta)
+	return err
+}
+
+func (r *PostgresRepository) writeUPIMandateOutboxTx(ctx context.Context, tx pgx.Tx, mandate UPIMandate, eventType string) error {
+	if r.outbox == nil {
+		return nil
+	}
+	return r.outbox.WriteTx(ctx, tx, outbox.Event{
+		AggregateType: "upi_mandate",
+		AggregateID:   mandate.ID,
+		EventType:     eventType,
+		MerchantID:    mandate.MerchantID,
+		Payload: map[string]any{
+			"mandate_id":         mandate.ID,
+			"customer_id":        mandate.CustomerID,
+			"status":             mandate.Status,
+			"reference":          mandate.Reference,
+			"amount_limit":       mandate.AmountLimit,
+			"currency":           mandate.Currency,
+			"interval_unit":      mandate.IntervalUnit,
+			"interval_count":     mandate.IntervalCount,
+			"retry_window_hours": mandate.RetryWindowHours,
+		},
+	})
 }
 
 func scanVirtualAccount(row pgx.Row) (VirtualAccount, error) {
@@ -199,13 +490,25 @@ func (r *PostgresRepository) CreateInboundCollection(ctx context.Context, collec
 	if collection.Status == "" {
 		collection.Status = CollectionReviewRequired
 	}
-	err := r.db.QueryRow(ctx, `
+	remitterAccount, err := r.protector.SealStringForDomain(protect.DomainBillingInboundCollection, collection.RemitterAccount)
+	if err != nil {
+		return InboundCollection{}, err
+	}
+	remitterIFSC, err := r.protector.SealStringForDomain(protect.DomainBillingInboundCollection, collection.RemitterIFSC)
+	if err != nil {
+		return InboundCollection{}, err
+	}
+	remitterVPA, err := r.protector.SealStringForDomain(protect.DomainBillingInboundCollection, collection.RemitterVPA)
+	if err != nil {
+		return InboundCollection{}, err
+	}
+	err = r.db.QueryRow(ctx, `
 INSERT INTO paygate_billing.inbound_collections
     (id, merchant_id, virtual_account_id, customer_id, order_id, amount, currency, remitter_name, remitter_account, remitter_ifsc, remitter_vpa, utr, status, review_notes, matched_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, CASE WHEN $13 = 'matched' THEN NOW() ELSE NULL END)
 RETURNING created_at, updated_at, matched_at
 `, collection.ID, collection.MerchantID, collection.VirtualAccountID, collection.CustomerID, collection.OrderID, collection.Amount, collection.Currency,
-		collection.RemitterName, collection.RemitterAccount, collection.RemitterIFSC, collection.RemitterVPA, collection.UTR, collection.Status, collection.ReviewNotes).
+		collection.RemitterName, remitterAccount, remitterIFSC, remitterVPA, collection.UTR, collection.Status, collection.ReviewNotes).
 		Scan(&collection.CreatedAt, &collection.UpdatedAt, &collection.MatchedAt)
 	return collection, err
 }
@@ -222,7 +525,7 @@ WHERE merchant_id = $1 AND id = $2
 		}
 		return InboundCollection{}, err
 	}
-	return item, nil
+	return r.decryptInboundCollection(item)
 }
 
 func (r *PostgresRepository) ListInboundCollections(ctx context.Context, merchantID string, limit int, reviewOnly bool) ([]InboundCollection, error) {
@@ -244,6 +547,10 @@ LIMIT $3
 	var out []InboundCollection
 	for rows.Next() {
 		item, err := scanInboundCollection(rows)
+		if err != nil {
+			return nil, err
+		}
+		item, err = r.decryptInboundCollection(item)
 		if err != nil {
 			return nil, err
 		}
@@ -270,6 +577,23 @@ RETURNING id, merchant_id, virtual_account_id, customer_id, order_id, amount, cu
 		}
 		return InboundCollection{}, err
 	}
+	return r.decryptInboundCollection(item)
+}
+
+func (r *PostgresRepository) decryptInboundCollection(item InboundCollection) (InboundCollection, error) {
+	var err error
+	item.RemitterAccount, err = r.protector.OpenStringForDomain(protect.DomainBillingInboundCollection, item.RemitterAccount)
+	if err != nil {
+		return InboundCollection{}, err
+	}
+	item.RemitterIFSC, err = r.protector.OpenStringForDomain(protect.DomainBillingInboundCollection, item.RemitterIFSC)
+	if err != nil {
+		return InboundCollection{}, err
+	}
+	item.RemitterVPA, err = r.protector.OpenStringForDomain(protect.DomainBillingInboundCollection, item.RemitterVPA)
+	if err != nil {
+		return InboundCollection{}, err
+	}
 	return item, nil
 }
 
@@ -290,12 +614,16 @@ func (r *PostgresRepository) CreateConnectedAccount(ctx context.Context, account
 	if account.Status == "" {
 		account.Status = ConnectedAccountActive
 	}
-	err := r.db.QueryRow(ctx, `
+	externalReference, err := r.protector.SealStringForDomain(protect.DomainBillingConnectedAccount, account.ExternalReference)
+	if err != nil {
+		return ConnectedAccount{}, err
+	}
+	err = r.db.QueryRow(ctx, `
 INSERT INTO paygate_billing.connected_accounts
     (id, merchant_id, linked_merchant_id, beneficiary_id, display_name, external_reference, status, metadata_json)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 RETURNING created_at, updated_at
-`, account.ID, account.MerchantID, account.LinkedMerchantID, account.BeneficiaryID, account.DisplayName, account.ExternalReference, account.Status, meta).
+`, account.ID, account.MerchantID, account.LinkedMerchantID, account.BeneficiaryID, account.DisplayName, externalReference, account.Status, meta).
 		Scan(&account.CreatedAt, &account.UpdatedAt)
 	return account, err
 }
@@ -312,7 +640,7 @@ WHERE merchant_id = $1 AND id = $2
 		}
 		return ConnectedAccount{}, err
 	}
-	return item, nil
+	return r.decryptConnectedAccount(item)
 }
 
 func (r *PostgresRepository) ListConnectedAccounts(ctx context.Context, merchantID string, limit int) ([]ConnectedAccount, error) {
@@ -336,9 +664,22 @@ LIMIT $2
 		if err != nil {
 			return nil, err
 		}
+		item, err = r.decryptConnectedAccount(item)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (r *PostgresRepository) decryptConnectedAccount(item ConnectedAccount) (ConnectedAccount, error) {
+	var err error
+	item.ExternalReference, err = r.protector.OpenStringForDomain(protect.DomainBillingConnectedAccount, item.ExternalReference)
+	if err != nil {
+		return ConnectedAccount{}, err
+	}
+	return item, nil
 }
 
 func generateVirtualAccountNumber(id string) string {
@@ -357,11 +698,11 @@ func (r *PostgresRepository) CreateSubscription(ctx context.Context, subscriptio
 	subscription.ID = idgen.New("sub")
 	err := r.db.QueryRow(ctx, `
 INSERT INTO paygate_billing.subscriptions
-    (id, merchant_id, customer_id, plan_name, payment_method_token_id, amount, currency, interval_unit, interval_count,
+    (id, merchant_id, customer_id, plan_name, collection_method, payment_method_token_id, upi_mandate_id, amount, currency, interval_unit, interval_count,
      status, next_billing_at, max_retry_count, retry_interval_hours, cancel_at_period_end, pause_reason, metadata_json)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7, ''),$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 RETURNING retry_count, created_at, updated_at
-`, subscription.ID, subscription.MerchantID, subscription.CustomerID, subscription.PlanName, subscription.PaymentMethodTokenID, subscription.Amount, subscription.Currency, subscription.IntervalUnit, subscription.IntervalCount,
+`, subscription.ID, subscription.MerchantID, subscription.CustomerID, subscription.PlanName, subscription.CollectionMethod, subscription.PaymentMethodTokenID, subscription.UPIMandateID, subscription.Amount, subscription.Currency, subscription.IntervalUnit, subscription.IntervalCount,
 		subscription.Status, subscription.NextBillingAt, subscription.MaxRetryCount, subscription.RetryIntervalHours, subscription.CancelAtPeriodEnd, subscription.PauseReason, meta).
 		Scan(&subscription.RetryCount, &subscription.CreatedAt, &subscription.UpdatedAt)
 	return subscription, err
@@ -371,7 +712,7 @@ func scanSubscription(row pgx.Row) (Subscription, error) {
 	var subscription Subscription
 	var canceledAt *time.Time
 	var meta []byte
-	err := row.Scan(&subscription.ID, &subscription.MerchantID, &subscription.CustomerID, &subscription.PlanName, &subscription.PaymentMethodTokenID,
+	err := row.Scan(&subscription.ID, &subscription.MerchantID, &subscription.CustomerID, &subscription.PlanName, &subscription.CollectionMethod, &subscription.PaymentMethodTokenID, &subscription.UPIMandateID,
 		&subscription.Amount, &subscription.Currency, &subscription.IntervalUnit, &subscription.IntervalCount, &subscription.Status,
 		&subscription.NextBillingAt, &subscription.RetryCount, &subscription.MaxRetryCount, &subscription.RetryIntervalHours,
 		&subscription.CancelAtPeriodEnd, &subscription.PauseReason, &canceledAt, &meta, &subscription.CreatedAt, &subscription.UpdatedAt)
@@ -385,7 +726,7 @@ func scanSubscription(row pgx.Row) (Subscription, error) {
 
 func (r *PostgresRepository) GetSubscription(ctx context.Context, merchantID, subscriptionID string) (Subscription, error) {
 	subscription, err := scanSubscription(r.db.QueryRow(ctx, `
-SELECT id, merchant_id, customer_id, plan_name, payment_method_token_id, amount, currency, interval_unit, interval_count,
+SELECT id, merchant_id, customer_id, plan_name, collection_method, payment_method_token_id, COALESCE(upi_mandate_id, ''), amount, currency, interval_unit, interval_count,
        status, next_billing_at, retry_count, max_retry_count, retry_interval_hours, cancel_at_period_end, pause_reason,
        canceled_at, metadata_json, created_at, updated_at
 FROM paygate_billing.subscriptions
@@ -405,7 +746,7 @@ func (r *PostgresRepository) ListSubscriptions(ctx context.Context, merchantID s
 		limit = 25
 	}
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, customer_id, plan_name, payment_method_token_id, amount, currency, interval_unit, interval_count,
+SELECT id, merchant_id, customer_id, plan_name, collection_method, payment_method_token_id, COALESCE(upi_mandate_id, ''), amount, currency, interval_unit, interval_count,
        status, next_billing_at, retry_count, max_retry_count, retry_interval_hours, cancel_at_period_end, pause_reason,
        canceled_at, metadata_json, created_at, updated_at
 FROM paygate_billing.subscriptions
@@ -438,7 +779,7 @@ SET status = $3,
     canceled_at = CASE WHEN $3 = 'canceled' THEN NOW() ELSE canceled_at END,
     updated_at = NOW()
 WHERE merchant_id = $1 AND id = $2
-RETURNING id, merchant_id, customer_id, plan_name, payment_method_token_id, amount, currency, interval_unit, interval_count,
+RETURNING id, merchant_id, customer_id, plan_name, collection_method, payment_method_token_id, COALESCE(upi_mandate_id, ''), amount, currency, interval_unit, interval_count,
        status, next_billing_at, retry_count, max_retry_count, retry_interval_hours, cancel_at_period_end, pause_reason,
        canceled_at, metadata_json, created_at, updated_at`
 	subscription, err := scanSubscription(r.db.QueryRow(ctx, query, merchantID, subscriptionID, status, pauseReason, cancelAtPeriodEnd, nextBillingAt))
@@ -456,7 +797,7 @@ func (r *PostgresRepository) LeaseDueSubscriptions(ctx context.Context, before t
 		limit = 10
 	}
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, customer_id, plan_name, payment_method_token_id, amount, currency, interval_unit, interval_count,
+SELECT id, merchant_id, customer_id, plan_name, collection_method, payment_method_token_id, COALESCE(upi_mandate_id, ''), amount, currency, interval_unit, interval_count,
        status, next_billing_at, retry_count, max_retry_count, retry_interval_hours, cancel_at_period_end, pause_reason,
        canceled_at, metadata_json, created_at, updated_at
 FROM paygate_billing.subscriptions

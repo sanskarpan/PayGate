@@ -82,9 +82,9 @@ VALUES ($1,$2,$3,$4,$5,$6,'upi',$7,'pending_customer_action',false)
 
 	_, err = tx.Exec(ctx, `
 INSERT INTO paygate_payments.upi_payment_details
-(payment_id, merchant_id, order_id, vpa, provider_status, callback_token, expires_at)
-VALUES ($1,$2,$3,$4,'pending',$5,$6)
-`, in.PaymentID, in.MerchantID, in.OrderID, in.VPA, in.CallbackToken, in.ExpiresAt)
+(payment_id, merchant_id, order_id, flow_type, mandate_id, qr_mode, qr_payload, qr_image_url, display_name, is_reusable, vpa, provider_status, callback_token, expires_at)
+VALUES ($1,$2,$3,$4,NULLIF($5, ''),NULLIF($6, ''),NULLIF($7, ''),NULLIF($8, ''),NULLIF($9, ''),$10,$11,'pending',$12,$13)
+`, in.PaymentID, in.MerchantID, in.OrderID, in.FlowType, in.MandateID, in.QRMode, in.QRPayload, in.QRImageURL, in.DisplayName, in.IsReusable, in.VPA, in.CallbackToken, in.ExpiresAt)
 	if err != nil {
 		return UPIIntentResult{}, fmt.Errorf("insert upi detail: %w", err)
 	}
@@ -127,6 +127,13 @@ WHERE id = $1 AND merchant_id = $2
 			Captured:    false,
 			CreatedAt:   now,
 		},
+		MandateID:      in.MandateID,
+		FlowType:       in.FlowType,
+		QRMode:         in.QRMode,
+		QRPayload:      in.QRPayload,
+		QRImageURL:     in.QRImageURL,
+		DisplayName:    in.DisplayName,
+		IsReusable:     in.IsReusable,
 		VPA:            in.VPA,
 		ProviderStatus: UPIProviderStatusPending,
 		ExpiresAt:      in.ExpiresAt,
@@ -139,10 +146,12 @@ UPDATE paygate_payments.upi_payment_details
 SET deep_link = $3,
     intent_uri = $4,
     gateway_reference = $5,
-    expires_at = $6,
+    qr_payload = COALESCE(NULLIF($6, ''), qr_payload),
+    qr_image_url = COALESCE(NULLIF($7, ''), qr_image_url),
+    expires_at = $8,
     updated_at = NOW()
 WHERE payment_id = $1 AND merchant_id = $2
-`, paymentID, merchantID, gatewayResult.DeepLink, gatewayResult.IntentURI, gatewayResult.GatewayReference, gatewayResult.ExpiresAt)
+`, paymentID, merchantID, gatewayResult.DeepLink, gatewayResult.IntentURI, gatewayResult.GatewayReference, gatewayResult.QRPayload, gatewayResult.QRImageURL, gatewayResult.ExpiresAt)
 	if err != nil {
 		return UPIIntentResult{}, err
 	}
@@ -166,6 +175,7 @@ func (r *PostgresRepository) GetUPIIntent(ctx context.Context, merchantID, payme
 	err := r.db.QueryRow(ctx, `
 SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, COALESCE(p.method_state, ''), COALESCE(p.method_state_reason, ''), p.status, p.captured,
        p.captured_at, p.created_at, p.authorized_at,
+       d.flow_type, COALESCE(d.mandate_id, ''), COALESCE(d.qr_mode, ''), COALESCE(d.qr_payload, ''), COALESCE(d.qr_image_url, ''), COALESCE(d.display_name, ''), d.is_reusable,
        d.vpa, COALESCE(d.deep_link, ''), COALESCE(d.intent_uri, ''), COALESCE(d.gateway_reference, ''),
        d.provider_status, d.callback_token, d.expires_at, d.completed_at, d.last_polled_at,
        COALESCE(d.failure_code, ''), COALESCE(d.failure_description, '')
@@ -175,6 +185,7 @@ WHERE p.id = $1 AND p.merchant_id = $2
 `, paymentID, merchantID).Scan(
 		&out.PaymentID, &out.MerchantID, &out.OrderID, &out.Amount, &out.Currency, &out.Method, &out.MethodState, &out.MethodStateReason, &status, &out.Captured,
 		&out.CapturedAt, &out.CreatedAt, &out.AuthorizedAt,
+		&out.FlowType, &out.MandateID, &out.QRMode, &out.QRPayload, &out.QRImageURL, &out.DisplayName, &out.IsReusable,
 		&out.VPA, &out.DeepLink, &out.IntentURI, &out.GatewayReference,
 		&providerStatus, &out.CallbackToken, &out.ExpiresAt, &out.CompletedAt, &out.LastPolledAt,
 		&out.FailureCode, &out.FailureDescription,
@@ -410,6 +421,7 @@ func (r *PostgresRepository) lockUPIIntentTx(ctx context.Context, tx pgx.Tx, pay
 	err := tx.QueryRow(ctx, `
 SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, COALESCE(p.method_state, ''), COALESCE(p.method_state_reason, ''), p.status, p.captured,
        p.captured_at, p.created_at, p.authorized_at,
+       d.flow_type, COALESCE(d.mandate_id, ''), COALESCE(d.qr_mode, ''), COALESCE(d.qr_payload, ''), COALESCE(d.qr_image_url, ''), COALESCE(d.display_name, ''), d.is_reusable,
        d.vpa, COALESCE(d.deep_link, ''), COALESCE(d.intent_uri, ''), COALESCE(d.gateway_reference, ''),
        d.provider_status, d.callback_token, d.expires_at, d.completed_at, d.last_polled_at,
        COALESCE(d.failure_code, ''), COALESCE(d.failure_description, '')
@@ -420,6 +432,7 @@ FOR UPDATE
 `, paymentID).Scan(
 		&current.PaymentID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &current.MethodState, &current.MethodStateReason, &status, &current.Captured,
 		&current.CapturedAt, &current.CreatedAt, &current.AuthorizedAt,
+		&current.FlowType, &current.MandateID, &current.QRMode, &current.QRPayload, &current.QRImageURL, &current.DisplayName, &current.IsReusable,
 		&current.VPA, &current.DeepLink, &current.IntentURI, &current.GatewayReference,
 		&providerStatus, &current.CallbackToken, &current.ExpiresAt, &current.CompletedAt, &current.LastPolledAt,
 		&current.FailureCode, &current.FailureDescription,
