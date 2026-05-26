@@ -28,7 +28,7 @@ func (r *Repository) UpsertTaxProfile(ctx context.Context, in TaxProfile) (TaxPr
 	if in.DefaultTaxRateBPS <= 0 {
 		in.DefaultTaxRateBPS = 1800
 	}
-	encryptedGSTIN, err := protect.Default().SealString(in.GSTIN)
+	encryptedGSTIN, err := protect.Default().SealStringForDomain(protect.DomainReportingTaxProfile, in.GSTIN)
 	if err != nil {
 		return TaxProfile{}, fmt.Errorf("encrypt gstin: %w", err)
 	}
@@ -58,7 +58,7 @@ FROM paygate_reporting.tax_profiles
 WHERE merchant_id = $1
 `, merchantID).Scan(&out.MerchantID, &out.LegalName, &out.GSTIN, &out.BusinessStateCode, &out.PlaceOfSupply, &out.DefaultTaxRateBPS, &out.CreatedAt, &out.UpdatedAt)
 	if err == nil {
-		out.GSTIN, err = protect.Default().OpenString(out.GSTIN)
+		out.GSTIN, err = protect.Default().OpenStringForDomain(protect.DomainReportingTaxProfile, out.GSTIN)
 		if err != nil {
 			return TaxProfile{}, fmt.Errorf("decrypt gstin: %w", err)
 		}
