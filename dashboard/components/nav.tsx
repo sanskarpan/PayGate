@@ -9,6 +9,7 @@ const links = [
   ["/overview", "Overview"],
   ["/orders", "Orders"],
   ["/compliance", "Compliance"],
+  ["/mandates", "Mandates"],
   ["/webhooks", "Webhooks"],
   ["/settlements", "Settlements"],
   ["/payouts", "Payouts"],

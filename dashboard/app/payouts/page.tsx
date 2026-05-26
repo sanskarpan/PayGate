@@ -1,5 +1,6 @@
 import { getBeneficiaries, getPayouts, requireViewer } from "../../lib/api";
 import { formatMoney, formatTime } from "../../lib/types";
+import PayoutApprovalManager from "../../components/payout-approval-manager";
 
 function statusBadge(status: string) {
   switch (status) {
@@ -123,51 +124,7 @@ export default async function PayoutsPage() {
           )}
         </div>
       </div>
-      <div className="list-card">
-        {payouts.items.length === 0 ? (
-          <div className="empty-state">
-            <strong>No payouts initiated</strong>
-            <span className="muted">
-              Run a settlement batch and then initiate a payout through the settlement payout endpoint.
-            </span>
-            <code>POST /v1/settlements/{"{id}"}/payout</code>
-          </div>
-        ) : (
-          payouts.items.map((p) => (
-            <article className="list-row" key={p.id}>
-              <div>
-                <div className="row-title">{p.id}</div>
-                <div className="row-meta">
-                  <span className={statusBadge(p.status)}>{p.status}</span>
-                  {p.approval_status ? <span>{p.approval_status}</span> : null}
-                  <span>Settlement: {p.settlement_id}</span>
-                  {p.beneficiary_id ? <span>Beneficiary: {p.beneficiary_id}</span> : null}
-                  {p.bank_reference && <span>Ref: {p.bank_reference}</span>}
-                  {p.failure_reason && (
-                    <span className="badge-error">{p.failure_reason}</span>
-                  )}
-                  <span>{formatTime(p.created_at)}</span>
-                </div>
-              </div>
-              <div className="row-actions">
-                <div className="amount-pill">{formatMoney(p.amount, p.currency)}</div>
-                {p.approval_status === "pending" ? (
-                  <>
-                    <form action={`/api/proxy/v1/payouts/${p.id}/approve`} method="POST">
-                      <input type="hidden" name="_redirect" value="/payouts" />
-                      <button className="ghost-button" type="submit">Approve</button>
-                    </form>
-                    <form action={`/api/proxy/v1/payouts/${p.id}/reject`} method="POST">
-                      <input type="hidden" name="_redirect" value="/payouts" />
-                      <button className="ghost-button" type="submit">Reject</button>
-                    </form>
-                  </>
-                ) : null}
-              </div>
-            </article>
-          ))
-        )}
-      </div>
+      <PayoutApprovalManager items={payouts.items} />
     </section>
   );
 }

@@ -33,9 +33,35 @@ export type PaymentItem = {
   captured_at: number;
   authorized_at: number;
   created_at: number;
+  card_challenge?: {
+    entity: string;
+    payment_id: string;
+    session_id: string;
+    status: string;
+    redirect_url: string;
+    expires_at?: number;
+    sandbox_callback_url?: string;
+  };
+  next_action?: {
+    type: string;
+    redirect_url?: string;
+    challenge_session_id?: string;
+    challenge_status?: string;
+    expires_at?: number;
+  };
+  sandbox?: {
+    callback_url?: string;
+  };
 };
 
 export type UPIIntentItem = PaymentItem & {
+  flow_type?: string;
+  mandate_id?: string;
+  qr_mode?: string;
+  qr_payload?: string;
+  qr_image_url?: string;
+  display_name?: string;
+  is_reusable?: boolean;
   vpa: string;
   provider_status: string;
   gateway_reference: string;
@@ -46,10 +72,46 @@ export type UPIIntentItem = PaymentItem & {
   failure_description?: string;
   next_action?: {
     type: string;
-    deep_link: string;
-    intent_uri: string;
+    deep_link?: string;
+    intent_uri?: string;
+    qr_payload?: string;
+    qr_image_url?: string;
+    qr_mode?: string;
     expires_at: number;
   };
+};
+
+export type UPIMandateItem = {
+  id: string;
+  merchant_id: string;
+  customer_id: string;
+  reference: string;
+  display_name: string;
+  vpa: string;
+  amount_limit: number;
+  currency: string;
+  interval_unit: string;
+  interval_count: number;
+  retry_window_hours: number;
+  status: string;
+  approved_at?: number;
+  paused_at?: number;
+  revoked_at?: number;
+  expires_at?: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type UPIMandateEventItem = {
+  id: string;
+  mandate_id: string;
+  event_type: string;
+  actor_type: string;
+  actor_id: string;
+  reason: string;
+  payment_id: string;
+  metadata?: Record<string, unknown>;
+  created_at: number;
 };
 
 export type APIKeyItem = {
@@ -252,12 +314,12 @@ export type BeneficiaryItem = {
 export type OnboardingApplicationItem = {
   id: string;
   merchant_id: string;
+  state: string;
   legal_name: string;
   business_classification: string;
   registration_number: string;
   tax_identifier: string;
   country_code: string;
-  state: string;
   reviewer_notes: string;
   submitted_at?: number | null;
   reviewed_at?: number | null;
@@ -449,6 +511,11 @@ export type GatewayScenario = {
   decline_code: string;
   active: boolean;
   created_at: number;
+};
+
+export type PrometheusSeriesPoint = {
+  labels: Record<string, string>;
+  value: number;
 };
 
 export function formatMoney(amount: number, currency: string) {
