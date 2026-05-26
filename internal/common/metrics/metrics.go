@@ -28,6 +28,17 @@ var (
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0},
 	}, []string{"merchant_id"})
 
+	GatewayAuthorizationsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "paygate_gateway_authorizations_total",
+		Help: "Total gateway authorization attempts by payment method, provider, and outcome",
+	}, []string{"method", "provider", "outcome"})
+
+	GatewayAuthorizationDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "paygate_gateway_authorization_duration_seconds",
+		Help:    "Gateway authorization duration in seconds by payment method and provider",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0},
+	}, []string{"method", "provider"})
+
 	// Order metrics
 	OrdersTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "paygate_orders_total",
@@ -61,6 +72,11 @@ var (
 		Name: "paygate_webhook_deliveries_total",
 		Help: "Total webhook delivery attempts",
 	}, []string{"status"}) // status: success, failed, dead_lettered
+
+	WebhookSignatureDeliveriesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "paygate_webhook_signature_deliveries_total",
+		Help: "Total webhook deliveries by signature mode and status",
+	}, []string{"signature_mode", "status"})
 
 	// Risk metrics
 	RiskEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
