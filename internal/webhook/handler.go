@@ -42,17 +42,19 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		URL    string   `json:"url"`
-		Events []string `json:"events"`
+		URL           string        `json:"url"`
+		Events        []string      `json:"events"`
+		SignatureMode SignatureMode `json:"signature_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
 		return
 	}
 	sub, err := h.svc.CreateSubscription(r.Context(), CreateInput{
-		MerchantID: p.MerchantID,
-		URL:        req.URL,
-		Events:     req.Events,
+		MerchantID:    p.MerchantID,
+		URL:           req.URL,
+		Events:        req.Events,
+		SignatureMode: req.SignatureMode,
 	})
 	if err != nil {
 		handleError(w, err)
@@ -105,16 +107,18 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		URL    string   `json:"url"`
-		Events []string `json:"events"`
+		URL           string        `json:"url"`
+		Events        []string      `json:"events"`
+		SignatureMode SignatureMode `json:"signature_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
 		return
 	}
 	sub, err := h.svc.UpdateSubscription(r.Context(), p.MerchantID, r.PathValue("webhookID"), UpdateInput{
-		URL:    req.URL,
-		Events: req.Events,
+		URL:           req.URL,
+		Events:        req.Events,
+		SignatureMode: req.SignatureMode,
 	})
 	if err != nil {
 		handleError(w, err)
@@ -249,14 +253,15 @@ func (h *Handler) cancelRetries(w http.ResponseWriter, r *http.Request) {
 
 func present(sub WebhookSubscription) map[string]any {
 	return map[string]any{
-		"id":          sub.ID,
-		"entity":      "webhook",
-		"merchant_id": sub.MerchantID,
-		"url":         sub.URL,
-		"events":      sub.Events,
-		"status":      sub.Status,
-		"created_at":  sub.CreatedAt.Unix(),
-		"updated_at":  sub.UpdatedAt.Unix(),
+		"id":             sub.ID,
+		"entity":         "webhook",
+		"merchant_id":    sub.MerchantID,
+		"url":            sub.URL,
+		"events":         sub.Events,
+		"signature_mode": sub.SignatureMode,
+		"status":         sub.Status,
+		"created_at":     sub.CreatedAt.Unix(),
+		"updated_at":     sub.UpdatedAt.Unix(),
 	}
 }
 
@@ -307,7 +312,7 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
 	case errors.Is(err, ErrInvalidTransition):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "INVALID_STATE", Description: err.Error()})
-	case errors.Is(err, ErrInvalidURL), errors.Is(err, ErrNoEvents):
+	case errors.Is(err, ErrInvalidURL), errors.Is(err, ErrNoEvents), errors.Is(err, ErrInvalidSignatureMode):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error"})
