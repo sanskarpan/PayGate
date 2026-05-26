@@ -41,6 +41,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/saga"
 	"github.com/sanskarpan/PayGate/internal/settlement"
 	"github.com/sanskarpan/PayGate/internal/tokenization"
+	"github.com/sanskarpan/PayGate/internal/upiverify"
 	"github.com/sanskarpan/PayGate/internal/webhook"
 )
 
@@ -106,6 +107,7 @@ func run() error {
 	methodHandler := gateway.NewMethodHandler(methodStore)
 	cardTokenRepo := tokenization.NewPostgresRepository(db)
 	cardTokenSvc := tokenization.NewService(cardTokenRepo)
+	vpaVerifySvc := upiverify.NewService(upiverify.NewPostgresRepository(db), upiverify.NewSimulatorProvider())
 	cardTokenHandler := tokenization.NewHandler(cardTokenSvc)
 	paymentRepo := payment.NewPostgresRepository(db, ledgerSvc, orderSvc)
 	paymentSvc := payment.NewService(paymentRepo, gatewayClient, payment.WithCardTokenAuthorizer(cardTokenSvc))
@@ -127,7 +129,7 @@ func run() error {
 	riskHandler := risk.NewHandler(riskSvc)
 	paymentHandler := payment.NewHandler(paymentSvc, payment.WithRiskEvaluator(&riskAdapter{svc: riskSvc}), payment.WithCapabilityChecker(merchantSvc))
 	checkoutHandler := gateway.NewCheckoutHandler(paymentSvc, orderSvc, gateway.WithCardTokenizer(cardTokenSvc))
-	billingSvc := billing.NewService(billing.NewPostgresRepository(db), orderSvc, paymentSvc, cardTokenSvc)
+	billingSvc := billing.NewService(billing.NewPostgresRepository(db), orderSvc, paymentSvc, cardTokenSvc, billing.WithVPAVerifier(vpaVerifySvc))
 	billingHandler := billing.NewHandler(billingSvc)
 
 	refundRepo := refund.NewPostgresRepository(db, ledgerSvc)
@@ -201,7 +203,7 @@ func run() error {
 
 	// Payout workflow
 	payoutRepo := payout.NewPostgresRepository(db, ledgerSvc)
-	payoutSvc := payout.NewService(payoutRepo, l)
+	payoutSvc := payout.NewService(payoutRepo, l, payout.WithVPAVerifier(vpaVerifySvc))
 	payoutSvc.SetLedgerService(ledgerSvc)
 	payoutSvc.SetRailCallbackSecret(cfg.PayoutRailSecret)
 	payoutSvc.EnableSagaOrchestration(sagaSvc)
