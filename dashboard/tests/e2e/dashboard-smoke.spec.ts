@@ -5,10 +5,12 @@ import { loadSeedData } from "./helpers/seed";
 const pageChecks = [
   { path: "/overview", heading: "Merchant command center." },
   { path: "/orders", heading: "Orders" },
-  { path: "/api-keys", heading: "API Keys" },
+  { path: "/compliance", heading: "Onboarding and controls." },
+  { path: "/api-keys", text: "Create Key" },
   { path: "/webhooks", heading: "Webhooks" },
   { path: "/settlements", heading: "Settlement Reports" },
   { path: "/payouts", heading: "Payouts" },
+  { path: "/reports", heading: "Download center." },
   { path: "/recon", heading: "Reconciliation Control" },
   { path: "/risk", heading: "Risk Events" },
   { path: "/gateway", heading: "Payment Gateway Control Panel" },
@@ -16,7 +18,7 @@ const pageChecks = [
   { path: "/audit", heading: "Audit Log" },
   { path: "/team", heading: "Team" },
   { path: "/disputes", heading: "Disputes" },
-];
+] as const;
 
 const ignoredConsoleErrorPatterns = [
   "Failed to fetch RSC payload",
@@ -47,7 +49,11 @@ test("operator dashboard pages render correctly with seeded data", async ({ page
 
   for (const check of pageChecks) {
     await navigate(check.path);
-    await expect(page.getByRole("heading", { name: check.heading })).toBeVisible();
+    if ("heading" in check) {
+      await expect(page.getByRole("heading", { name: check.heading })).toBeVisible();
+      continue;
+    }
+    await expect(page.getByText(check.text)).toBeVisible();
   }
 
   await navigate(`/orders/${seed.orderID}`);
@@ -74,6 +80,16 @@ test("operator dashboard pages render correctly with seeded data", async ({ page
   await expect(page.getByText("Dispute Detail")).toBeVisible();
   await expect(page.getByText("Case summary")).toBeVisible();
   await expect(page.getByText("Submitted evidence payload")).toBeVisible();
+
+  await navigate("/compliance");
+  await expect(page.getByRole("heading", { name: "Review decision" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Capability controls" })).toBeVisible();
+
+  await navigate("/risk");
+  await expect(page.getByRole("heading", { name: "Queue workbench" })).toBeVisible();
+
+  await navigate("/payouts");
+  await expect(page.getByRole("heading", { name: "Approval workbench" })).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
