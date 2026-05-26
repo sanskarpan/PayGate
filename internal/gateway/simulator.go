@@ -17,8 +17,12 @@ import (
 type Simulator struct {
 	ForceDecline bool
 	DeclineCode  string
-	store        *ScenarioStore      // nil = use env var / ForceDecline behaviour
-	methodStore  *MethodConfigStore  // nil = use default method profiles only
+	store        *ScenarioStore     // nil = use env var / ForceDecline behaviour
+	methodStore  *MethodConfigStore // nil = use default method profiles only
+}
+
+func (s *Simulator) Name() string {
+	return "simulator"
 }
 
 // NewSimulator creates a Simulator driven by environment variables.
@@ -215,6 +219,17 @@ func (s *Simulator) applyScenario(ctx context.Context, sc Scenario, method strin
 			Success:          false,
 			ErrorCode:        decCode,
 			ErrorDescription: "simulator: authorization declined",
+		}, nil
+
+	case ModeChallenge:
+		time.Sleep(time.Duration(profile.DefaultDelayMS) * time.Millisecond)
+		expiresAt := time.Now().UTC().Add(5 * time.Minute)
+		return payment.GatewayAuthResult{
+			RequiresAction:   true,
+			GatewayReference: "gw_ref_3ds_pending",
+			ChallengeURL:     "https://sandbox.paygate.local/3ds/" + sc.MerchantID,
+			ChallengeToken:   "3ds_tok_" + sc.MerchantID,
+			ChallengeExpiry:  &expiresAt,
 		}, nil
 
 	default:
