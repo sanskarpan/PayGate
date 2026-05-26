@@ -23,8 +23,17 @@ func (f *fakeRepo) CreateFailedAttempt(context.Context, CreateAuthorizedInput, s
 func (f *fakeRepo) MarkAuthorizationAuthorized(context.Context, string, string, string, string, *time.Time) (CaptureResult, error) {
 	return CaptureResult{}, nil
 }
+func (f *fakeRepo) MarkAuthorizationRequiresAction(context.Context, string, string, CardChallengeSessionInput) (CaptureResult, error) {
+	return CaptureResult{}, nil
+}
 func (f *fakeRepo) MarkAuthorizationFailed(context.Context, string, string, string, string) error {
 	return nil
+}
+func (f *fakeRepo) CompleteCardChallenge(context.Context, string, string, string, string, string, time.Time) (CaptureResult, bool, error) {
+	return CaptureResult{}, false, nil
+}
+func (f *fakeRepo) FailCardChallenge(context.Context, string, string, string, string, string, string, time.Time) (CaptureResult, bool, error) {
+	return CaptureResult{}, false, nil
 }
 func (f *fakeRepo) CreateUPIIntent(context.Context, CreateUPIIntentRecordInput) (UPIIntentResult, error) {
 	return UPIIntentResult{}, nil
