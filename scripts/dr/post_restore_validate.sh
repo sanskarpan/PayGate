@@ -45,20 +45,76 @@ fi
 payment_payload="$(jq -n --arg order_id "${order_id}" '{
   order_id: $order_id,
   method: "card",
-  payment_method_token_id: "tok_sandbox_single_use",
-  capture: true,
+  auto_capture: false,
   metadata: { drill: "post_restore_validate" }
 }')"
 
+token_json="$(
+  curl -fsS -X POST "${API_BASE_URL}/v1/card-tokens" \
+    -H "Authorization: ${AUTH_HEADER}" \
+    -H 'Content-Type: application/json' \
+    --data '{"card_number":"4111111111111111","exp_month":12,"exp_year":2030,"cardholder_name":"Restore Validation","reusable":false}'
+)"
+token_id="$(jq -r '.id' <<<"${token_json}")"
+if [[ -z "${token_id}" || "${token_id}" == "null" ]]; then
+  echo "failed to mint card token for restore validation" >&2
+  exit 1
+fi
+
+payment_payload="$(jq --arg token_id "${token_id}" '.payment_method_token_id = $token_id' <<<"${payment_payload}")"
+
 payment_json="$(
-  curl -fsS -X POST "${API_BASE_URL}/v1/payments" \
+  curl -fsS -X POST "${API_BASE_URL}/v1/payments/authorize" \
     -H "Authorization: ${AUTH_HEADER}" \
     -H 'Content-Type: application/json' \
     --data "${payment_payload}"
 )"
 payment_status="$(jq -r '.status' <<<"${payment_json}")"
-if [[ "${payment_status}" != "captured" && "${payment_status}" != "authorized" ]]; then
+payment_id="$(jq -r '.id' <<<"${payment_json}")"
+if [[ "${payment_status}" != "authorized" && "${payment_status}" != "requires_action" && "${payment_status}" != "captured" ]]; then
   echo "unexpected payment status: ${payment_status}" >&2
+  exit 1
+fi
+
+if [[ "${payment_status}" == "authorized" ]]; then
+  capture_json="$(
+    curl -fsS -X POST "${API_BASE_URL}/v1/payments/${payment_id}/capture" \
+      -H "Authorization: ${AUTH_HEADER}" \
+      -H 'Content-Type: application/json' \
+      --data '{"amount":4200}'
+  )"
+  capture_status="$(jq -r '.status' <<<"${capture_json}")"
+  if [[ "${capture_status}" != "captured" ]]; then
+    echo "unexpected capture status: ${capture_status}" >&2
+    exit 1
+  fi
+fi
+
+settlement_json="$(
+  curl -fsS -X POST "${API_BASE_URL}/v1/settlements/batch" \
+    -H "Authorization: ${AUTH_HEADER}" \
+    -H 'Content-Type: application/json' \
+    --data '{}'
+)"
+echo "${settlement_json}" | jq .
+
+recon_json="$(curl -fsS -H "Authorization: ${AUTH_HEADER}" "${API_BASE_URL}/v1/recon/mismatches")"
+recon_count="$(jq -r '.count // 0' <<<"${recon_json}")"
+if [[ "${recon_count}" != "0" ]]; then
+  echo "expected zero recon mismatches after restore validation, got ${recon_count}" >&2
+  exit 1
+fi
+
+for _ in {1..15}; do
+  outbox_unpublished="$(curl -fsS "${API_BASE_URL}/readyz" | jq -r '.checks.outbox_unpublished')"
+  if [[ "${outbox_unpublished}" == "0" ]]; then
+    break
+  fi
+  sleep 2
+done
+
+if [[ "${outbox_unpublished:-}" != "0" ]]; then
+  echo "outbox backlog did not drain after restore validation: ${outbox_unpublished}" >&2
   exit 1
 fi
 
