@@ -608,6 +608,9 @@ components:
         events:
           type: array
           items: { type: string }
+        signature_mode:
+          type: string
+          enum: [compat, hmac_sha256, http_message_signatures]
     CreateDisputeRequest:
       type: object
       required: [payment_id, reason, amount, currency]
