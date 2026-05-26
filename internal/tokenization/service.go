@@ -23,6 +23,7 @@ const (
 
 const (
 	CardTokenStatusActive   CardTokenStatus = "active"
+	CardTokenStatusReserved CardTokenStatus = "reserved"
 	CardTokenStatusConsumed CardTokenStatus = "consumed"
 	CardTokenStatusDisabled CardTokenStatus = "disabled"
 )
@@ -81,6 +82,7 @@ type Repository interface {
 	CreateCardToken(ctx context.Context, in CreateCardTokenRecordInput) (CardToken, error)
 	GetCardToken(ctx context.Context, merchantID, tokenID, action, reason, actor string) (CardToken, error)
 	PrepareCardTokenAuthorization(ctx context.Context, merchantID, tokenID, paymentID string, usedAt time.Time) (CardToken, error)
+	CompleteCardTokenAuthorization(ctx context.Context, merchantID, tokenID, paymentID string, success bool, reason string, usedAt time.Time) error
 	DisableCardToken(ctx context.Context, merchantID, tokenID, reason, actor string, disabledAt time.Time) (CardToken, error)
 }
 
@@ -164,6 +166,10 @@ func (s *Service) PrepareAuthorization(ctx context.Context, merchantID, tokenID,
 		DisabledAt:   token.DisabledAt,
 		NetworkToken: token.NetworkReference,
 	}, nil
+}
+
+func (s *Service) CompleteAuthorization(ctx context.Context, merchantID, tokenID, paymentID string, success bool, reason string) error {
+	return s.repo.CompleteCardTokenAuthorization(ctx, merchantID, tokenID, paymentID, success, reason, time.Now().UTC())
 }
 
 func digitsOnly(v string) string {
