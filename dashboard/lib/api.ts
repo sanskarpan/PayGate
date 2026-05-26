@@ -31,8 +31,11 @@ import type {
   SettlementItem,
   SettlementLineItem,
   TaxProfileItem,
+  UPIMandateEventItem,
+  UPIMandateItem,
   UPIIntentItem,
   WebhookItem,
+  PrometheusSeriesPoint,
 } from "./types";
 
 type CollectionResponse<T> = {
@@ -146,6 +149,36 @@ export async function getUPIIntent(paymentID: string) {
     throw new Error(`upi intent fetch failed: ${response.status}`);
   }
   return (await response.json()) as UPIIntentItem;
+}
+
+export async function getUPIMandates() {
+  await requireViewer();
+  const response = await apiFetch("/v1/upi-mandates");
+  if (!response.ok) {
+    throw new Error(`upi mandates fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<UPIMandateItem>;
+}
+
+export async function getUPIMandate(id: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/upi-mandates/${id}`);
+  if (response.status === 404) {
+    notFound();
+  }
+  if (!response.ok) {
+    throw new Error(`upi mandate fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as UPIMandateItem;
+}
+
+export async function getUPIMandateEvents(id: string) {
+  await requireViewer();
+  const response = await apiFetch(`/v1/upi-mandates/${id}/events`);
+  if (!response.ok) {
+    throw new Error(`upi mandate events fetch failed: ${response.status}`);
+  }
+  return (await response.json()) as CollectionResponse<UPIMandateEventItem>;
 }
 
 export async function getAPIKeys() {
@@ -506,5 +539,42 @@ export async function getPrometheusMetricSum(metricName: string): Promise<number
     return found ? sum : null;
   } catch {
     return null;
+  }
+}
+
+export async function getPrometheusMetricSeries(metricName: string): Promise<PrometheusSeriesPoint[]> {
+  try {
+    const res = await fetch(`${getApiBaseUrl()}/metrics`, { cache: "no-store" });
+    if (!res.ok) return [];
+    const text = await res.text();
+    const lines = text.split("\n");
+    const points: PrometheusSeriesPoint[] = [];
+    for (const line of lines) {
+      if (line.startsWith("#") || line.trim() === "") continue;
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 2) continue;
+      const metric = parts[0];
+      const value = Number(parts[1]);
+      if (Number.isNaN(value)) continue;
+      const braceIdx = metric.indexOf("{");
+      const name = braceIdx === -1 ? metric : metric.slice(0, braceIdx);
+      if (name !== metricName) continue;
+      const labels: Record<string, string> = {};
+      if (braceIdx !== -1 && metric.endsWith("}")) {
+        const body = metric.slice(braceIdx + 1, -1);
+        for (const pair of body.split(",")) {
+          if (!pair) continue;
+          const eqIdx = pair.indexOf("=");
+          if (eqIdx === -1) continue;
+          const key = pair.slice(0, eqIdx);
+          const raw = pair.slice(eqIdx + 1).trim();
+          labels[key] = raw.startsWith("\"") && raw.endsWith("\"") ? raw.slice(1, -1) : raw;
+        }
+      }
+      points.push({ labels, value });
+    }
+    return points;
+  } catch {
+    return [];
   }
 }
