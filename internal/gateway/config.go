@@ -21,6 +21,7 @@ const (
 	ModeTimeout      ScenarioMode = "timeout"
 	ModeDecline      ScenarioMode = "decline"
 	ModeLateCallback ScenarioMode = "late_callback"
+	ModeChallenge    ScenarioMode = "challenge"
 )
 
 // Scenario holds the configuration for a single gateway simulation scenario.
