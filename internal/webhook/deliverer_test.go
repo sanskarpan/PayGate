@@ -67,7 +67,7 @@ func TestDelivererSuccessfulDelivery(t *testing.T) {
 
 	d := NewDeliverer()
 	payload, _ := json.Marshal(map[string]any{"event_type": "payment.captured"})
-	result := d.Deliver(t.Context(), server.URL, "my-secret", "payment.captured", payload)
+	result := d.Deliver(t.Context(), server.URL, "my-secret", "payment.captured", payload, SignatureModeCompat)
 
 	if !result.Succeeded {
 		t.Fatalf("expected successful delivery, got error=%q code=%d", result.Error, result.StatusCode)
@@ -104,7 +104,7 @@ func TestDelivererFailsOn4xx5xx(t *testing.T) {
 	defer server.Close()
 
 	d := NewDeliverer()
-	result := d.Deliver(t.Context(), server.URL, "secret", "payment.captured", []byte(`{}`))
+	result := d.Deliver(t.Context(), server.URL, "secret", "payment.captured", []byte(`{}`), SignatureModeCompat)
 
 	if result.Succeeded {
 		t.Fatal("expected failed delivery on 500")
@@ -117,12 +117,44 @@ func TestDelivererFailsOn4xx5xx(t *testing.T) {
 func TestDelivererNetworkError(t *testing.T) {
 	d := NewDeliverer()
 	// Use a port that is not listening.
-	result := d.Deliver(t.Context(), "http://127.0.0.1:19999/webhook", "secret", "payment.captured", []byte(`{}`))
+	result := d.Deliver(t.Context(), "http://127.0.0.1:19999/webhook", "secret", "payment.captured", []byte(`{}`), SignatureModeCompat)
 
 	if result.Succeeded {
 		t.Fatal("expected network error to fail delivery")
 	}
 	if result.Error == "" {
 		t.Error("expected non-empty error message on network failure")
+	}
+}
+
+func TestDelivererSignatureModes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mode := r.URL.Query().Get("mode")
+		switch mode {
+		case "hmac":
+			if r.Header.Get(signatureHeader) == "" {
+				t.Error("expected hmac signature header")
+			}
+			if r.Header.Get(httpSignatureHeader) != "" {
+				t.Error("did not expect structured signature header in hmac mode")
+			}
+		case "http":
+			if r.Header.Get(signatureHeader) != "" {
+				t.Error("did not expect hmac signature header in http mode")
+			}
+			if r.Header.Get(httpSignatureHeader) == "" {
+				t.Error("expected structured signature header in http mode")
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	d := NewDeliverer()
+	if result := d.Deliver(t.Context(), server.URL+"?mode=hmac", "secret", "payment.captured", []byte(`{}`), SignatureModeHMAC); !result.Succeeded {
+		t.Fatalf("expected hmac mode delivery to succeed, got %+v", result)
+	}
+	if result := d.Deliver(t.Context(), server.URL+"?mode=http", "secret", "payment.captured", []byte(`{}`), SignatureModeHTTPMessage); !result.Succeeded {
+		t.Fatalf("expected http message signature delivery to succeed, got %+v", result)
 	}
 }
