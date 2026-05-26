@@ -32,6 +32,10 @@ func (r *PostgresRepository) CreateSubscription(ctx context.Context, in CreateIn
 	if len(in.Events) == 0 {
 		return WebhookSubscription{}, ErrNoEvents
 	}
+	mode, err := normalizeSignatureMode(in.SignatureMode)
+	if err != nil {
+		return WebhookSubscription{}, err
+	}
 
 	secret, err := generateSecret()
 	if err != nil {
@@ -39,23 +43,24 @@ func (r *PostgresRepository) CreateSubscription(ctx context.Context, in CreateIn
 	}
 
 	sub := WebhookSubscription{
-		ID:         idgen.New("whs"),
-		MerchantID: in.MerchantID,
-		URL:        in.URL,
-		Events:     in.Events,
-		Secret:     secret,
-		Status:     StatusActive,
+		ID:            idgen.New("whs"),
+		MerchantID:    in.MerchantID,
+		URL:           in.URL,
+		Events:        in.Events,
+		Secret:        secret,
+		SignatureMode: mode,
+		Status:        StatusActive,
 	}
-	encryptedSecret, err := protect.Default().SealString(sub.Secret)
+	encryptedSecret, err := protect.Default().SealStringForDomain(protect.DomainWebhookSecret, sub.Secret)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
 
 	_, err = r.db.Exec(ctx, `
 INSERT INTO paygate_webhooks.webhook_subscriptions
-    (id, merchant_id, url, events, secret, status)
-VALUES ($1, $2, $3, $4, $5, $6)
-`, sub.ID, sub.MerchantID, sub.URL, sub.Events, encryptedSecret, sub.Status)
+    (id, merchant_id, url, events, secret, signature_mode, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+`, sub.ID, sub.MerchantID, sub.URL, sub.Events, encryptedSecret, sub.SignatureMode, sub.Status)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
@@ -66,24 +71,24 @@ VALUES ($1, $2, $3, $4, $5, $6)
 func (r *PostgresRepository) GetSubscription(ctx context.Context, merchantID, id string) (WebhookSubscription, error) {
 	var sub WebhookSubscription
 	err := r.db.QueryRow(ctx, `
-SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at,
+SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at, signature_mode,
        status, created_at, updated_at
 FROM paygate_webhooks.webhook_subscriptions
 WHERE id = $1 AND merchant_id = $2 AND status != 'deleted'
 `, id, merchantID).Scan(
 		&sub.ID, &sub.MerchantID, &sub.URL, &sub.Events, &sub.Secret,
-		&sub.PreviousSecret, &sub.PreviousSecretExpiresAt,
+		&sub.PreviousSecret, &sub.PreviousSecretExpiresAt, &sub.SignatureMode,
 		&sub.Status, &sub.CreatedAt, &sub.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WebhookSubscription{}, ErrSubscriptionNotFound
 	}
-	sub.Secret, err = protect.Default().OpenString(sub.Secret)
+	sub.Secret, err = protect.Default().OpenStringForDomain(protect.DomainWebhookSecret, sub.Secret)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
 	if sub.PreviousSecret != nil {
-		opened, err := protect.Default().OpenString(*sub.PreviousSecret)
+		opened, err := protect.Default().OpenStringForDomain(protect.DomainWebhookSecret, *sub.PreviousSecret)
 		if err != nil {
 			return WebhookSubscription{}, err
 		}
@@ -94,7 +99,7 @@ WHERE id = $1 AND merchant_id = $2 AND status != 'deleted'
 
 func (r *PostgresRepository) ListSubscriptions(ctx context.Context, merchantID string) ([]WebhookSubscription, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at,
+SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at, signature_mode,
        status, created_at, updated_at
 FROM paygate_webhooks.webhook_subscriptions
 WHERE merchant_id = $1 AND status != 'deleted'
@@ -109,16 +114,16 @@ ORDER BY created_at DESC
 	for rows.Next() {
 		var sub WebhookSubscription
 		if err := rows.Scan(&sub.ID, &sub.MerchantID, &sub.URL, &sub.Events, &sub.Secret,
-			&sub.PreviousSecret, &sub.PreviousSecretExpiresAt,
+			&sub.PreviousSecret, &sub.PreviousSecretExpiresAt, &sub.SignatureMode,
 			&sub.Status, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, err
 		}
-		sub.Secret, err = protect.Default().OpenString(sub.Secret)
+		sub.Secret, err = protect.Default().OpenStringForDomain(protect.DomainWebhookSecret, sub.Secret)
 		if err != nil {
 			return nil, err
 		}
 		if sub.PreviousSecret != nil {
-			opened, err := protect.Default().OpenString(*sub.PreviousSecret)
+			opened, err := protect.Default().OpenStringForDomain(protect.DomainWebhookSecret, *sub.PreviousSecret)
 			if err != nil {
 				return nil, err
 			}
@@ -142,14 +147,22 @@ func (r *PostgresRepository) UpdateSubscription(ctx context.Context, merchantID,
 	} else {
 		in.URL = current.URL
 	}
+	if in.SignatureMode != "" {
+		mode, err := normalizeSignatureMode(in.SignatureMode)
+		if err != nil {
+			return WebhookSubscription{}, err
+		}
+		in.SignatureMode = mode
+	}
 
 	_, err = r.db.Exec(ctx, `
 UPDATE paygate_webhooks.webhook_subscriptions
 SET url = COALESCE(NULLIF($1, ''), url),
     events = CASE WHEN $2::text[] IS NOT NULL AND array_length($2::text[], 1) > 0 THEN $2 ELSE events END,
+    signature_mode = COALESCE(NULLIF($3, ''), signature_mode),
     updated_at = NOW()
-WHERE id = $3 AND merchant_id = $4
-`, in.URL, in.Events, id, merchantID)
+WHERE id = $4 AND merchant_id = $5
+`, in.URL, in.Events, in.SignatureMode, id, merchantID)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
@@ -184,7 +197,7 @@ func (r *PostgresRepository) DeleteSubscription(ctx context.Context, merchantID,
 
 func (r *PostgresRepository) FindActiveSubscriptions(ctx context.Context, merchantID, eventType string) ([]WebhookSubscription, error) {
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at,
+SELECT id, merchant_id, url, events, secret, previous_secret, previous_secret_expires_at, signature_mode,
        status, created_at, updated_at
 FROM paygate_webhooks.webhook_subscriptions
 WHERE merchant_id = $1 AND status = 'active'
@@ -198,16 +211,16 @@ WHERE merchant_id = $1 AND status = 'active'
 	for rows.Next() {
 		var sub WebhookSubscription
 		if err := rows.Scan(&sub.ID, &sub.MerchantID, &sub.URL, &sub.Events, &sub.Secret,
-			&sub.PreviousSecret, &sub.PreviousSecretExpiresAt,
+			&sub.PreviousSecret, &sub.PreviousSecretExpiresAt, &sub.SignatureMode,
 			&sub.Status, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
 			return nil, err
 		}
-		sub.Secret, err = protect.Default().OpenString(sub.Secret)
+		sub.Secret, err = protect.Default().OpenStringForDomain(protect.DomainWebhookSecret, sub.Secret)
 		if err != nil {
 			return nil, err
 		}
 		if sub.PreviousSecret != nil {
-			opened, err := protect.Default().OpenString(*sub.PreviousSecret)
+			opened, err := protect.Default().OpenStringForDomain(protect.DomainWebhookSecret, *sub.PreviousSecret)
 			if err != nil {
 				return nil, err
 			}
@@ -443,11 +456,11 @@ func (r *PostgresRepository) RotateSecret(ctx context.Context, merchantID, id st
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
-	encryptedNewSecret, err := protect.Default().SealString(newSecret)
+	encryptedNewSecret, err := protect.Default().SealStringForDomain(protect.DomainWebhookSecret, newSecret)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
-	encryptedCurrentSecret, err := protect.Default().SealString(current.Secret)
+	encryptedCurrentSecret, err := protect.Default().SealStringForDomain(protect.DomainWebhookSecret, current.Secret)
 	if err != nil {
 		return WebhookSubscription{}, err
 	}
