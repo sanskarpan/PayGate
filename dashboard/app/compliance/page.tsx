@@ -9,6 +9,7 @@ import {
   requireViewer,
 } from "../../lib/api";
 import { formatMoney, formatTime } from "../../lib/types";
+import ComplianceOpsConsole from "../../components/compliance-ops-console";
 
 function stateTone(state: string) {
   switch (state) {
@@ -117,6 +118,8 @@ export default async function CompliancePage() {
           <div className="stat-label">current reserve escalation trigger</div>
         </div>
       </div>
+
+      <ComplianceOpsConsole merchantID={viewer.merchant_id} onboarding={onboarding} capabilities={capabilities.items} />
 
       <div className="detail-grid">
         <div className="list-card">
