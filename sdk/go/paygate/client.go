@@ -55,6 +55,23 @@ type Refund struct {
 	Reason    string `json:"reason"`
 }
 
+type CardToken struct {
+	ID               string `json:"id"`
+	Brand            string `json:"brand"`
+	Last4            string `json:"last4"`
+	PaymentTokenType string `json:"token_type"`
+	Reusable         bool   `json:"reusable"`
+}
+
+type WebhookSubscription struct {
+	ID            string   `json:"id"`
+	URL           string   `json:"url"`
+	Events        []string `json:"events"`
+	Status        string   `json:"status"`
+	SignatureMode string   `json:"signature_mode"`
+	Secret        string   `json:"secret"`
+}
+
 func (c *Client) CreateOrder(ctx context.Context, payload map[string]any, idempotencyKey string) (Order, error) {
 	var out Order
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/orders", payload, idempotencyKey, &out); err != nil {
@@ -67,6 +84,22 @@ func (c *Client) CreatePayment(ctx context.Context, payload map[string]any, idem
 	var out Payment
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/payments/authorize", payload, idempotencyKey, &out); err != nil {
 		return Payment{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateCardToken(ctx context.Context, payload map[string]any) (CardToken, error) {
+	var out CardToken
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/card-tokens", payload, "", &out); err != nil {
+		return CardToken{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) CreateWebhookSubscription(ctx context.Context, payload map[string]any) (WebhookSubscription, error) {
+	var out WebhookSubscription
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/webhooks", payload, "", &out); err != nil {
+		return WebhookSubscription{}, err
 	}
 	return out, nil
 }

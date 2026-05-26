@@ -48,3 +48,48 @@ func TestVerifyWebhookSignature(t *testing.T) {
 		t.Fatal("expected body hex for sanity check")
 	}
 }
+
+func TestCreateCardTokenAndWebhookSubscription(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/card-tokens":
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected method %s", r.Method)
+			}
+			_ = json.NewEncoder(w).Encode(CardToken{ID: "ctok_123", Brand: "visa", Last4: "1111", PaymentTokenType: "single_use", Reusable: false})
+		case "/v1/webhooks":
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected method %s", r.Method)
+			}
+			_ = json.NewEncoder(w).Encode(WebhookSubscription{ID: "wh_123", URL: "https://example.com/hook", Status: "active", SignatureMode: "compat"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "key", "secret")
+	cardToken, err := client.CreateCardToken(context.Background(), map[string]any{
+		"card_number": "4111111111111111",
+		"exp_month":   12,
+		"exp_year":    2030,
+	})
+	if err != nil {
+		t.Fatalf("create card token: %v", err)
+	}
+	if cardToken.ID == "" {
+		t.Fatal("expected card token id")
+	}
+
+	sub, err := client.CreateWebhookSubscription(context.Background(), map[string]any{
+		"url":            "https://example.com/hook",
+		"events":         []string{"payment.captured"},
+		"signature_mode": "compat",
+	})
+	if err != nil {
+		t.Fatalf("create webhook subscription: %v", err)
+	}
+	if sub.ID == "" {
+		t.Fatal("expected webhook subscription id")
+	}
+}

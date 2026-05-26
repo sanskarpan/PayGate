@@ -98,6 +98,21 @@
       }
     },
     {
+      "name": "Create Webhook Subscription",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "{{auth_header}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"merchant_id\": \"{{merchant_id}}\",\n  \"url\": \"https://example.com/paygate/webhooks\",\n  \"event_types\": [\"payment.captured\", \"refund.succeeded\"],\n  \"signature_mode\": \"compat\"\n}"
+        },
+        "url": { "raw": "{{api_base_url}}/v1/webhooks", "host": ["{{api_base_url}}"], "path": ["v1", "webhooks"] }
+      }
+    },
+    {
       "name": "Request Reporting Export",
       "request": {
         "method": "POST",
