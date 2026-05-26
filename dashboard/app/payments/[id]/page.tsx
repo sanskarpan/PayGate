@@ -6,9 +6,19 @@ import { formatMoney, formatTime, truncateMiddle } from "../../../lib/types";
 export default async function PaymentDetailPage({ params }: { params: { id: string } }) {
   const payment = await getPayment(params.id);
   const upiIntent = payment.method === "upi" ? await getUPIIntent(params.id) : null;
+  const isUPIQR = upiIntent?.flow_type === "qr";
+  const isCardChallenge = payment.method === "card" && payment.status === "requires_action";
   const timeline = [
     { label: "Created", at: payment.created_at, active: true },
-    { label: "Customer Action", at: upiIntent ? payment.created_at : 0, active: payment.status === "pending_customer_action" || payment.method === "upi" },
+    {
+      label: "Customer Action",
+      at: isCardChallenge
+        ? payment.card_challenge?.expires_at || payment.created_at
+        : upiIntent
+          ? payment.created_at
+          : 0,
+      active: payment.status === "pending_customer_action" || payment.method === "upi" || isCardChallenge,
+    },
     { label: "Processing", at: upiIntent?.last_polled_at || upiIntent?.completed_at || 0, active: payment.status === "processing" },
     { label: "Authorized", at: payment.authorized_at, active: Boolean(payment.authorized_at) },
     { label: "Captured", at: payment.captured_at, active: Boolean(payment.captured_at) },
@@ -21,7 +31,7 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
         <h1>{truncateMiddle(payment.id, 14, 8)}</h1>
         <p className="mono" style={{ margin: "0 0 8px" }}>{payment.id}</p>
         <p className="lede">
-          {payment.status} · {formatMoney(payment.amount, payment.currency)} via {payment.method}.
+          {payment.status} · {formatMoney(payment.amount, payment.currency)} via {payment.method}{isUPIQR ? " QR" : isCardChallenge ? " with 3DS" : ""}.
         </p>
         <div className="hero-actions">
           <Link className="ghost-button" href={`/orders/${payment.order_id}`}>
@@ -45,6 +55,12 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
           <span className="eyebrow">Method</span>
           <strong>{payment.method}</strong>
         </div>
+        {isCardChallenge ? (
+          <div className="key-fact">
+            <span className="eyebrow">Challenge</span>
+            <strong>{payment.card_challenge?.status || payment.next_action?.challenge_status || "pending"}</strong>
+          </div>
+        ) : null}
         {upiIntent ? (
           <div className="key-fact">
             <span className="eyebrow">UPI Status</span>
@@ -86,16 +102,54 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
               <dt>Captured At</dt>
               <dd>{payment.captured_at ? formatTime(payment.captured_at) : "Not available"}</dd>
             </div>
+            {isCardChallenge ? (
+              <>
+                <div>
+                  <dt>Challenge Status</dt>
+                  <dd>{payment.card_challenge?.status || payment.next_action?.challenge_status || "pending"}</dd>
+                </div>
+                <div>
+                  <dt>Challenge Session</dt>
+                  <dd>{payment.card_challenge?.session_id || payment.next_action?.challenge_session_id || "Not available"}</dd>
+                </div>
+                <div>
+                  <dt>Redirect URL</dt>
+                  <dd>
+                    {payment.next_action?.redirect_url ? (
+                      <a href={payment.next_action.redirect_url} target="_blank" rel="noreferrer">
+                        Open 3DS Challenge
+                      </a>
+                    ) : (
+                      "Not available"
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Challenge Expires</dt>
+                  <dd>{payment.next_action?.expires_at ? formatTime(payment.next_action.expires_at) : "Not available"}</dd>
+                </div>
+                <div>
+                  <dt>Sandbox Callback</dt>
+                  <dd>{payment.sandbox?.callback_url || payment.card_challenge?.sandbox_callback_url || "Not available"}</dd>
+                </div>
+              </>
+            ) : null}
             {upiIntent ? (
               <>
                 <div>
-                  <dt>VPA</dt>
-                  <dd>{upiIntent.vpa || "Not available"}</dd>
+                  <dt>{isUPIQR ? "Display Name" : "VPA"}</dt>
+                  <dd>{isUPIQR ? upiIntent.display_name || "PayGate" : upiIntent.vpa || "Not available"}</dd>
                 </div>
                 <div>
                   <dt>Provider Status</dt>
                   <dd>{upiIntent.provider_status}</dd>
                 </div>
+                {isUPIQR ? (
+                  <div>
+                    <dt>QR Mode</dt>
+                    <dd>{upiIntent.qr_mode || "dynamic"}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Expires At</dt>
                   <dd>{formatTime(upiIntent.expires_at)}</dd>
@@ -105,17 +159,25 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
                   <dd>{upiIntent.gateway_reference || "Pending"}</dd>
                 </div>
                 <div>
-                  <dt>Intent Link</dt>
+                  <dt>{isUPIQR ? "Scan Payload" : "Intent Link"}</dt>
                   <dd>
-                    {upiIntent.next_action?.deep_link ? (
-                      <a href={upiIntent.next_action.deep_link} target="_blank" rel="noreferrer">
-                        Open UPI App
-                      </a>
-                    ) : (
-                      "Not available"
-                    )}
+                    {isUPIQR
+                      ? upiIntent.next_action?.qr_payload || upiIntent.qr_payload || "Not available"
+                      : upiIntent.next_action?.deep_link ? (
+                          <a href={upiIntent.next_action.deep_link} target="_blank" rel="noreferrer">
+                            Open UPI App
+                          </a>
+                        ) : (
+                          "Not available"
+                        )}
                   </dd>
                 </div>
+                {isUPIQR ? (
+                  <div>
+                    <dt>Reusable</dt>
+                    <dd>{upiIntent.is_reusable ? "Yes" : "No"}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Failure</dt>
                   <dd>{upiIntent.failure_code || upiIntent.failure_description || "Not available"}</dd>
