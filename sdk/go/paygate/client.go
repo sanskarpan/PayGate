@@ -69,6 +69,7 @@ type WebhookSubscription struct {
 	Events        []string `json:"events"`
 	Status        string   `json:"status"`
 	SignatureMode string   `json:"signature_mode"`
+	//nolint:gosec // webhook API returns a signing secret by design.
 	Secret        string   `json:"secret"`
 }
 
