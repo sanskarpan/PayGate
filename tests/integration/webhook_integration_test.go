@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -298,5 +299,93 @@ func TestIntegrationWebhookIdempotentDelivery(t *testing.T) {
 	// Mock server should have been called exactly once.
 	if deliveryCount != 1 {
 		t.Fatalf("expected 1 delivery (idempotent), got %d", deliveryCount)
+	}
+}
+
+func TestIntegrationWebhookSignatureModes(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	_, merchantSvc, _, _ := buildGatewayMux(db)
+	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
+
+	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
+		Name: "Signature Merchant", Email: "signature@test.com", BusinessType: "company",
+	})
+	if err != nil {
+		t.Fatalf("create merchant: %v", err)
+	}
+
+	type requestRecord struct {
+		Header http.Header
+		Body   []byte
+	}
+
+	received := make(chan requestRecord, 10)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- requestRecord{Header: r.Header.Clone(), Body: body}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockServer.Close()
+
+	cases := []struct {
+		name       string
+		mode       webhook.SignatureMode
+		expectHMAC bool
+		expectHTTP bool
+	}{
+		{name: "compat", mode: webhook.SignatureModeCompat, expectHMAC: true, expectHTTP: true},
+		{name: "hmac", mode: webhook.SignatureModeHMAC, expectHMAC: true, expectHTTP: false},
+		{name: "http_message_signatures", mode: webhook.SignatureModeHTTPMessage, expectHMAC: false, expectHTTP: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sub, err := webhookSvc.CreateSubscription(ctx, webhook.CreateInput{
+				MerchantID:    createdMerchant.ID,
+				URL:           mockServer.URL,
+				Events:        []string{"payment.captured"},
+				SignatureMode: tc.mode,
+			})
+			if err != nil {
+				t.Fatalf("create subscription: %v", err)
+			}
+
+			payload := map[string]any{"event_type": "payment.captured", "mode": tc.name}
+			eventID := "evt_signature_" + tc.name
+			if err := webhookSvc.DeliverEvent(ctx, eventID, createdMerchant.ID, "payment.captured", payload); err != nil {
+				t.Fatalf("deliver event: %v", err)
+			}
+
+			var got requestRecord
+			select {
+			case got = <-received:
+			default:
+				t.Fatal("expected webhook request to be delivered")
+			}
+
+			if tc.expectHMAC && got.Header.Get("X-PayGate-Signature") == "" {
+				t.Fatalf("expected hmac signature header for mode %s", tc.mode)
+			}
+			if !tc.expectHMAC && got.Header.Get("X-PayGate-Signature") != "" {
+				t.Fatalf("did not expect hmac signature header for mode %s", tc.mode)
+			}
+			if tc.expectHTTP && got.Header.Get("Signature") == "" {
+				t.Fatalf("expected structured Signature header for mode %s", tc.mode)
+			}
+			if !tc.expectHTTP && got.Header.Get("Signature") != "" {
+				t.Fatalf("did not expect structured Signature header for mode %s", tc.mode)
+			}
+
+			fetched, err := webhookSvc.GetSubscription(ctx, createdMerchant.ID, sub.ID)
+			if err != nil {
+				t.Fatalf("get subscription: %v", err)
+			}
+			if fetched.SignatureMode != tc.mode {
+				t.Fatalf("expected signature mode %s, got %s", tc.mode, fetched.SignatureMode)
+			}
+		})
 	}
 }
