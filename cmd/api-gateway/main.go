@@ -102,9 +102,12 @@ func run() error {
 
 	scenarioStore := gateway.NewScenarioStore(db)
 	methodStore := gateway.NewMethodConfigStore(db)
-	gatewayClient := gateway.NewSimulatorWithStores(scenarioStore, methodStore)
+	routingStore := gateway.NewRoutingPolicyStore(db)
+	simulatorGateway := gateway.NewSimulatorWithStores(scenarioStore, methodStore)
+	gatewayClient := gateway.NewRouter(routingStore, simulatorGateway)
 	gatewayAdminHandler := gateway.NewAdminHandler(scenarioStore)
 	methodHandler := gateway.NewMethodHandler(methodStore)
+	routingHandler := gateway.NewRoutingHandler(routingStore)
 	cardTokenRepo := tokenization.NewPostgresRepository(db)
 	cardTokenSvc := tokenization.NewService(cardTokenRepo)
 	vpaVerifySvc := upiverify.NewService(upiverify.NewPostgresRepository(db), upiverify.NewSimulatorProvider())
@@ -262,6 +265,7 @@ func run() error {
 	orderHandler.RegisterRoutesWithAuth(mux, protected)
 	cardTokenHandler.RegisterRoutesWithAuth(mux, protected)
 	billingHandler.RegisterRoutesWithAuth(mux, protected)
+	billingHandler.RegisterPublicRoutes(mux)
 	paymentHandler.RegisterRoutesWithAuth(mux, protected)
 	refundHandler.RegisterRoutesWithAuth(mux, protected)
 	ledgerHoldHandler.RegisterRoutesWithAuth(mux, protected)
@@ -296,6 +300,9 @@ func run() error {
 		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
 	})
 	methodHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
+		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
+	})
+	routingHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
 		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
 	})
 
