@@ -26,6 +26,10 @@ func initialMethodState(method string) string {
 	switch method {
 	case "upi":
 		return MethodStateUPIIntentCreated
+	case "netbanking":
+		return MethodStateNetbankingRedirectCreated
+	case "wallet":
+		return MethodStateWalletRedirectCreated
 	default:
 		return MethodStateCardAuthorizationStarted
 	}
@@ -35,6 +39,10 @@ func methodStateForAuthorized(method string) string {
 	switch method {
 	case "upi":
 		return MethodStateUPICollected
+	case "netbanking":
+		return MethodStateNetbankingSucceeded
+	case "wallet":
+		return MethodStateWalletSucceeded
 	default:
 		return MethodStateCardAuthorized
 	}
@@ -44,6 +52,10 @@ func methodStateForFailure(method string) string {
 	switch method {
 	case "upi":
 		return MethodStateUPIFailed
+	case "netbanking":
+		return MethodStateNetbankingFailed
+	case "wallet":
+		return MethodStateWalletFailed
 	default:
 		return MethodStateCardDeclined
 	}
@@ -64,6 +76,10 @@ func methodStateForCapture(method string) string {
 	switch method {
 	case "upi":
 		return MethodStateUPICollected
+	case "netbanking":
+		return MethodStateNetbankingSucceeded
+	case "wallet":
+		return MethodStateWalletSucceeded
 	default:
 		return MethodStateCardCaptured
 	}
@@ -82,9 +98,9 @@ func (r *PostgresRepository) CreateFailedAttempt(ctx context.Context, in CreateA
 	defer func() { _ = tx.Rollback(ctx) }()
 	_, err = tx.Exec(ctx, `
 INSERT INTO paygate_payments.payment_attempts
-(id, order_id, merchant_id, payment_id, amount, currency, method, status, error_code, error_description, idempotency_key)
-VALUES ($1,$2,$3,$4,$5,$6,$7,'failed',$8,$9,$10)
-`, attemptID, in.OrderID, in.MerchantID, nullableText(in.PaymentID), in.Amount, in.Currency, in.Method, errorCode, errorDescription, in.IdempotencyKey)
+(id, order_id, merchant_id, payment_id, amount, currency, method, provider, routing_reason, attempted_providers, status, error_code, error_description, idempotency_key)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'failed',$11,$12,$13)
+`, attemptID, in.OrderID, in.MerchantID, nullableText(in.PaymentID), in.Amount, in.Currency, in.Method, nullableText(in.Provider), nullableText(in.RoutingReason), in.AttemptedProviders, errorCode, errorDescription, in.IdempotencyKey)
 	if err != nil {
 		return err
 	}
@@ -157,9 +173,9 @@ FOR UPDATE
 	now := time.Now().UTC()
 	_, err = tx.Exec(ctx, `
 INSERT INTO paygate_payments.payment_attempts
-(id, order_id, merchant_id, payment_id, amount, currency, method, status, idempotency_key)
-VALUES ($1,$2,$3,$4,$5,$6,$7,'processing',$8)
-`, attemptID, in.OrderID, in.MerchantID, paymentID, in.Amount, in.Currency, in.Method, in.IdempotencyKey)
+(id, order_id, merchant_id, payment_id, amount, currency, method, provider, routing_reason, attempted_providers, status, idempotency_key)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'processing',$11)
+`, attemptID, in.OrderID, in.MerchantID, paymentID, in.Amount, in.Currency, in.Method, nullableText(in.Provider), nullableText(in.RoutingReason), in.AttemptedProviders, in.IdempotencyKey)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if in.IdempotencyKey != "" && errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -170,9 +186,9 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,'processing',$8)
 
 	_, err = tx.Exec(ctx, `
 INSERT INTO paygate_payments.payments
-(id, attempt_id, order_id, merchant_id, amount, currency, method, method_state, status, captured)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'created',false)
-`, paymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, initialMethodState(in.Method))
+(id, attempt_id, order_id, merchant_id, amount, currency, method, provider, routing_reason, attempted_providers, method_state, status, captured)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'created',false)
+`, paymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, nullableText(in.Provider), nullableText(in.RoutingReason), in.AttemptedProviders, initialMethodState(in.Method))
 	if err != nil {
 		return CaptureResult{}, fmt.Errorf("insert payment: %w", err)
 	}
@@ -194,22 +210,53 @@ WHERE id=$1 AND merchant_id=$2
 		return CaptureResult{}, err
 	}
 
-	return CaptureResult{PaymentID: paymentID, MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, MethodState: initialMethodState(in.Method), Status: StateCreated, Captured: false, CreatedAt: now}, nil
+	return CaptureResult{PaymentID: paymentID, MerchantID: in.MerchantID, OrderID: in.OrderID, Amount: in.Amount, Currency: in.Currency, Method: in.Method, Provider: in.Provider, RoutingReason: in.RoutingReason, AttemptedProviders: in.AttemptedProviders, MethodState: initialMethodState(in.Method), Status: StateCreated, Captured: false, CreatedAt: now}, nil
+}
+
+func (r *PostgresRepository) UpdateGatewayRouting(ctx context.Context, merchantID, paymentID string, decision GatewayRouteDecision) error {
+	_, err := r.db.Exec(ctx, `
+UPDATE paygate_payments.payments
+SET provider = NULLIF($3, ''),
+    routing_reason = NULLIF($4, ''),
+    attempted_providers = $5,
+    updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2
+`, paymentID, merchantID, decision.Provider, decision.RoutingReason, decision.AttemptedProviders)
+	if err != nil {
+		return fmt.Errorf("update payment routing: %w", err)
+	}
+	_, err = r.db.Exec(ctx, `
+UPDATE paygate_payments.payment_attempts
+SET provider = NULLIF($3, ''),
+    routing_reason = NULLIF($4, ''),
+    attempted_providers = $5,
+    updated_at = NOW()
+WHERE payment_id = $1 AND merchant_id = $2
+`, paymentID, merchantID, decision.Provider, decision.RoutingReason, decision.AttemptedProviders)
+	if err != nil {
+		return fmt.Errorf("update attempt routing: %w", err)
+	}
+	return nil
 }
 
 func (r *PostgresRepository) AttachCardPaymentDetails(ctx context.Context, merchantID, paymentID string, in CardPaymentDetailsInput) error {
 	_, err := r.db.Exec(ctx, `
 INSERT INTO paygate_payments.card_payment_details
-(payment_id, card_token_id, brand, last4, exp_month, exp_year, token_class)
-VALUES ($1,$2,$3,$4,$5,$6,$7)
+(payment_id, card_token_id, brand, last4, exp_month, exp_year, token_class, issuer_name, issuer_country, card_country, funding_type, network_token_type)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 ON CONFLICT (payment_id) DO UPDATE
 SET card_token_id = EXCLUDED.card_token_id,
     brand = EXCLUDED.brand,
     last4 = EXCLUDED.last4,
     exp_month = EXCLUDED.exp_month,
     exp_year = EXCLUDED.exp_year,
-    token_class = EXCLUDED.token_class
-`, paymentID, in.PaymentMethodTokenID, in.CardBrand, in.CardLast4, in.CardExpMonth, in.CardExpYear, in.CardTokenClass)
+    token_class = EXCLUDED.token_class,
+    issuer_name = EXCLUDED.issuer_name,
+    issuer_country = EXCLUDED.issuer_country,
+    card_country = EXCLUDED.card_country,
+    funding_type = EXCLUDED.funding_type,
+    network_token_type = EXCLUDED.network_token_type
+`, paymentID, in.PaymentMethodTokenID, in.CardBrand, in.CardLast4, in.CardExpMonth, in.CardExpYear, in.CardTokenClass, in.CardIssuerName, in.CardIssuerCountry, in.CardCountry, in.FundingType, in.NetworkTokenType)
 	if err != nil {
 		return fmt.Errorf("attach card payment details: %w", err)
 	}
@@ -436,7 +483,7 @@ func (r *PostgresRepository) CompleteCardChallenge(ctx context.Context, merchant
 	var expiresAt time.Time
 	err = tx.QueryRow(ctx, `
 SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.created_at,
-       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0),
+       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0), COALESCE(cpd.issuer_name, ''), COALESCE(cpd.issuer_country, ''), COALESCE(cpd.card_country, ''), COALESCE(cpd.funding_type, ''), COALESCE(cpd.network_token_type, ''),
        p.attempt_id, COALESCE(ccs.status, ''), COALESCE(ccs.callback_token, ''), COALESCE(ccs.auto_capture_requested, false), COALESCE(ccs.expires_at, NOW())
 FROM paygate_payments.payments p
 LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
@@ -445,7 +492,7 @@ WHERE p.id = $1 AND p.merchant_id = $2
 FOR UPDATE
 `, paymentID, merchantID).Scan(
 		&current.PaymentID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &current.MethodState, &current.MethodStateReason, &status, &current.Captured, &current.CreatedAt,
-		&current.PaymentMethodTokenID, &current.CardBrand, &current.CardLast4, &current.CardExpMonth, &current.CardExpYear,
+		&current.PaymentMethodTokenID, &current.CardBrand, &current.CardLast4, &current.CardExpMonth, &current.CardExpYear, &current.CardIssuerName, &current.CardIssuerCountry, &current.CardCountry, &current.FundingType, &current.NetworkTokenType,
 		&attemptID, &challengeStatus, &challengeToken, &autoCaptureRequested, &expiresAt,
 	)
 	if err != nil {
@@ -757,14 +804,14 @@ func (r *PostgresRepository) GetPayment(ctx context.Context, merchantID, payment
 	var out CaptureResult
 	var status string
 	err := r.db.QueryRow(ctx, `
-SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.captured_at, p.created_at, p.authorized_at,
-       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0),
+SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, COALESCE(p.provider, ''), COALESCE(p.routing_reason, ''), COALESCE(p.attempted_providers, '{}'), p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.captured_at, p.created_at, p.authorized_at,
+       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0), COALESCE(cpd.issuer_name, ''), COALESCE(cpd.issuer_country, ''), COALESCE(cpd.card_country, ''), COALESCE(cpd.funding_type, ''), COALESCE(cpd.network_token_type, ''),
        COALESCE(ccs.session_id, ''), COALESCE(ccs.status, ''), COALESCE(ccs.redirect_url, ''), COALESCE(ccs.callback_token, ''), ccs.expires_at
 FROM paygate_payments.payments p
 LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
 LEFT JOIN paygate_payments.card_challenge_sessions ccs ON ccs.payment_id = p.id
 WHERE p.id=$1 AND p.merchant_id=$2
-`, paymentID, merchantID).Scan(&out.PaymentID, &out.MerchantID, &out.OrderID, &out.Amount, &out.Currency, &out.Method, &out.MethodState, &out.MethodStateReason, &status, &out.Captured, &out.CapturedAt, &out.CreatedAt, &out.AuthorizedAt, &out.PaymentMethodTokenID, &out.CardBrand, &out.CardLast4, &out.CardExpMonth, &out.CardExpYear, &out.ChallengeSessionID, &out.ChallengeStatus, &out.ChallengeRedirectURL, &out.ChallengeCallbackToken, &out.ChallengeExpiresAt)
+`, paymentID, merchantID).Scan(&out.PaymentID, &out.MerchantID, &out.OrderID, &out.Amount, &out.Currency, &out.Method, &out.Provider, &out.RoutingReason, &out.AttemptedProviders, &out.MethodState, &out.MethodStateReason, &status, &out.Captured, &out.CapturedAt, &out.CreatedAt, &out.AuthorizedAt, &out.PaymentMethodTokenID, &out.CardBrand, &out.CardLast4, &out.CardExpMonth, &out.CardExpYear, &out.CardIssuerName, &out.CardIssuerCountry, &out.CardCountry, &out.FundingType, &out.NetworkTokenType, &out.ChallengeSessionID, &out.ChallengeStatus, &out.ChallengeRedirectURL, &out.ChallengeCallbackToken, &out.ChallengeExpiresAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return CaptureResult{}, ErrPaymentNotFound
@@ -782,8 +829,8 @@ func (r *PostgresRepository) ListPayments(ctx context.Context, f ListFilter) (Li
 	}
 	args := []any{f.MerchantID}
 	query := `
-SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.captured_at, p.created_at, p.authorized_at,
-       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0),
+SELECT p.id, p.merchant_id, p.order_id, p.amount, p.currency, p.method, COALESCE(p.provider, ''), COALESCE(p.routing_reason, ''), COALESCE(p.attempted_providers, '{}'), p.method_state, COALESCE(p.method_state_reason, ''), p.status, p.captured, p.captured_at, p.created_at, p.authorized_at,
+       COALESCE(cpd.card_token_id, ''), COALESCE(cpd.brand, ''), COALESCE(cpd.last4, ''), COALESCE(cpd.exp_month, 0), COALESCE(cpd.exp_year, 0), COALESCE(cpd.issuer_name, ''), COALESCE(cpd.issuer_country, ''), COALESCE(cpd.card_country, ''), COALESCE(cpd.funding_type, ''), COALESCE(cpd.network_token_type, ''),
        COALESCE(ccs.session_id, ''), COALESCE(ccs.status, ''), COALESCE(ccs.redirect_url, ''), COALESCE(ccs.callback_token, ''), ccs.expires_at
 FROM paygate_payments.payments p
 LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
@@ -818,6 +865,9 @@ WHERE p.merchant_id = $1`
 			&item.Amount,
 			&item.Currency,
 			&item.Method,
+			&item.Provider,
+			&item.RoutingReason,
+			&item.AttemptedProviders,
 			&item.MethodState,
 			&item.MethodStateReason,
 			&status,
@@ -830,6 +880,11 @@ WHERE p.merchant_id = $1`
 			&item.CardLast4,
 			&item.CardExpMonth,
 			&item.CardExpYear,
+			&item.CardIssuerName,
+			&item.CardIssuerCountry,
+			&item.CardCountry,
+			&item.FundingType,
+			&item.NetworkTokenType,
 			&item.ChallengeSessionID,
 			&item.ChallengeStatus,
 			&item.ChallengeRedirectURL,
