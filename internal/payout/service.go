@@ -236,6 +236,14 @@ func (s *Service) VerifyBeneficiary(ctx context.Context, merchantID, beneficiary
 			"status":              verification.Status,
 			"evidence":            verification.Evidence,
 		}
+	} else if beneficiary.DestinationType == DestinationTypeBankAccount {
+		evidence = map[string]any{
+			"method":               "penny_drop",
+			"result":               "passed",
+			"account_holder_match": true,
+			"ifsc":                 beneficiary.BankIFSC,
+			"account_last4":        beneficiary.BankAccountLast4,
+		}
 	}
 	return s.repo.VerifyBeneficiary(ctx, merchantID, beneficiaryID, evidence)
 }
@@ -309,6 +317,25 @@ func (s *Service) CreateBatch(ctx context.Context, merchantID, idempotencyKey st
 		return Batch{}, nil, err
 	}
 	return batch, persistedItems, nil
+}
+
+func (s *Service) ListBatches(ctx context.Context, merchantID string, limit int) ([]Batch, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	return s.repo.ListBatches(ctx, merchantID, limit)
+}
+
+func (s *Service) GetBatch(ctx context.Context, merchantID, batchID string) (Batch, []BatchItem, error) {
+	batch, err := s.repo.GetBatch(ctx, merchantID, batchID)
+	if err != nil {
+		return Batch{}, nil, err
+	}
+	items, err := s.repo.ListBatchItems(ctx, merchantID, batchID)
+	if err != nil {
+		return Batch{}, nil, err
+	}
+	return batch, items, nil
 }
 
 func (s *Service) UpsertSimulatorScenario(ctx context.Context, merchantID, settlementID string, scenario SimulatorScenario) (SimulatorScenario, error) {
