@@ -6,36 +6,45 @@ import (
 )
 
 type CaptureResult struct {
-	PaymentID            string
-	MerchantID           string
-	OrderID              string
-	Amount               int64
-	Currency             string
-	Method               string
-	PaymentMethodTokenID string
-	CardTokenClass       string
-	CardBrand            string
-	CardLast4            string
-	CardExpMonth         int
-	CardExpYear          int
-	MethodState          string
-	MethodStateReason    string
-	Status               PaymentState
-	ChallengeSessionID   string
-	ChallengeStatus      string
-	ChallengeRedirectURL string
+	PaymentID              string
+	MerchantID             string
+	OrderID                string
+	Amount                 int64
+	Currency               string
+	Method                 string
+	Provider               string
+	RoutingReason          string
+	AttemptedProviders     []string
+	PaymentMethodTokenID   string
+	CardTokenClass         string
+	CardBrand              string
+	CardLast4              string
+	CardExpMonth           int
+	CardExpYear            int
+	CardIssuerName         string
+	CardIssuerCountry      string
+	CardCountry            string
+	FundingType            string
+	NetworkTokenType       string
+	MethodState            string
+	MethodStateReason      string
+	Status                 PaymentState
+	ChallengeSessionID     string
+	ChallengeStatus        string
+	ChallengeRedirectURL   string
 	ChallengeCallbackToken string
-	ChallengeExpiresAt   *time.Time
-	Captured             bool
-	CapturedAt           *time.Time
-	CreatedAt            time.Time
-	AuthorizedAt         *time.Time
-	Splits               []PaymentSplit
+	ChallengeExpiresAt     *time.Time
+	Captured               bool
+	CapturedAt             *time.Time
+	CreatedAt              time.Time
+	AuthorizedAt           *time.Time
+	Splits                 []PaymentSplit
 }
 
 type Repository interface {
 	StartAuthorization(ctx context.Context, in CreateAuthorizedInput) (CaptureResult, error)
 	AttachCardPaymentDetails(ctx context.Context, merchantID, paymentID string, in CardPaymentDetailsInput) error
+	UpdateGatewayRouting(ctx context.Context, merchantID, paymentID string, decision GatewayRouteDecision) error
 	CreateFailedAttempt(ctx context.Context, in CreateAuthorizedInput, errorCode, errorDescription string) error
 	MarkAuthorizationAuthorized(ctx context.Context, merchantID, paymentID, gatewayReference, authCode string, autoCaptureAt *time.Time) (CaptureResult, error)
 	MarkAuthorizationRequiresAction(ctx context.Context, merchantID, paymentID string, in CardChallengeSessionInput) (CaptureResult, error)
@@ -51,6 +60,15 @@ type Repository interface {
 	FailUPIIntent(ctx context.Context, paymentID string, eventID string, providerStatus UPIProviderStatus, errorCode, errorDescription string, processedAt time.Time) (UPIIntentResult, bool, error)
 	AbandonUPIIntent(ctx context.Context, merchantID, paymentID, reason string, abandonedAt time.Time) (UPIIntentResult, error)
 	ExpireUPIIntent(ctx context.Context, merchantID, paymentID string, expiredAt time.Time) (UPIIntentResult, error)
+	CreateRedirectSession(ctx context.Context, in CreateRedirectSessionRecordInput) (RedirectSessionResult, error)
+	AttachRedirectGatewayData(ctx context.Context, merchantID, paymentID string, gatewayResult GatewayRedirectResult) (RedirectSessionResult, error)
+	GetRedirectSession(ctx context.Context, merchantID, paymentID string) (RedirectSessionResult, error)
+	PollRedirectSession(ctx context.Context, merchantID, paymentID string, polledAt time.Time) error
+	MarkRedirectProcessing(ctx context.Context, paymentID string, eventID string) (RedirectSessionResult, bool, error)
+	CompleteRedirectSession(ctx context.Context, paymentID string, eventID string, gatewayReference string, processedAt time.Time) (RedirectSessionResult, bool, error)
+	FailRedirectSession(ctx context.Context, paymentID string, eventID string, providerStatus RedirectProviderStatus, errorCode, errorDescription string, processedAt time.Time) (RedirectSessionResult, bool, error)
+	AbandonRedirectSession(ctx context.Context, merchantID, paymentID, reason string, abandonedAt time.Time) (RedirectSessionResult, error)
+	ExpireRedirectSession(ctx context.Context, merchantID, paymentID string, expiredAt time.Time) (RedirectSessionResult, error)
 	ReverseAuthorization(ctx context.Context, merchantID, paymentID, reason string) (CaptureResult, error)
 	CaptureAuthorizedPayment(ctx context.Context, merchantID, paymentID string, amount int64) (CaptureResult, error)
 	GetPayment(ctx context.Context, merchantID, paymentID string) (CaptureResult, error)
@@ -76,6 +94,9 @@ type CreateAuthorizedInput struct {
 	Amount               int64
 	Currency             string
 	Method               string
+	Provider             string
+	RoutingReason        string
+	AttemptedProviders   []string
 	PaymentMethodTokenID string
 	CardTokenClass       string
 	CardBrand            string
@@ -98,6 +119,11 @@ type CardPaymentDetailsInput struct {
 	CardLast4            string
 	CardExpMonth         int
 	CardExpYear          int
+	CardIssuerName       string
+	CardIssuerCountry    string
+	CardCountry          string
+	FundingType          string
+	NetworkTokenType     string
 }
 
 type CardChallengeSessionInput struct {
@@ -170,4 +196,52 @@ type UPIIntentResult struct {
 	LastPolledAt       *time.Time
 	FailureCode        string
 	FailureDescription string
+}
+
+type RedirectProviderStatus string
+
+const (
+	RedirectProviderStatusPending   RedirectProviderStatus = "pending"
+	RedirectProviderStatusSucceeded RedirectProviderStatus = "succeeded"
+	RedirectProviderStatusFailed    RedirectProviderStatus = "failed"
+	RedirectProviderStatusExpired   RedirectProviderStatus = "expired"
+	RedirectProviderStatusAbandoned RedirectProviderStatus = "abandoned"
+)
+
+type RedirectSessionResult struct {
+	CaptureResult
+	FlowType           string
+	BankCode           string
+	BankName           string
+	WalletCode         string
+	WalletName         string
+	RedirectURL        string
+	GatewayReference   string
+	ProviderStatus     RedirectProviderStatus
+	CallbackToken      string
+	ExpiresAt          time.Time
+	CompletedAt        *time.Time
+	LastPolledAt       *time.Time
+	FailureCode        string
+	FailureDescription string
+}
+
+type CreateRedirectSessionRecordInput struct {
+	PaymentID      string
+	MerchantID     string
+	OrderID        string
+	Amount         int64
+	Currency       string
+	Method         string
+	IdempotencyKey string
+	FlowType       string
+	BankCode       string
+	BankName       string
+	WalletCode     string
+	WalletName     string
+	ExpiresAt      time.Time
+	CallbackToken  string
+	Provider       string
+	RoutingReason  string
+	Attempted      []string
 }
