@@ -19,6 +19,7 @@ type SplitDestinationType string
 type CollectionMethod string
 type UPIMandateStatus string
 type UPIMandateEventType string
+type PaymentLinkStatus string
 
 const (
 	SubscriptionActive   SubscriptionStatus = "active"
@@ -112,6 +113,8 @@ var (
 	ErrInvalidConnectedAccount  = errors.New("invalid connected account")
 	ErrInvalidSplitInstruction  = errors.New("invalid split instruction")
 	ErrVPAVerificationRequired  = errors.New("upi vpa verification is required")
+	ErrPaymentLinkNotFound      = errors.New("payment link not found")
+	ErrInvalidPaymentLink       = errors.New("invalid payment link")
 )
 
 type Customer struct {
@@ -195,23 +198,30 @@ type UPIMandateEvent struct {
 }
 
 type Invoice struct {
-	ID             string
-	MerchantID     string
-	CustomerID     string
-	SubscriptionID string
-	Amount         int64
-	Currency       string
-	Status         InvoiceStatus
-	BillingReason  string
-	PeriodStart    time.Time
-	PeriodEnd      time.Time
-	DueAt          time.Time
-	OrderID        string
-	PaymentID      string
-	FailureCode    string
-	FailureMessage string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                string
+	MerchantID        string
+	CustomerID        string
+	SubscriptionID    string
+	ExternalReference string
+	Description       string
+	Amount            int64
+	Currency          string
+	Status            InvoiceStatus
+	Overdue           bool
+	BillingReason     string
+	PeriodStart       time.Time
+	PeriodEnd         time.Time
+	DueAt             time.Time
+	OrderID           string
+	PaymentID         string
+	PaymentLinkID     string
+	VirtualAccountID  string
+	ReminderCount     int
+	LastRemindedAt    *time.Time
+	FailureCode       string
+	FailureMessage    string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type InvoiceAttempt struct {
@@ -226,6 +236,32 @@ type InvoiceAttempt struct {
 	FailureCode    string
 	FailureMessage string
 	CreatedAt      time.Time
+}
+
+const (
+	PaymentLinkActive   PaymentLinkStatus = "active"
+	PaymentLinkDisabled PaymentLinkStatus = "disabled"
+	PaymentLinkExpired  PaymentLinkStatus = "expired"
+	PaymentLinkPaid     PaymentLinkStatus = "paid"
+)
+
+type PaymentLink struct {
+	ID                string
+	MerchantID        string
+	CustomerID        string
+	OrderID           string
+	ExternalReference string
+	Title             string
+	Description       string
+	Amount            int64
+	Currency          string
+	Status            PaymentLinkStatus
+	CallbackURL       string
+	Notes             map[string]any
+	ExpiresAt         time.Time
+	LastVisitedAt     *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type VirtualAccount struct {
@@ -364,6 +400,18 @@ func (c InboundCollection) Validate() error {
 	}
 	if strings.TrimSpace(c.Currency) == "" {
 		return ErrInvalidCollection
+	}
+	return nil
+}
+
+func (p PaymentLink) Validate() error {
+	if strings.TrimSpace(p.MerchantID) == "" || strings.TrimSpace(p.OrderID) == "" || p.Amount <= 0 || strings.TrimSpace(p.Currency) == "" {
+		return ErrInvalidPaymentLink
+	}
+	switch p.Status {
+	case "", PaymentLinkActive, PaymentLinkDisabled, PaymentLinkExpired, PaymentLinkPaid:
+	default:
+		return ErrInvalidPaymentLink
 	}
 	return nil
 }
