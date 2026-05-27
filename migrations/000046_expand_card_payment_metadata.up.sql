@@ -1,0 +1,6 @@
+ALTER TABLE paygate_payments.card_payment_details
+    ADD COLUMN IF NOT EXISTS issuer_name TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS issuer_country TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS card_country TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS funding_type TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS network_token_type TEXT NOT NULL DEFAULT '';
