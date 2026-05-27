@@ -39,6 +39,12 @@ type Repository interface {
 	CreateInvoice(ctx context.Context, invoice Invoice) (Invoice, error)
 	GetInvoice(ctx context.Context, merchantID, invoiceID string) (Invoice, error)
 	ListInvoices(ctx context.Context, merchantID, subscriptionID string, limit int) ([]Invoice, error)
+	MarkInvoiceReminded(ctx context.Context, merchantID, invoiceID string, remindedAt time.Time) (Invoice, error)
+	CreatePaymentLink(ctx context.Context, link PaymentLink) (PaymentLink, error)
+	GetPaymentLink(ctx context.Context, merchantID, linkID string) (PaymentLink, error)
+	ListPaymentLinks(ctx context.Context, merchantID string, limit int) ([]PaymentLink, error)
+	UpdatePaymentLinkStatus(ctx context.Context, merchantID, linkID string, status PaymentLinkStatus) (PaymentLink, error)
+	MarkPaymentLinkVisited(ctx context.Context, merchantID, linkID string, visitedAt time.Time) (PaymentLink, error)
 	CreateInvoiceAttempt(ctx context.Context, attempt InvoiceAttempt) (InvoiceAttempt, error)
 	MarkInvoiceAttempt(ctx context.Context, merchantID, attemptID string, status InvoiceAttemptStatus, orderID, paymentID, failureCode, failureMessage string) error
 	MarkInvoicePaid(ctx context.Context, merchantID, invoiceID, orderID, paymentID string, nextBillingAt time.Time) (Invoice, error)
