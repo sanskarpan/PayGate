@@ -402,7 +402,29 @@ func (s *Service) UpdateCustomer(ctx context.Context, customer Customer) (Custom
 	if err := customer.Validate(); err != nil {
 		return Customer{}, err
 	}
+	if customer.DefaultPaymentTokenID != "" {
+		if err := s.validateCustomerDefaultToken(ctx, customer.MerchantID, customer.ID, customer.DefaultPaymentTokenID); err != nil {
+			return Customer{}, err
+		}
+	}
 	return s.repo.UpdateCustomer(ctx, customer)
+}
+
+func (s *Service) validateCustomerDefaultToken(ctx context.Context, merchantID, customerID, tokenID string) error {
+	if s.tokenSvc == nil {
+		return ErrCustomerTokenMismatch
+	}
+	token, err := s.tokenSvc.GetCardToken(ctx, merchantID, tokenID)
+	if err != nil {
+		return err
+	}
+	if token.TokenClass != tokenization.CardTokenClassReusable {
+		return ErrCardTokenNotReusable
+	}
+	if token.CustomerRef != "" && token.CustomerRef != customerID {
+		return ErrCustomerTokenMismatch
+	}
+	return nil
 }
 
 func (s *Service) CreateSubscription(ctx context.Context, in CreateSubscriptionInput) (Subscription, error) {
@@ -502,11 +524,27 @@ func (s *Service) CancelSubscription(ctx context.Context, merchantID, subscripti
 }
 
 func (s *Service) GetInvoice(ctx context.Context, merchantID, invoiceID string) (Invoice, error) {
-	return s.repo.GetInvoice(ctx, merchantID, invoiceID)
+	invoice, err := s.repo.GetInvoice(ctx, merchantID, invoiceID)
+	if err != nil {
+		return Invoice{}, err
+	}
+	return s.hydrateInvoice(ctx, invoice)
 }
 
 func (s *Service) ListInvoices(ctx context.Context, merchantID, subscriptionID string, limit int) ([]Invoice, error) {
-	return s.repo.ListInvoices(ctx, merchantID, subscriptionID, limit)
+	items, err := s.repo.ListInvoices(ctx, merchantID, subscriptionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Invoice, 0, len(items))
+	for _, item := range items {
+		hydrated, err := s.hydrateInvoice(ctx, item)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, hydrated)
+	}
+	return out, nil
 }
 
 func (s *Service) RunSubscription(ctx context.Context, merchantID, subscriptionID string) (Invoice, payment.CaptureResult, error) {

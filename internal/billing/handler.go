@@ -53,8 +53,15 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 	mux.Handle("POST /v1/subscriptions/{id}/run", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.runSubscription)))
 	mux.Handle("POST /v1/subscriptions/run-due", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.runDueSubscriptions)))
 
+	mux.Handle("POST /v1/invoices", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createInvoice)))
 	mux.Handle("GET /v1/invoices", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listInvoices)))
 	mux.Handle("GET /v1/invoices/{id}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getInvoice)))
+	mux.Handle("POST /v1/invoices/{id}/send-reminder", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.sendInvoiceReminder)))
+	mux.Handle("POST /v1/payment-links", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createPaymentLink)))
+	mux.Handle("GET /v1/payment-links", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listPaymentLinks)))
+	mux.Handle("GET /v1/payment-links/{id}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getPaymentLink)))
+	mux.Handle("POST /v1/payment-links/{id}/disable", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.disablePaymentLink)))
+	mux.Handle("POST /v1/payment-links/{id}/expire", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.expirePaymentLink)))
 }
 
 func (h *Handler) createVirtualAccount(w http.ResponseWriter, r *http.Request) {
@@ -585,6 +592,26 @@ func (h *Handler) runDueSubscriptions(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"entity": "collection", "count": len(items), "items": items})
 }
 
+func (h *Handler) createInvoice(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	var req CreateManualInvoiceInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
+		return
+	}
+	req.MerchantID = p.MerchantID
+	out, err := h.svc.CreateManualInvoice(r.Context(), req)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, presentInvoice(out))
+}
+
 func (h *Handler) listInvoices(w http.ResponseWriter, r *http.Request) {
 	p, ok := httpx.PrincipalFromContext(r.Context())
 	if !ok {
@@ -611,6 +638,20 @@ func (h *Handler) getInvoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := h.svc.GetInvoice(r.Context(), p.MerchantID, r.PathValue("id"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentInvoice(out))
+}
+
+func (h *Handler) sendInvoiceReminder(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	out, err := h.svc.SendInvoiceReminder(r.Context(), p.MerchantID, r.PathValue("id"))
 	if err != nil {
 		handleError(w, err)
 		return
@@ -796,33 +837,43 @@ func presentSubscription(subscription Subscription) map[string]any {
 }
 
 func presentInvoice(invoice Invoice) map[string]any {
-	return map[string]any{
-		"entity":          "invoice",
-		"id":              invoice.ID,
-		"merchant_id":     invoice.MerchantID,
-		"customer_id":     invoice.CustomerID,
-		"subscription_id": invoice.SubscriptionID,
-		"amount":          invoice.Amount,
-		"currency":        invoice.Currency,
-		"status":          invoice.Status,
-		"billing_reason":  invoice.BillingReason,
-		"period_start":    invoice.PeriodStart.Unix(),
-		"period_end":      invoice.PeriodEnd.Unix(),
-		"due_at":          invoice.DueAt.Unix(),
-		"order_id":        invoice.OrderID,
-		"payment_id":      invoice.PaymentID,
-		"failure_code":    invoice.FailureCode,
-		"failure_message": invoice.FailureMessage,
-		"created_at":      invoice.CreatedAt.Unix(),
-		"updated_at":      invoice.UpdatedAt.Unix(),
+	resp := map[string]any{
+		"entity":             "invoice",
+		"id":                 invoice.ID,
+		"merchant_id":        invoice.MerchantID,
+		"customer_id":        invoice.CustomerID,
+		"subscription_id":    invoice.SubscriptionID,
+		"external_reference": invoice.ExternalReference,
+		"description":        invoice.Description,
+		"amount":             invoice.Amount,
+		"currency":           invoice.Currency,
+		"status":             invoice.Status,
+		"overdue":            invoice.Overdue,
+		"billing_reason":     invoice.BillingReason,
+		"period_start":       invoice.PeriodStart.Unix(),
+		"period_end":         invoice.PeriodEnd.Unix(),
+		"due_at":             invoice.DueAt.Unix(),
+		"order_id":           invoice.OrderID,
+		"payment_id":         invoice.PaymentID,
+		"payment_link_id":    invoice.PaymentLinkID,
+		"virtual_account_id": invoice.VirtualAccountID,
+		"reminder_count":     invoice.ReminderCount,
+		"failure_code":       invoice.FailureCode,
+		"failure_message":    invoice.FailureMessage,
+		"created_at":         invoice.CreatedAt.Unix(),
+		"updated_at":         invoice.UpdatedAt.Unix(),
 	}
+	if invoice.LastRemindedAt != nil {
+		resp["last_reminded_at"] = invoice.LastRemindedAt.Unix()
+	}
+	return resp
 }
 
 func handleError(w http.ResponseWriter, err error) {
 	switch err {
-	case ErrCustomerNotFound, ErrVirtualAccountNotFound, ErrCollectionNotFound, ErrConnectedAccountNotFound, ErrSubscriptionNotFound, ErrInvoiceNotFound, ErrUPIMandateNotFound:
+	case ErrCustomerNotFound, ErrVirtualAccountNotFound, ErrCollectionNotFound, ErrConnectedAccountNotFound, ErrSubscriptionNotFound, ErrInvoiceNotFound, ErrUPIMandateNotFound, ErrPaymentLinkNotFound:
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
-	case ErrInvalidSubscription, ErrInvalidVirtualAccount, ErrInvalidCollection, ErrInvalidConnectedAccount, ErrInvalidSplitInstruction, ErrCardTokenNotReusable, ErrCustomerTokenMismatch, ErrSubscriptionNotActive, ErrInvalidUPIMandate, ErrUPIMandateNotActive, ErrMandateCustomerMismatch, ErrVPAVerificationRequired:
+	case ErrInvalidSubscription, ErrInvalidVirtualAccount, ErrInvalidCollection, ErrInvalidConnectedAccount, ErrInvalidSplitInstruction, ErrCardTokenNotReusable, ErrCustomerTokenMismatch, ErrSubscriptionNotActive, ErrInvalidUPIMandate, ErrUPIMandateNotActive, ErrMandateCustomerMismatch, ErrVPAVerificationRequired, ErrInvalidPaymentLink:
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: err.Error()})
