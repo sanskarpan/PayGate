@@ -54,6 +54,8 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 	mux.Handle("POST /v1/payouts/{payoutID}/reject", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.rejectPayout)))
 	mux.Handle("GET /v1/payouts/{payoutID}/approvals", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listApprovals)))
 	mux.Handle("POST /v1/payout-batches", wrap(merchant.APIKeyScopeAdmin, http.HandlerFunc(h.createBatch)))
+	mux.Handle("GET /v1/payout-batches", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listBatches)))
+	mux.Handle("GET /v1/payout-batches/{batchID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getBatch)))
 	mux.Handle("POST /v1/payouts/{payoutID}/cancel", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.cancel)))
 	mux.Handle("GET /v1/payouts/{payoutID}/events", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.events)))
 }

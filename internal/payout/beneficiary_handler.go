@@ -253,6 +253,38 @@ func (h *Handler) createBatch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) listBatches(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	items, err := h.svc.ListBatches(r.Context(), p.MerchantID, 50)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	resp := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, presentBatch(item, nil))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"entity": "collection", "count": len(resp), "items": resp})
+}
+
+func (h *Handler) getBatch(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	batch, items, err := h.svc.GetBatch(r.Context(), p.MerchantID, r.PathValue("batchID"))
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, presentBatch(batch, items))
+}
+
 func presentBeneficiary(item Beneficiary) map[string]any {
 	return map[string]any{
 		"entity":                   "beneficiary",
@@ -279,4 +311,35 @@ func presentVerification(item BeneficiaryVerification) map[string]any {
 		"evidence":           item.Evidence,
 		"verified_at":        presentTime(item.VerifiedAt),
 	}
+}
+
+func presentBatch(batch Batch, items []BatchItem) map[string]any {
+	resp := map[string]any{
+		"entity":          "payout_batch",
+		"id":              batch.ID,
+		"status":          batch.Status,
+		"dry_run":         batch.DryRun,
+		"idempotency_key": batch.IdempotencyKey,
+		"summary":         batch.Summary,
+		"created_at":      batch.CreatedAt.Unix(),
+		"updated_at":      batch.UpdatedAt.Unix(),
+	}
+	if items != nil {
+		payloadItems := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			payloadItems = append(payloadItems, map[string]any{
+				"id":             item.ID,
+				"settlement_id":  item.SettlementID,
+				"beneficiary_id": item.BeneficiaryID,
+				"payout_id":      item.PayoutID,
+				"amount":         item.Amount,
+				"currency":       item.Currency,
+				"status":         item.Status,
+				"error_text":     item.ErrorText,
+				"created_at":     item.CreatedAt.Unix(),
+			})
+		}
+		resp["items"] = payloadItems
+	}
+	return resp
 }

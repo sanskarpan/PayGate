@@ -104,12 +104,24 @@ WHERE id = $1
 		return Beneficiary{}, BeneficiaryVerification{}, err
 	}
 	raw, _ := json.Marshal(evidence)
+	provider := "simulated"
+	providerReference := "verify_" + beneficiaryID
+	if method, _ := evidence["method"].(string); method != "" {
+		switch method {
+		case "penny_drop":
+			provider = "penny_drop"
+			providerReference = "pdrop_" + beneficiaryID
+		case "upi_payee_verification":
+			provider = "upi_payee_verification"
+			providerReference = "upivpa_" + beneficiaryID
+		}
+	}
 	verification := BeneficiaryVerification{
 		ID:                idgen.New("bver"),
 		BeneficiaryID:     beneficiaryID,
 		MerchantID:        merchantID,
-		Provider:          "simulated",
-		ProviderReference: "verify_" + beneficiaryID,
+		Provider:          provider,
+		ProviderReference: providerReference,
 		Status:            "passed",
 		Evidence:          evidence,
 		VerifiedAt:        &verifiedAt,
@@ -271,6 +283,48 @@ VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8)
 		return Batch{}, nil, err
 	}
 	return batch, items, nil
+}
+
+func (r *PostgresRepository) ListBatches(ctx context.Context, merchantID string, limit int) ([]Batch, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT id, merchant_id, dry_run, status, idempotency_key, summary_json, created_at, updated_at
+FROM paygate_payouts.payout_batches
+WHERE merchant_id = $1
+ORDER BY created_at DESC
+LIMIT $2
+`, merchantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Batch
+	for rows.Next() {
+		var item Batch
+		var raw []byte
+		if err := rows.Scan(&item.ID, &item.MerchantID, &item.DryRun, &item.Status, &item.IdempotencyKey, &raw, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(raw, &item.Summary)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *PostgresRepository) GetBatch(ctx context.Context, merchantID, batchID string) (Batch, error) {
+	var item Batch
+	var raw []byte
+	if err := r.db.QueryRow(ctx, `
+SELECT id, merchant_id, dry_run, status, idempotency_key, summary_json, created_at, updated_at
+FROM paygate_payouts.payout_batches
+WHERE merchant_id = $1 AND id = $2
+`, merchantID, batchID).Scan(&item.ID, &item.MerchantID, &item.DryRun, &item.Status, &item.IdempotencyKey, &raw, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Batch{}, ErrPayoutBatchNotFound
+		}
+		return Batch{}, err
+	}
+	_ = json.Unmarshal(raw, &item.Summary)
+	return item, nil
 }
 
 func (r *PostgresRepository) ListBatchItems(ctx context.Context, merchantID, batchID string) ([]BatchItem, error) {

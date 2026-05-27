@@ -54,6 +54,8 @@ type Repository interface {
 	RecordApproval(ctx context.Context, merchantID, payoutID, actor, actorScope, decision, notes string) (Payout, error)
 	ListApprovals(ctx context.Context, merchantID, payoutID string) ([]ApprovalRecord, error)
 	CreateBatch(ctx context.Context, batch Batch, items []BatchItem) (Batch, []BatchItem, error)
+	ListBatches(ctx context.Context, merchantID string, limit int) ([]Batch, error)
+	GetBatch(ctx context.Context, merchantID, batchID string) (Batch, error)
 	ListBatchItems(ctx context.Context, merchantID, batchID string) ([]BatchItem, error)
 	UpdateBatchItem(ctx context.Context, batchItemID, payoutID, status, errorText string) error
 	FinalizeBatch(ctx context.Context, batchID, status string, summary map[string]any) (Batch, error)
