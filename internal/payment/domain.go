@@ -131,6 +131,18 @@ const (
 	MethodStateUPIFailed                 = "upi_failed"
 	MethodStateUPIExpired                = "upi_expired"
 	MethodStateUPIAbandoned              = "upi_abandoned"
+	MethodStateNetbankingRedirectCreated = "netbanking_redirect_created"
+	MethodStateNetbankingProcessing      = "netbanking_processing"
+	MethodStateNetbankingSucceeded       = "netbanking_succeeded"
+	MethodStateNetbankingFailed          = "netbanking_failed"
+	MethodStateNetbankingExpired         = "netbanking_expired"
+	MethodStateNetbankingAbandoned       = "netbanking_abandoned"
+	MethodStateWalletRedirectCreated     = "wallet_redirect_created"
+	MethodStateWalletProcessing          = "wallet_processing"
+	MethodStateWalletSucceeded           = "wallet_succeeded"
+	MethodStateWalletFailed              = "wallet_failed"
+	MethodStateWalletExpired             = "wallet_expired"
+	MethodStateWalletAbandoned           = "wallet_abandoned"
 )
 
 type UPIProviderStatus string
