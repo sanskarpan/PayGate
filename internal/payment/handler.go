@@ -50,13 +50,18 @@ func WithCapabilityChecker(c CapabilityChecker) func(*Handler) {
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("POST /v1/payments/upi/intents", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createUPIIntent)))
 	mux.Handle("POST /v1/payments/upi/qrs", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createUPIQR)))
+	mux.Handle("POST /v1/payments/netbanking/redirects", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createNetbankingRedirect)))
+	mux.Handle("POST /v1/payments/wallet/redirects", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createWalletRedirect)))
 	mux.Handle("GET /v1/payments/{paymentID}/upi-intent", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getUPIIntent)))
 	mux.Handle("GET /v1/payments/{paymentID}/upi-qr", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getUPIQR)))
+	mux.Handle("GET /v1/payments/{paymentID}/redirect-session", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getRedirectSession)))
 	mux.Handle("GET /v1/payments/{paymentID}/card-challenge", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getCardChallenge)))
 	mux.Handle("POST /v1/payments/{paymentID}/upi-intent/poll", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.pollUPIIntent)))
 	mux.Handle("POST /v1/payments/{paymentID}/upi-qr/poll", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.pollUPIQR)))
+	mux.Handle("POST /v1/payments/{paymentID}/redirect-session/poll", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.pollRedirectSession)))
 	mux.Handle("POST /v1/payments/{paymentID}/upi-intent/abandon", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.abandonUPIIntent)))
 	mux.Handle("POST /v1/payments/{paymentID}/upi-qr/abandon", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.abandonUPIQR)))
+	mux.Handle("POST /v1/payments/{paymentID}/redirect-session/abandon", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.abandonRedirectSession)))
 	mux.Handle("POST /v1/payments/authorize", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.authorize)))
 	mux.Handle("POST /v1/payments/{paymentID}/capture", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.capture)))
 	mux.Handle("POST /v1/payments/{paymentID}/reverse-authorization", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.reverseAuthorization)))
@@ -67,6 +72,7 @@ func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope mer
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/payments/{paymentID}/upi-intent/callbacks", http.HandlerFunc(h.upiCallback))
 	mux.Handle("POST /v1/payments/{paymentID}/upi-qr/callbacks", http.HandlerFunc(h.upiQRCallback))
+	mux.Handle("POST /v1/payments/{paymentID}/redirect-session/callbacks", http.HandlerFunc(h.redirectSessionCallback))
 	mux.Handle("POST /v1/payments/{paymentID}/card-challenge/callbacks", http.HandlerFunc(h.cardChallengeCallback))
 }
 
@@ -483,6 +489,9 @@ func present(out CaptureResult, r *http.Request) map[string]any {
 		"status":                  out.Status,
 		"order_id":                out.OrderID,
 		"method":                  out.Method,
+		"provider":                out.Provider,
+		"routing_reason":          out.RoutingReason,
+		"attempted_providers":     out.AttemptedProviders,
 		"method_state":            out.MethodState,
 		"method_state_reason":     out.MethodStateReason,
 		"captured":                out.Captured,
@@ -491,10 +500,15 @@ func present(out CaptureResult, r *http.Request) map[string]any {
 		"created_at":              out.CreatedAt.Unix(),
 		"payment_method_token_id": out.PaymentMethodTokenID,
 		"card": map[string]any{
-			"brand":     out.CardBrand,
-			"last4":     out.CardLast4,
-			"exp_month": out.CardExpMonth,
-			"exp_year":  out.CardExpYear,
+			"brand":              out.CardBrand,
+			"last4":              out.CardLast4,
+			"exp_month":          out.CardExpMonth,
+			"exp_year":           out.CardExpYear,
+			"issuer_name":        out.CardIssuerName,
+			"issuer_country":     out.CardIssuerCountry,
+			"card_country":       out.CardCountry,
+			"funding_type":       out.FundingType,
+			"network_token_type": out.NetworkTokenType,
 		},
 	}
 	if out.ChallengeSessionID != "" {
