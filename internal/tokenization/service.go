@@ -47,6 +47,11 @@ type CardToken struct {
 	ExpYear          int
 	CustomerRef      string
 	NetworkReference string
+	IssuerName       string
+	IssuerCountry    string
+	CardCountry      string
+	FundingType      string
+	NetworkTokenType string
 	CreatedAt        time.Time
 	LastUsedAt       *time.Time
 	ConsumedAt       *time.Time
@@ -54,17 +59,22 @@ type CardToken struct {
 }
 
 type CardTokenReference struct {
-	TokenID      string
-	TokenClass   CardTokenClass
-	Brand        string
-	Last4        string
-	ExpMonth     int
-	ExpYear      int
-	CustomerRef  string
-	LastUsedAt   *time.Time
-	ConsumedAt   *time.Time
-	DisabledAt   *time.Time
-	NetworkToken string
+	TokenID          string
+	TokenClass       CardTokenClass
+	Brand            string
+	Last4            string
+	ExpMonth         int
+	ExpYear          int
+	CustomerRef      string
+	LastUsedAt       *time.Time
+	ConsumedAt       *time.Time
+	DisabledAt       *time.Time
+	NetworkToken     string
+	IssuerName       string
+	IssuerCountry    string
+	CardCountry      string
+	FundingType      string
+	NetworkTokenType string
 }
 
 type CreateCardTokenInput struct {
@@ -81,6 +91,7 @@ type CreateCardTokenInput struct {
 type Repository interface {
 	CreateCardToken(ctx context.Context, in CreateCardTokenRecordInput) (CardToken, error)
 	GetCardToken(ctx context.Context, merchantID, tokenID, action, reason, actor string) (CardToken, error)
+	ListCardTokens(ctx context.Context, merchantID, customerRef string, limit int) ([]CardToken, error)
 	PrepareCardTokenAuthorization(ctx context.Context, merchantID, tokenID, paymentID string, usedAt time.Time) (CardToken, error)
 	CompleteCardTokenAuthorization(ctx context.Context, merchantID, tokenID, paymentID string, success bool, reason string, usedAt time.Time) error
 	DisableCardToken(ctx context.Context, merchantID, tokenID, reason, actor string, disabledAt time.Time) (CardToken, error)
@@ -98,6 +109,7 @@ type CreateCardTokenRecordInput struct {
 	ExpYear          int
 	CustomerRef      string
 	NetworkReference string
+	Metadata         map[string]any
 }
 
 type Service struct {
@@ -125,6 +137,7 @@ func (s *Service) CreateCardToken(ctx context.Context, in CreateCardTokenInput) 
 	}
 	brand := inferBrand(pan)
 	fingerprint := fingerprintHash(in.MerchantID, pan, in.ExpMonth, in.ExpYear)
+	meta := inferCardMetadata(pan, in.NetworkReference)
 	return s.repo.CreateCardToken(ctx, CreateCardTokenRecordInput{
 		ID:               idgen.New("ctok"),
 		MerchantID:       in.MerchantID,
@@ -137,11 +150,19 @@ func (s *Service) CreateCardToken(ctx context.Context, in CreateCardTokenInput) 
 		ExpYear:          in.ExpYear,
 		CustomerRef:      strings.TrimSpace(in.CustomerRef),
 		NetworkReference: strings.TrimSpace(in.NetworkReference),
+		Metadata:         meta,
 	})
 }
 
 func (s *Service) GetCardToken(ctx context.Context, merchantID, tokenID string) (CardToken, error) {
 	return s.repo.GetCardToken(ctx, merchantID, tokenID, "view", "", "merchant_api")
+}
+
+func (s *Service) ListCardTokens(ctx context.Context, merchantID, customerRef string, limit int) ([]CardToken, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	return s.repo.ListCardTokens(ctx, merchantID, strings.TrimSpace(customerRef), limit)
 }
 
 func (s *Service) DisableCardToken(ctx context.Context, merchantID, tokenID, reason string) (CardToken, error) {
@@ -154,17 +175,22 @@ func (s *Service) PrepareAuthorization(ctx context.Context, merchantID, tokenID,
 		return CardTokenReference{}, err
 	}
 	return CardTokenReference{
-		TokenID:      token.ID,
-		TokenClass:   token.TokenClass,
-		Brand:        token.Brand,
-		Last4:        token.Last4,
-		ExpMonth:     token.ExpMonth,
-		ExpYear:      token.ExpYear,
-		CustomerRef:  token.CustomerRef,
-		LastUsedAt:   token.LastUsedAt,
-		ConsumedAt:   token.ConsumedAt,
-		DisabledAt:   token.DisabledAt,
-		NetworkToken: token.NetworkReference,
+		TokenID:          token.ID,
+		TokenClass:       token.TokenClass,
+		Brand:            token.Brand,
+		Last4:            token.Last4,
+		ExpMonth:         token.ExpMonth,
+		ExpYear:          token.ExpYear,
+		CustomerRef:      token.CustomerRef,
+		LastUsedAt:       token.LastUsedAt,
+		ConsumedAt:       token.ConsumedAt,
+		DisabledAt:       token.DisabledAt,
+		NetworkToken:     token.NetworkReference,
+		IssuerName:       token.IssuerName,
+		IssuerCountry:    token.IssuerCountry,
+		CardCountry:      token.CardCountry,
+		FundingType:      token.FundingType,
+		NetworkTokenType: token.NetworkTokenType,
 	}, nil
 }
 
@@ -245,4 +271,26 @@ func betweenPrefix(v string, min, max int) bool {
 func fingerprintHash(merchantID, pan string, expMonth, expYear int) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%02d:%04d", merchantID, pan, expMonth, expYear)))
 	return hex.EncodeToString(sum[:])
+}
+
+func inferCardMetadata(pan, networkReference string) map[string]any {
+	metadata := map[string]any{
+		"issuer_name":        "Sandbox Bank",
+		"issuer_country":     "IN",
+		"card_country":       "IN",
+		"funding_type":       "credit",
+		"network_token_type": "pan_token",
+	}
+	switch {
+	case strings.HasPrefix(pan, "5"), strings.HasPrefix(pan, "22"):
+		metadata["issuer_name"] = "Sandbox Commercial Bank"
+		metadata["funding_type"] = "debit"
+	case strings.HasPrefix(pan, "65"), strings.HasPrefix(pan, "60"):
+		metadata["issuer_name"] = "Sandbox RuPay Bank"
+		metadata["funding_type"] = "prepaid"
+	}
+	if strings.TrimSpace(networkReference) != "" {
+		metadata["network_token_type"] = "network_token"
+	}
+	return metadata
 }
