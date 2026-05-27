@@ -824,26 +824,26 @@ func (r *PostgresRepository) CreateInvoice(ctx context.Context, invoice Invoice)
 	invoice.ID = idgen.New("inv")
 	err := r.db.QueryRow(ctx, `
 INSERT INTO paygate_billing.invoices
-    (id, merchant_id, customer_id, subscription_id, amount, currency, status, billing_reason, period_start, period_end, due_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    (id, merchant_id, customer_id, subscription_id, external_reference, description, amount, currency, status, billing_reason, period_start, period_end, due_at, order_id, payment_id, payment_link_id, virtual_account_id, reminder_count)
+VALUES ($1,$2,$3,NULLIF($4, ''),$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 RETURNING created_at, updated_at
-`, invoice.ID, invoice.MerchantID, invoice.CustomerID, invoice.SubscriptionID, invoice.Amount, invoice.Currency, invoice.Status, invoice.BillingReason, invoice.PeriodStart, invoice.PeriodEnd, invoice.DueAt).
+`, invoice.ID, invoice.MerchantID, invoice.CustomerID, invoice.SubscriptionID, invoice.ExternalReference, invoice.Description, invoice.Amount, invoice.Currency, invoice.Status, invoice.BillingReason, invoice.PeriodStart, invoice.PeriodEnd, invoice.DueAt, invoice.OrderID, invoice.PaymentID, invoice.PaymentLinkID, invoice.VirtualAccountID, invoice.ReminderCount).
 		Scan(&invoice.CreatedAt, &invoice.UpdatedAt)
 	return invoice, err
 }
 
 func scanInvoice(row pgx.Row) (Invoice, error) {
 	var invoice Invoice
-	err := row.Scan(&invoice.ID, &invoice.MerchantID, &invoice.CustomerID, &invoice.SubscriptionID, &invoice.Amount, &invoice.Currency, &invoice.Status,
-		&invoice.BillingReason, &invoice.PeriodStart, &invoice.PeriodEnd, &invoice.DueAt, &invoice.OrderID, &invoice.PaymentID,
+	err := row.Scan(&invoice.ID, &invoice.MerchantID, &invoice.CustomerID, &invoice.SubscriptionID, &invoice.ExternalReference, &invoice.Description, &invoice.Amount, &invoice.Currency, &invoice.Status,
+		&invoice.BillingReason, &invoice.PeriodStart, &invoice.PeriodEnd, &invoice.DueAt, &invoice.OrderID, &invoice.PaymentID, &invoice.PaymentLinkID, &invoice.VirtualAccountID, &invoice.ReminderCount, &invoice.LastRemindedAt,
 		&invoice.FailureCode, &invoice.FailureMessage, &invoice.CreatedAt, &invoice.UpdatedAt)
 	return invoice, err
 }
 
 func (r *PostgresRepository) GetInvoice(ctx context.Context, merchantID, invoiceID string) (Invoice, error) {
 	invoice, err := scanInvoice(r.db.QueryRow(ctx, `
-SELECT id, merchant_id, customer_id, subscription_id, amount, currency, status, billing_reason, period_start, period_end, due_at,
-       order_id, payment_id, failure_code, failure_message, created_at, updated_at
+SELECT id, merchant_id, customer_id, COALESCE(subscription_id, ''), COALESCE(external_reference, ''), COALESCE(description, ''), amount, currency, status, billing_reason, period_start, period_end, due_at,
+       order_id, payment_id, COALESCE(payment_link_id, ''), COALESCE(virtual_account_id, ''), reminder_count, last_reminded_at, failure_code, failure_message, created_at, updated_at
 FROM paygate_billing.invoices
 WHERE merchant_id = $1 AND id = $2
 `, merchantID, invoiceID))
@@ -861,8 +861,8 @@ func (r *PostgresRepository) ListInvoices(ctx context.Context, merchantID, subsc
 		limit = 25
 	}
 	rows, err := r.db.Query(ctx, `
-SELECT id, merchant_id, customer_id, subscription_id, amount, currency, status, billing_reason, period_start, period_end, due_at,
-       order_id, payment_id, failure_code, failure_message, created_at, updated_at
+SELECT id, merchant_id, customer_id, COALESCE(subscription_id, ''), COALESCE(external_reference, ''), COALESCE(description, ''), amount, currency, status, billing_reason, period_start, period_end, due_at,
+       order_id, payment_id, COALESCE(payment_link_id, ''), COALESCE(virtual_account_id, ''), reminder_count, last_reminded_at, failure_code, failure_message, created_at, updated_at
 FROM paygate_billing.invoices
 WHERE merchant_id = $1 AND ($2 = '' OR subscription_id = $2)
 ORDER BY created_at DESC
@@ -893,6 +893,25 @@ RETURNING created_at
 `, attempt.ID, attempt.InvoiceID, attempt.MerchantID, attempt.SubscriptionID, attempt.AttemptNumber, attempt.Status, attempt.OrderID, attempt.PaymentID, attempt.FailureCode, attempt.FailureMessage).
 		Scan(&attempt.CreatedAt)
 	return attempt, err
+}
+
+func (r *PostgresRepository) MarkInvoiceReminded(ctx context.Context, merchantID, invoiceID string, remindedAt time.Time) (Invoice, error) {
+	invoice, err := scanInvoice(r.db.QueryRow(ctx, `
+UPDATE paygate_billing.invoices
+SET reminder_count = reminder_count + 1,
+    last_reminded_at = $3,
+    updated_at = NOW()
+WHERE merchant_id = $1 AND id = $2
+RETURNING id, merchant_id, customer_id, COALESCE(subscription_id, ''), COALESCE(external_reference, ''), COALESCE(description, ''), amount, currency, status, billing_reason, period_start, period_end, due_at,
+          order_id, payment_id, COALESCE(payment_link_id, ''), COALESCE(virtual_account_id, ''), reminder_count, last_reminded_at, failure_code, failure_message, created_at, updated_at
+`, merchantID, invoiceID, remindedAt))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Invoice{}, ErrInvoiceNotFound
+		}
+		return Invoice{}, err
+	}
+	return invoice, nil
 }
 
 func (r *PostgresRepository) MarkInvoiceAttempt(ctx context.Context, merchantID, attemptID string, status InvoiceAttemptStatus, orderID, paymentID, failureCode, failureMessage string) error {
@@ -931,9 +950,9 @@ SET status = 'paid',
     failure_message = '',
     updated_at = NOW()
 WHERE merchant_id = $1 AND id = $2
-RETURNING id, merchant_id, customer_id, subscription_id, amount, currency, status, billing_reason, period_start, period_end, due_at,
-       order_id, payment_id, failure_code, failure_message, created_at, updated_at
-`, merchantID, invoiceID, orderID, paymentID).Scan(&invoice.ID, &invoice.MerchantID, &invoice.CustomerID, &subscriptionID, &invoice.Amount, &invoice.Currency, &invoice.Status, &invoice.BillingReason, &invoice.PeriodStart, &invoice.PeriodEnd, &invoice.DueAt, &invoice.OrderID, &invoice.PaymentID, &invoice.FailureCode, &invoice.FailureMessage, &invoice.CreatedAt, &invoice.UpdatedAt)
+RETURNING id, merchant_id, customer_id, COALESCE(subscription_id, ''), COALESCE(external_reference, ''), COALESCE(description, ''), amount, currency, status, billing_reason, period_start, period_end, due_at,
+       order_id, payment_id, COALESCE(payment_link_id, ''), COALESCE(virtual_account_id, ''), reminder_count, last_reminded_at, failure_code, failure_message, created_at, updated_at
+`, merchantID, invoiceID, orderID, paymentID).Scan(&invoice.ID, &invoice.MerchantID, &invoice.CustomerID, &subscriptionID, &invoice.ExternalReference, &invoice.Description, &invoice.Amount, &invoice.Currency, &invoice.Status, &invoice.BillingReason, &invoice.PeriodStart, &invoice.PeriodEnd, &invoice.DueAt, &invoice.OrderID, &invoice.PaymentID, &invoice.PaymentLinkID, &invoice.VirtualAccountID, &invoice.ReminderCount, &invoice.LastRemindedAt, &invoice.FailureCode, &invoice.FailureMessage, &invoice.CreatedAt, &invoice.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Invoice{}, ErrInvoiceNotFound
@@ -941,7 +960,8 @@ RETURNING id, merchant_id, customer_id, subscription_id, amount, currency, statu
 		return Invoice{}, err
 	}
 	invoice.SubscriptionID = subscriptionID
-	if _, err := tx.Exec(ctx, `
+	if subscriptionID != "" {
+		if _, err := tx.Exec(ctx, `
 UPDATE paygate_billing.subscriptions
 SET retry_count = 0,
     next_billing_at = $3,
@@ -950,7 +970,8 @@ SET retry_count = 0,
     updated_at = NOW()
 WHERE merchant_id = $1 AND id = $2
 `, merchantID, subscriptionID, nextBillingAt); err != nil {
-		return Invoice{}, err
+			return Invoice{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Invoice{}, err
@@ -973,9 +994,9 @@ SET status = 'failed',
     failure_message = $4,
     updated_at = NOW()
 WHERE merchant_id = $1 AND id = $2
-RETURNING id, merchant_id, customer_id, subscription_id, amount, currency, status, billing_reason, period_start, period_end, due_at,
-       order_id, payment_id, failure_code, failure_message, created_at, updated_at
-`, merchantID, invoiceID, failureCode, failureMessage).Scan(&invoice.ID, &invoice.MerchantID, &invoice.CustomerID, &subscriptionID, &invoice.Amount, &invoice.Currency, &invoice.Status, &invoice.BillingReason, &invoice.PeriodStart, &invoice.PeriodEnd, &invoice.DueAt, &invoice.OrderID, &invoice.PaymentID, &invoice.FailureCode, &invoice.FailureMessage, &invoice.CreatedAt, &invoice.UpdatedAt)
+RETURNING id, merchant_id, customer_id, COALESCE(subscription_id, ''), COALESCE(external_reference, ''), COALESCE(description, ''), amount, currency, status, billing_reason, period_start, period_end, due_at,
+       order_id, payment_id, COALESCE(payment_link_id, ''), COALESCE(virtual_account_id, ''), reminder_count, last_reminded_at, failure_code, failure_message, created_at, updated_at
+`, merchantID, invoiceID, failureCode, failureMessage).Scan(&invoice.ID, &invoice.MerchantID, &invoice.CustomerID, &subscriptionID, &invoice.ExternalReference, &invoice.Description, &invoice.Amount, &invoice.Currency, &invoice.Status, &invoice.BillingReason, &invoice.PeriodStart, &invoice.PeriodEnd, &invoice.DueAt, &invoice.OrderID, &invoice.PaymentID, &invoice.PaymentLinkID, &invoice.VirtualAccountID, &invoice.ReminderCount, &invoice.LastRemindedAt, &invoice.FailureCode, &invoice.FailureMessage, &invoice.CreatedAt, &invoice.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Invoice{}, ErrInvoiceNotFound
@@ -983,14 +1004,16 @@ RETURNING id, merchant_id, customer_id, subscription_id, amount, currency, statu
 		return Invoice{}, err
 	}
 	invoice.SubscriptionID = subscriptionID
-	if _, err := tx.Exec(ctx, `
+	if subscriptionID != "" {
+		if _, err := tx.Exec(ctx, `
 UPDATE paygate_billing.subscriptions
 SET retry_count = $3,
     next_billing_at = $4,
     updated_at = NOW()
 WHERE merchant_id = $1 AND id = $2
 `, merchantID, subscriptionID, retryCount, nextBillingAt); err != nil {
-		return Invoice{}, err
+			return Invoice{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Invoice{}, err
