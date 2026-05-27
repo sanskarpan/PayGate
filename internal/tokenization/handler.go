@@ -20,8 +20,10 @@ func NewHandler(svc *Service) *Handler {
 
 func (h *Handler) RegisterRoutesWithAuth(mux *http.ServeMux, wrap func(scope merchant.APIKeyScope, next http.Handler) http.Handler) {
 	mux.Handle("POST /v1/card-tokens", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.createCardToken)))
+	mux.Handle("GET /v1/card-tokens", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.listCardTokens)))
 	mux.Handle("GET /v1/card-tokens/{tokenID}", wrap(merchant.APIKeyScopeRead, http.HandlerFunc(h.getCardToken)))
 	mux.Handle("POST /v1/card-tokens/{tokenID}/disable", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.disableCardToken)))
+	mux.Handle("DELETE /v1/card-tokens/{tokenID}", wrap(merchant.APIKeyScopeWrite, http.HandlerFunc(h.deleteCardToken)))
 }
 
 func (h *Handler) createCardToken(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +76,25 @@ func (h *Handler) getCardToken(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, present(out))
 }
 
+func (h *Handler) listCardTokens(w http.ResponseWriter, r *http.Request) {
+	p, ok := httpx.PrincipalFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
+		return
+	}
+	customerRef := r.URL.Query().Get("customer_ref")
+	items, err := h.svc.ListCardTokens(r.Context(), p.MerchantID, customerRef, 100)
+	if err != nil {
+		handleError(w, err)
+		return
+	}
+	resp := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		resp = append(resp, present(item))
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"entity": "collection", "count": len(resp), "items": resp})
+}
+
 func (h *Handler) disableCardToken(w http.ResponseWriter, r *http.Request) {
 	p, ok := httpx.PrincipalFromContext(r.Context())
 	if !ok {
@@ -97,6 +118,10 @@ func (h *Handler) disableCardToken(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, present(out))
 }
 
+func (h *Handler) deleteCardToken(w http.ResponseWriter, r *http.Request) {
+	h.disableCardToken(w, r)
+}
+
 func present(out CardToken) map[string]any {
 	resp := map[string]any{
 		"id":          out.ID,
@@ -115,6 +140,21 @@ func present(out CardToken) map[string]any {
 	}
 	if out.NetworkReference != "" {
 		resp["network_reference"] = out.NetworkReference
+	}
+	if out.IssuerName != "" {
+		resp["issuer_name"] = out.IssuerName
+	}
+	if out.IssuerCountry != "" {
+		resp["issuer_country"] = out.IssuerCountry
+	}
+	if out.CardCountry != "" {
+		resp["card_country"] = out.CardCountry
+	}
+	if out.FundingType != "" {
+		resp["funding_type"] = out.FundingType
+	}
+	if out.NetworkTokenType != "" {
+		resp["network_token_type"] = out.NetworkTokenType
 	}
 	if out.LastUsedAt != nil {
 		resp["last_used_at"] = out.LastUsedAt.Unix()
