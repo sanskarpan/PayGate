@@ -24,9 +24,18 @@ type NamedGateway interface {
 	Name() string
 }
 
+type RoutedGateway interface {
+	AuthorizeWithRouting(ctx context.Context, amount int64, currency, merchantID, method string) (GatewayAuthResult, GatewayRouteDecision, error)
+}
+
 type UPIGateway interface {
 	CreateUPIIntent(ctx context.Context, in GatewayUPIIntentCreateInput) (GatewayUPIIntentResult, error)
 	PollUPIIntent(ctx context.Context, in GatewayUPIIntentPollInput) (GatewayUPIIntentStatus, error)
+}
+
+type RedirectGateway interface {
+	CreateRedirectSession(ctx context.Context, in GatewayRedirectCreateInput) (GatewayRedirectResult, error)
+	PollRedirectSession(ctx context.Context, in GatewayRedirectPollInput) (GatewayRedirectStatus, error)
 }
 
 type CardTokenAuthorizer interface {
@@ -44,6 +53,14 @@ type GatewayAuthResult struct {
 	ChallengeExpiry  *time.Time
 	ErrorCode        string
 	ErrorDescription string
+}
+
+type GatewayRouteDecision struct {
+	Provider           string
+	RoutingReason      string
+	AttemptedProviders []string
+	PrimaryProvider    string
+	FallbackUsed       bool
 }
 
 type GatewayUPIIntentCreateInput struct {
@@ -88,10 +105,50 @@ type GatewayUPIIntentStatus struct {
 	ErrorDescription string
 }
 
+type GatewayRedirectCreateInput struct {
+	PaymentID  string
+	MerchantID string
+	OrderID    string
+	Amount     int64
+	Currency   string
+	Method     string
+	BankCode   string
+	WalletCode string
+	ExpiresAt  time.Time
+}
+
+type GatewayRedirectResult struct {
+	GatewayReference string
+	RedirectURL      string
+	BankCode         string
+	BankName         string
+	WalletCode       string
+	WalletName       string
+	ExpiresAt        time.Time
+}
+
+type GatewayRedirectPollInput struct {
+	PaymentID        string
+	MerchantID       string
+	OrderID          string
+	Method           string
+	GatewayReference string
+	CreatedAt        time.Time
+	ExpiresAt        time.Time
+}
+
+type GatewayRedirectStatus struct {
+	ProviderStatus   RedirectProviderStatus
+	GatewayReference string
+	ErrorCode        string
+	ErrorDescription string
+}
+
 type Service struct {
 	repo       Repository
 	gateway    GatewayClient
 	upi        UPIGateway
+	redirect   RedirectGateway
 	cardTokens CardTokenAuthorizer
 }
 
@@ -99,6 +156,9 @@ func NewService(repo Repository, gw GatewayClient, opts ...func(*Service)) *Serv
 	svc := &Service{repo: repo, gateway: gw}
 	if upi, ok := gw.(UPIGateway); ok {
 		svc.upi = upi
+	}
+	if redirect, ok := gw.(RedirectGateway); ok {
+		svc.redirect = redirect
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -189,6 +249,19 @@ type CreateUPIMandateChargeInput struct {
 	IdempotencyKey string
 }
 
+type CreateRedirectSessionInput struct {
+	PaymentID        string `json:"-"`
+	MerchantID       string `json:"-"`
+	OrderID          string `json:"order_id"`
+	Amount           int64  `json:"amount"`
+	Currency         string `json:"currency"`
+	Method           string `json:"method"`
+	BankCode         string `json:"bank_code"`
+	WalletCode       string `json:"wallet_code"`
+	IdempotencyKey   string `json:"-"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+}
+
 type CompleteCardChallengeInput struct {
 	MerchantID       string
 	PaymentID        string
@@ -243,6 +316,11 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 			CardLast4:            cardRef.Last4,
 			CardExpMonth:         cardRef.ExpMonth,
 			CardExpYear:          cardRef.ExpYear,
+			CardIssuerName:       cardRef.IssuerName,
+			CardIssuerCountry:    cardRef.IssuerCountry,
+			CardCountry:          cardRef.CardCountry,
+			FundingType:          cardRef.FundingType,
+			NetworkTokenType:     cardRef.NetworkTokenType,
 		}); err != nil {
 			return CaptureResult{}, err
 		}
@@ -251,13 +329,39 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 		pending.CardLast4 = cardRef.Last4
 		pending.CardExpMonth = cardRef.ExpMonth
 		pending.CardExpYear = cardRef.ExpYear
+		pending.CardIssuerName = cardRef.IssuerName
+		pending.CardIssuerCountry = cardRef.IssuerCountry
+		pending.CardCountry = cardRef.CardCountry
+		pending.FundingType = cardRef.FundingType
+		pending.NetworkTokenType = cardRef.NetworkTokenType
 	}
 
 	provider := gatewayProviderName(s.gateway)
 	startedAt := time.Now()
-	result, err := s.gateway.Authorize(ctx, in.Amount, in.Currency, in.MerchantID, in.Method)
+	decision := GatewayRouteDecision{
+		Provider:           provider,
+		RoutingReason:      "direct_gateway",
+		AttemptedProviders: []string{provider},
+		PrimaryProvider:    provider,
+	}
+	var result GatewayAuthResult
+	if routed, ok := s.gateway.(RoutedGateway); ok {
+		result, decision, err = routed.AuthorizeWithRouting(ctx, in.Amount, in.Currency, in.MerchantID, in.Method)
+		if decision.Provider == "" {
+			decision.Provider = provider
+		}
+		if len(decision.AttemptedProviders) == 0 {
+			decision.AttemptedProviders = []string{decision.Provider}
+		}
+		if decision.PrimaryProvider == "" {
+			decision.PrimaryProvider = decision.Provider
+		}
+	} else {
+		result, err = s.gateway.Authorize(ctx, in.Amount, in.Currency, in.MerchantID, in.Method)
+	}
 	metrics.GatewayAuthorizationDuration.WithLabelValues(in.Method, provider).Observe(time.Since(startedAt).Seconds())
 	if err != nil {
+		_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
 		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "error").Inc()
 		if in.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
 			_ = s.cardTokens.CompleteAuthorization(ctx, in.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, false, "gateway error")
@@ -266,6 +370,7 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 		return CaptureResult{}, fmt.Errorf("gateway authorize: %w", err)
 	}
 	if result.RequiresAction {
+		_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
 		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "requires_action").Inc()
 		out, err := s.repo.MarkAuthorizationRequiresAction(ctx, in.MerchantID, pending.PaymentID, CardChallengeSessionInput{
 			SessionID:            idgen.New("chlg"),
@@ -285,6 +390,7 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 		return out, nil
 	}
 	if !result.Success {
+		_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
 		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "declined").Inc()
 		if in.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
 			_ = s.cardTokens.CompleteAuthorization(ctx, in.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, false, result.ErrorDescription)
@@ -305,6 +411,7 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 		}
 		return CaptureResult{}, err
 	}
+	_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
 	if in.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
 		_ = s.cardTokens.CompleteAuthorization(ctx, in.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, true, "")
 	}

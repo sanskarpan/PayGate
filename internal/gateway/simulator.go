@@ -75,15 +75,42 @@ func NewSimulatorWithStores(scenarioStore *ScenarioStore, methodStore *MethodCon
 // scenario for that merchant is applied; otherwise the legacy ForceDecline
 // behaviour is used. The method parameter drives method-specific behaviour.
 func (s *Simulator) Authorize(ctx context.Context, amount int64, currency, merchantID, method string) (payment.GatewayAuthResult, error) {
+	return s.AuthorizeWithProvider(ctx, ProviderSimulatorPrimary, amount, currency, merchantID, method)
+}
+
+func (s *Simulator) AuthorizeWithProvider(ctx context.Context, provider string, amount int64, currency, merchantID, method string) (payment.GatewayAuthResult, error) {
+	if provider == "" {
+		provider = ProviderSimulatorPrimary
+	}
+	if provider == ProviderSimulatorFailover {
+		profile := ProfileForMethod(method)
+		time.Sleep(time.Duration(profile.DefaultDelayMS) * time.Millisecond)
+		return stampProvider(provider, payment.GatewayAuthResult{Success: true, GatewayReference: "gw_ref_success", AuthCode: "AUTH_OK"}), nil
+	}
+	if provider == ProviderSimulatorSaver {
+		profile := ProfileForMethod(method)
+		time.Sleep(time.Duration(profile.DefaultDelayMS) * time.Millisecond)
+		if rand.Float64() >= maxFloat(0.70, profile.SuccessRate-0.08) { //nolint:gosec // simulator uses non-crypto RNG intentionally
+			return stampProvider(provider, payment.GatewayAuthResult{
+				Success:          false,
+				ErrorCode:        methodDeclineCode(profile),
+				ErrorDescription: "simulator: cost-saver route decline",
+			}), nil
+		}
+		return stampProvider(provider, payment.GatewayAuthResult{Success: true, GatewayReference: "gw_ref_success", AuthCode: "AUTH_OK"}), nil
+	}
 	if s.store != nil && merchantID != "" {
 		sc, err := s.store.Get(ctx, merchantID)
 		if err != nil {
 			// Fall through to legacy behaviour on store error.
-			return s.legacyAuthorize()
+			res, authErr := s.legacyAuthorize()
+			return stampProvider(provider, res), authErr
 		}
-		return s.applyScenario(ctx, sc, method)
+		result, err := s.applyScenario(ctx, sc, method)
+		return stampProvider(provider, result), err
 	}
-	return s.legacyAuthorize()
+	res, authErr := s.legacyAuthorize()
+	return stampProvider(provider, res), authErr
 }
 
 // RefundAuthorize simulates an instant gateway refund approval.
@@ -102,6 +129,32 @@ func (s *Simulator) legacyAuthorize() (payment.GatewayAuthResult, error) {
 		}, nil
 	}
 	return payment.GatewayAuthResult{Success: true, GatewayReference: "gw_ref_success", AuthCode: "AUTH_OK"}, nil
+}
+
+func stampProvider(provider string, result payment.GatewayAuthResult) payment.GatewayAuthResult {
+	if provider == "" {
+		return result
+	}
+	if result.GatewayReference != "" {
+		result.GatewayReference = provider + ":" + result.GatewayReference
+	}
+	if result.AuthCode != "" {
+		result.AuthCode = provider + ":" + result.AuthCode
+	}
+	if result.ChallengeToken != "" {
+		result.ChallengeToken = provider + ":" + result.ChallengeToken
+	}
+	if result.ChallengeURL != "" {
+		result.ChallengeURL = result.ChallengeURL + "?provider=" + provider
+	}
+	return result
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // methodDeclineCode picks the first decline code from the profile, or a generic fallback.

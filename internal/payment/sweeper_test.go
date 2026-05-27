@@ -17,6 +17,9 @@ func (f *fakeRepo) StartAuthorization(context.Context, CreateAuthorizedInput) (C
 func (f *fakeRepo) AttachCardPaymentDetails(context.Context, string, string, CardPaymentDetailsInput) error {
 	return nil
 }
+func (f *fakeRepo) UpdateGatewayRouting(context.Context, string, string, GatewayRouteDecision) error {
+	return nil
+}
 func (f *fakeRepo) CreateFailedAttempt(context.Context, CreateAuthorizedInput, string, string) error {
 	return nil
 }
@@ -61,6 +64,33 @@ func (f *fakeRepo) AbandonUPIIntent(context.Context, string, string, string, tim
 }
 func (f *fakeRepo) ExpireUPIIntent(context.Context, string, string, time.Time) (UPIIntentResult, error) {
 	return UPIIntentResult{}, nil
+}
+func (f *fakeRepo) CreateRedirectSession(context.Context, CreateRedirectSessionRecordInput) (RedirectSessionResult, error) {
+	return RedirectSessionResult{}, nil
+}
+func (f *fakeRepo) AttachRedirectGatewayData(context.Context, string, string, GatewayRedirectResult) (RedirectSessionResult, error) {
+	return RedirectSessionResult{}, nil
+}
+func (f *fakeRepo) GetRedirectSession(context.Context, string, string) (RedirectSessionResult, error) {
+	return RedirectSessionResult{}, nil
+}
+func (f *fakeRepo) PollRedirectSession(context.Context, string, string, time.Time) error {
+	return nil
+}
+func (f *fakeRepo) MarkRedirectProcessing(context.Context, string, string) (RedirectSessionResult, bool, error) {
+	return RedirectSessionResult{}, false, nil
+}
+func (f *fakeRepo) CompleteRedirectSession(context.Context, string, string, string, time.Time) (RedirectSessionResult, bool, error) {
+	return RedirectSessionResult{}, false, nil
+}
+func (f *fakeRepo) FailRedirectSession(context.Context, string, string, RedirectProviderStatus, string, string, time.Time) (RedirectSessionResult, bool, error) {
+	return RedirectSessionResult{}, false, nil
+}
+func (f *fakeRepo) AbandonRedirectSession(context.Context, string, string, string, time.Time) (RedirectSessionResult, error) {
+	return RedirectSessionResult{}, nil
+}
+func (f *fakeRepo) ExpireRedirectSession(context.Context, string, string, time.Time) (RedirectSessionResult, error) {
+	return RedirectSessionResult{}, nil
 }
 func (f *fakeRepo) ReverseAuthorization(context.Context, string, string, string) (CaptureResult, error) {
 	return CaptureResult{}, nil
