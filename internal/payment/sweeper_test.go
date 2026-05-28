@@ -2,11 +2,13 @@ package payment
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
 
 type fakeRepo struct {
+	mu           sync.Mutex
 	autoCalled   bool
 	expireCalled bool
 }
@@ -105,11 +107,15 @@ func (f *fakeRepo) ListPayments(context.Context, ListFilter) (ListResult, error)
 	return ListResult{}, nil
 }
 func (f *fakeRepo) AutoCaptureDue(context.Context) (int64, error) {
+	f.mu.Lock()
 	f.autoCalled = true
+	f.mu.Unlock()
 	return 0, nil
 }
 func (f *fakeRepo) ExpireAuthorizationWindow(context.Context, time.Duration) (int64, error) {
+	f.mu.Lock()
 	f.expireCalled = true
+	f.mu.Unlock()
 	return 0, nil
 }
 
@@ -121,6 +127,8 @@ func TestSweeperInvokesRepo(t *testing.T) {
 	go s.Start(ctx)
 	time.Sleep(25 * time.Millisecond)
 	cancel()
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
 	if !repo.autoCalled || !repo.expireCalled {
 		t.Fatalf("expected sweeper to invoke both paths, auto=%v expire=%v", repo.autoCalled, repo.expireCalled)
 	}
