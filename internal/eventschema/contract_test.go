@@ -136,8 +136,28 @@ func (r *contractWebhookRepo) CreateDeliveryAttempt(_ context.Context, attempt w
 	r.attempts = append(r.attempts, attempt)
 	return attempt, nil
 }
-func (r *contractWebhookRepo) UpdateDeliveryAttempt(context.Context, string, webhook.DeliveryStatus, int, string, string, *string, int) (webhook.WebhookDeliveryAttempt, error) {
-	panic("not used")
+func (r *contractWebhookRepo) ReserveDeliveryAttempt(_ context.Context, attempt webhook.WebhookDeliveryAttempt) (webhook.WebhookDeliveryAttempt, error) {
+	for _, existing := range r.attempts {
+		if existing.EventID == attempt.EventID && existing.SubscriptionID == attempt.SubscriptionID {
+			return webhook.WebhookDeliveryAttempt{}, webhook.ErrDeliveryAlreadyReserved
+		}
+	}
+	r.attempts = append(r.attempts, attempt)
+	return attempt, nil
+}
+func (r *contractWebhookRepo) UpdateDeliveryAttempt(_ context.Context, id string, status webhook.DeliveryStatus, responseCode int, responseBody, errorMessage string, _ *string, attemptNumber int) (webhook.WebhookDeliveryAttempt, error) {
+	for i := range r.attempts {
+		if r.attempts[i].ID != id {
+			continue
+		}
+		r.attempts[i].Status = status
+		r.attempts[i].ResponseCode = responseCode
+		r.attempts[i].ResponseBody = responseBody
+		r.attempts[i].ErrorMessage = errorMessage
+		r.attempts[i].AttemptNumber = attemptNumber
+		return r.attempts[i], nil
+	}
+	return webhook.WebhookDeliveryAttempt{}, webhook.ErrDeliveryAttemptNotFound
 }
 func (r *contractWebhookRepo) ListDeliveryAttempts(context.Context, string, string) ([]webhook.WebhookDeliveryAttempt, error) {
 	return r.attempts, nil
