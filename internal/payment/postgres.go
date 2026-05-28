@@ -100,7 +100,7 @@ func (r *PostgresRepository) CreateFailedAttempt(ctx context.Context, in CreateA
 INSERT INTO paygate_payments.payment_attempts
 (id, order_id, merchant_id, payment_id, amount, currency, method, provider, routing_reason, attempted_providers, status, error_code, error_description, idempotency_key)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'failed',$11,$12,$13)
-`, attemptID, in.OrderID, in.MerchantID, nullableText(in.PaymentID), in.Amount, in.Currency, in.Method, nullableText(in.Provider), nullableText(in.RoutingReason), in.AttemptedProviders, errorCode, errorDescription, in.IdempotencyKey)
+`, attemptID, in.OrderID, in.MerchantID, nullableText(in.PaymentID), in.Amount, in.Currency, in.Method, nonEmptyText(in.Provider), nonEmptyText(in.RoutingReason), normalizeAttemptedProviders(in.AttemptedProviders), errorCode, errorDescription, in.IdempotencyKey)
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ FOR UPDATE
 INSERT INTO paygate_payments.payment_attempts
 (id, order_id, merchant_id, payment_id, amount, currency, method, provider, routing_reason, attempted_providers, status, idempotency_key)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'processing',$11)
-`, attemptID, in.OrderID, in.MerchantID, paymentID, in.Amount, in.Currency, in.Method, nullableText(in.Provider), nullableText(in.RoutingReason), in.AttemptedProviders, in.IdempotencyKey)
+`, attemptID, in.OrderID, in.MerchantID, paymentID, in.Amount, in.Currency, in.Method, nonEmptyText(in.Provider), nonEmptyText(in.RoutingReason), normalizeAttemptedProviders(in.AttemptedProviders), in.IdempotencyKey)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if in.IdempotencyKey != "" && errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -188,7 +188,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'processing',$11)
 INSERT INTO paygate_payments.payments
 (id, attempt_id, order_id, merchant_id, amount, currency, method, provider, routing_reason, attempted_providers, method_state, status, captured)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'created',false)
-`, paymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, nullableText(in.Provider), nullableText(in.RoutingReason), in.AttemptedProviders, initialMethodState(in.Method))
+`, paymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, nonEmptyText(in.Provider), nonEmptyText(in.RoutingReason), normalizeAttemptedProviders(in.AttemptedProviders), initialMethodState(in.Method))
 	if err != nil {
 		return CaptureResult{}, fmt.Errorf("insert payment: %w", err)
 	}
@@ -221,7 +221,7 @@ SET provider = NULLIF($3, ''),
     attempted_providers = $5,
     updated_at = NOW()
 WHERE id = $1 AND merchant_id = $2
-`, paymentID, merchantID, decision.Provider, decision.RoutingReason, decision.AttemptedProviders)
+`, paymentID, merchantID, decision.Provider, decision.RoutingReason, normalizeAttemptedProviders(decision.AttemptedProviders))
 	if err != nil {
 		return fmt.Errorf("update payment routing: %w", err)
 	}
@@ -232,7 +232,7 @@ SET provider = NULLIF($3, ''),
     attempted_providers = $5,
     updated_at = NOW()
 WHERE payment_id = $1 AND merchant_id = $2
-`, paymentID, merchantID, decision.Provider, decision.RoutingReason, decision.AttemptedProviders)
+`, paymentID, merchantID, decision.Provider, decision.RoutingReason, normalizeAttemptedProviders(decision.AttemptedProviders))
 	if err != nil {
 		return fmt.Errorf("update attempt routing: %w", err)
 	}
@@ -1099,4 +1099,15 @@ func nullableText(v string) *string {
 		return nil
 	}
 	return &v
+}
+
+func nonEmptyText(v string) string {
+	return v
+}
+
+func normalizeAttemptedProviders(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }

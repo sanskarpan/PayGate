@@ -60,7 +60,7 @@ FOR UPDATE
 INSERT INTO paygate_payments.payment_attempts
 (id, order_id, merchant_id, payment_id, amount, currency, method, provider, routing_reason, attempted_providers, status, idempotency_key)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'processing',$11)
-`, attemptID, in.OrderID, in.MerchantID, in.PaymentID, in.Amount, in.Currency, in.Method, nullableText(in.Provider), nullableText(in.RoutingReason), in.Attempted, in.IdempotencyKey)
+`, attemptID, in.OrderID, in.MerchantID, in.PaymentID, in.Amount, in.Currency, in.Method, nonEmptyText(in.Provider), nonEmptyText(in.RoutingReason), normalizeAttemptedProviders(in.Attempted), in.IdempotencyKey)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if in.IdempotencyKey != "" && errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -72,7 +72,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'processing',$11)
 INSERT INTO paygate_payments.payments
 (id, attempt_id, order_id, merchant_id, amount, currency, method, provider, routing_reason, attempted_providers, method_state, status, captured)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending_customer_action',false)
-`, in.PaymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, nullableText(in.Provider), nullableText(in.RoutingReason), in.Attempted, initialMethodState(in.Method))
+`, in.PaymentID, attemptID, in.OrderID, in.MerchantID, in.Amount, in.Currency, in.Method, nonEmptyText(in.Provider), nonEmptyText(in.RoutingReason), normalizeAttemptedProviders(in.Attempted), initialMethodState(in.Method))
 	if err != nil {
 		return RedirectSessionResult{}, fmt.Errorf("insert redirect payment: %w", err)
 	}
