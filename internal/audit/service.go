@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 // Service records audit events and exposes the query API.
@@ -11,13 +12,38 @@ import (
 type Service struct {
 	repo   Repository
 	logger *slog.Logger
+
+	asyncSem     chan struct{}
+	asyncTimeout time.Duration
 }
 
-func NewService(repo Repository, logger *slog.Logger) *Service {
+type Option func(*Service)
+
+func WithAsyncConfig(limit int, timeout time.Duration) Option {
+	return func(s *Service) {
+		if limit > 0 {
+			s.asyncSem = make(chan struct{}, limit)
+		}
+		if timeout > 0 {
+			s.asyncTimeout = timeout
+		}
+	}
+}
+
+func NewService(repo Repository, logger *slog.Logger, opts ...Option) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{repo: repo, logger: logger}
+	svc := &Service{
+		repo:         repo,
+		logger:       logger,
+		asyncSem:     make(chan struct{}, 64),
+		asyncTimeout: 5 * time.Second,
+	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
 }
 
 // Record creates an audit log entry asynchronously.
@@ -25,10 +51,25 @@ func NewService(repo Repository, logger *slog.Logger) *Service {
 // A detached context is used so that HTTP request cancellation does not
 // prevent the audit entry from being persisted.
 func (s *Service) Record(ctx context.Context, in RecordInput) {
+	select {
+	case s.asyncSem <- struct{}{}:
+	default:
+		s.logger.Warn("audit record dropped because async queue is full",
+			"action", in.Action,
+			"resource_type", in.ResourceType,
+			"resource_id", in.ResourceID,
+		)
+		return
+	}
+
 	// Detach from the request context: the HTTP handler may return (and thus
 	// cancel ctx) before this goroutine runs its INSERT.
 	detached := context.WithoutCancel(ctx)
 	go func() {
+		defer func() { <-s.asyncSem }()
+		timeoutCtx, cancel := context.WithTimeout(detached, s.asyncTimeout)
+		defer cancel()
+
 		l := Log{
 			MerchantID:    in.MerchantID,
 			ActorID:       in.ActorID,
@@ -41,7 +82,7 @@ func (s *Service) Record(ctx context.Context, in RecordInput) {
 			IPAddress:     in.IPAddress,
 			CorrelationID: in.CorrelationID,
 		}
-		if _, err := s.repo.Create(detached, l); err != nil {
+		if _, err := s.repo.Create(timeoutCtx, l); err != nil {
 			s.logger.Error("audit record failed",
 				"action", in.Action,
 				"resource_type", in.ResourceType,
