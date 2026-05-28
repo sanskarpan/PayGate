@@ -138,8 +138,8 @@ func (c Config) Validate() error {
 		if c.AppEncryptionProvider == "disabled" {
 			errs = append(errs, fmt.Errorf("APP_ENCRYPTION_PROVIDER must not be disabled in production"))
 		}
-		if c.AppEncryptionProvider == "env" {
-			errs = append(errs, fmt.Errorf("APP_ENCRYPTION_PROVIDER=env is not allowed in production; use kms_stub or external KMS wiring"))
+		if c.AppEncryptionProvider == "kms_stub" {
+			errs = append(errs, fmt.Errorf("APP_ENCRYPTION_PROVIDER=kms_stub is not allowed in production; configure a real encryption provider"))
 		}
 	}
 	return errors.Join(errs...)

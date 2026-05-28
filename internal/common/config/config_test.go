@@ -38,7 +38,7 @@ func TestFromEnvUsesDockerBackedLocalDefaults(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsEnvEncryptionProviderInProduction(t *testing.T) {
+func TestValidateAllowsEnvEncryptionProviderInProduction(t *testing.T) {
 	cfg := Config{
 		AppEnv:                 "production",
 		DatabaseURL:            "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable",
@@ -49,7 +49,22 @@ func TestValidateRejectsEnvEncryptionProviderInProduction(t *testing.T) {
 		AppEncryptionKeys:      []string{"v1:abcd"},
 		AppEncryptionActiveKey: "v1",
 	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected env encryption provider to validate in production, got %v", err)
+	}
+}
+
+func TestValidateRejectsKMSStubInProduction(t *testing.T) {
+	cfg := Config{
+		AppEnv:                 "production",
+		DatabaseURL:            "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable",
+		DashboardSessionSecret: "abcdefghijklmnopqrstuvwxyz012345",
+		PayoutRailSecret:       "abcdefghijklmnopqrstuvwxyz",
+		TrustedProxyCIDRs:      []string{"127.0.0.1/32"},
+		AppEncryptionProvider:  "kms_stub",
+		AppEncryptionKMSKeyURI: "kms://stub/test",
+	}
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected validation error for env encryption provider in production")
+		t.Fatal("expected validation error for kms_stub provider in production")
 	}
 }
