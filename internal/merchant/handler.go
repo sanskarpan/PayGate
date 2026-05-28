@@ -306,6 +306,7 @@ func (h *Handler) dashboardLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   shouldUseSecureDashboardCookie(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(h.svc.DashboardSessionTTL().Seconds()),
 	})
@@ -324,15 +325,13 @@ func (h *Handler) dashboardLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) dashboardLogout(w http.ResponseWriter, r *http.Request) {
-	redirectTo := r.URL.Query().Get("redirect_to")
-	if redirectTo == "" {
-		redirectTo = "/"
-	}
+	redirectTo := normalizeDashboardRedirect(r.URL.Query().Get("redirect_to"), "/")
 	http.SetCookie(w, &http.Cookie{
 		Name:     DashboardSessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   shouldUseSecureDashboardCookie(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
@@ -754,16 +753,40 @@ func decodeDashboardLoginRequest(r *http.Request) (dashboardLoginRequest, string
 		if redirectTo == "" {
 			redirectTo = r.FormValue("redirect_to")
 		}
-		if redirectTo == "" {
-			redirectTo = "/orders"
-		}
-		if _, err := url.ParseRequestURI(redirectTo); err != nil {
-			redirectTo = "/orders"
-		}
+		redirectTo = normalizeDashboardRedirect(redirectTo, "/orders")
 		return dashboardLoginRequest{
 			MerchantID: r.FormValue("merchant_id"),
 			Email:      r.FormValue("email"),
 			Password:   r.FormValue("password"),
 		}, redirectTo, true, nil
 	}
+}
+
+func normalizeDashboardRedirect(raw, fallback string) string {
+	if raw == "" {
+		return fallback
+	}
+	if !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return fallback
+	}
+	if _, err := url.ParseRequestURI(raw); err != nil {
+		return fallback
+	}
+	return raw
+}
+
+func shouldUseSecureDashboardCookie(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	for _, part := range strings.Split(r.Header.Get("Forwarded"), ";") {
+		part = strings.TrimSpace(strings.ToLower(part))
+		if part == "proto=https" {
+			return true
+		}
+	}
+	return false
 }
