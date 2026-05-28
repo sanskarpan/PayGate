@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -109,13 +110,19 @@ func (s *Service) DeliverEvent(ctx context.Context, eventID, merchantID, eventTy
 			}
 		}
 
-		// Skip if already delivered to this subscription (idempotency).
-		delivered, err := s.repo.IsDelivered(ctx, eventID, sub.ID)
-		if err != nil {
-			return err
-		}
-		if delivered {
+		attempt, err := s.repo.ReserveDeliveryAttempt(ctx, WebhookDeliveryAttempt{
+			EventID:        eventID,
+			EventType:      eventType,
+			SubscriptionID: sub.ID,
+			MerchantID:     merchantID,
+			RequestURL:     sub.URL,
+			RequestBody:    body,
+		})
+		if errors.Is(err, ErrDeliveryAlreadyReserved) {
 			continue
+		}
+		if err != nil {
+			return fmt.Errorf("reserve delivery attempt: %w", err)
 		}
 
 		result := s.deliverer.Deliver(ctx, sub.URL, sub.Secret, eventType, body, sub.SignatureMode)
@@ -126,28 +133,25 @@ func (s *Service) DeliverEvent(ctx context.Context, eventID, merchantID, eventTy
 		}
 		metrics.WebhookSignatureDeliveriesTotal.WithLabelValues(string(sub.SignatureMode), string(status)).Inc()
 
-		attempt := WebhookDeliveryAttempt{
-			EventID:        eventID,
-			EventType:      eventType,
-			SubscriptionID: sub.ID,
-			MerchantID:     merchantID,
-			Status:         status,
-			RequestURL:     sub.URL,
-			RequestBody:    body,
-			ResponseCode:   result.StatusCode,
-			ResponseBody:   result.ResponseBody,
-			ErrorMessage:   result.Error,
-			AttemptNumber:  1,
-		}
-
+		attempt.Status = status
+		attempt.ResponseCode = result.StatusCode
+		attempt.ResponseBody = result.ResponseBody
+		attempt.ErrorMessage = result.Error
 		if status == DeliveryFailed {
 			delay := RetryDelay(2)
 			nextRetry := time.Now().Add(delay)
 			attempt.NextRetryAt = &nextRetry
 		}
 
-		if _, err := s.repo.CreateDeliveryAttempt(ctx, attempt); err != nil {
-			return fmt.Errorf("record delivery attempt: %w", err)
+		var nextRetryAt *string
+		if attempt.NextRetryAt != nil {
+			value := attempt.NextRetryAt.Format(time.RFC3339)
+			nextRetryAt = &value
+		}
+		if _, err := s.repo.UpdateDeliveryAttempt(
+			ctx, attempt.ID, status, result.StatusCode, result.ResponseBody, result.Error, nextRetryAt, 1,
+		); err != nil {
+			return fmt.Errorf("finalize delivery attempt: %w", err)
 		}
 
 		// Persist the dedup fingerprint in Redis so subsequent consumers can

@@ -52,8 +52,9 @@ const RotateSecretGracePeriod = 24 * time.Hour
 var (
 	ErrSubscriptionNotFound    = errors.New("webhook subscription not found")
 	ErrDeliveryAttemptNotFound = errors.New("webhook delivery attempt not found")
+	ErrDeliveryAlreadyReserved = errors.New("webhook delivery already reserved")
 	ErrInvalidTransition       = errors.New("invalid subscription state transition")
-	ErrInvalidURL              = errors.New("webhook URL must use https scheme")
+	ErrInvalidURL              = errors.New("webhook URL must use an allowed scheme and resolve to a permitted host")
 	ErrNoEvents                = errors.New("at least one event type must be specified")
 	ErrInvalidSignatureMode    = errors.New("invalid webhook signature mode")
 )

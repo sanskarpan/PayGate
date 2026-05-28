@@ -16,6 +16,7 @@ type Repository interface {
 	FindActiveSubscriptions(ctx context.Context, merchantID, eventType string) ([]WebhookSubscription, error)
 
 	// Delivery attempt recording
+	ReserveDeliveryAttempt(ctx context.Context, attempt WebhookDeliveryAttempt) (WebhookDeliveryAttempt, error)
 	CreateDeliveryAttempt(ctx context.Context, attempt WebhookDeliveryAttempt) (WebhookDeliveryAttempt, error)
 	UpdateDeliveryAttempt(ctx context.Context, id string, status DeliveryStatus, responseCode int, responseBody, errMsg string, nextRetryAt *string, attemptNumber int) (WebhookDeliveryAttempt, error)
 	ListDeliveryAttempts(ctx context.Context, merchantID, subscriptionID string) ([]WebhookDeliveryAttempt, error)

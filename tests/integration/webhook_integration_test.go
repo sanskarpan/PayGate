@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/sanskarpan/PayGate/internal/merchant"
@@ -299,6 +300,81 @@ func TestIntegrationWebhookIdempotentDelivery(t *testing.T) {
 	// Mock server should have been called exactly once.
 	if deliveryCount != 1 {
 		t.Fatalf("expected 1 delivery (idempotent), got %d", deliveryCount)
+	}
+}
+
+func TestIntegrationWebhookConcurrentDeliveryReservesSingleAttempt(t *testing.T) {
+	db := testDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	_, merchantSvc, _, _ := buildGatewayMux(db)
+	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
+		Name: "Concurrent Webhook Merchant", Email: "webhook-concurrent@test.com", BusinessType: "company",
+	})
+	if err != nil {
+		t.Fatalf("create merchant: %v", err)
+	}
+
+	received := make(chan struct{}, 4)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- struct{}{}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockServer.Close()
+
+	webhookRepo := webhook.NewPostgresRepository(db)
+	webhookSvc := webhook.NewService(webhookRepo)
+	sub, err := webhookSvc.CreateSubscription(ctx, webhook.CreateInput{
+		MerchantID: createdMerchant.ID,
+		URL:        mockServer.URL,
+		Events:     []string{"payment.captured"},
+	})
+	if err != nil {
+		t.Fatalf("create subscription: %v", err)
+	}
+
+	payload := map[string]any{
+		"event_type": "payment.captured",
+		"payment_id": "pay_concurrent",
+	}
+	eventID := "evt_concurrent_delivery"
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- webhookSvc.DeliverEvent(ctx, eventID, createdMerchant.ID, "payment.captured", payload)
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent deliver event: %v", err)
+		}
+	}
+
+	close(received)
+	count := 0
+	for range received {
+		count++
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one outbound delivery, got %d", count)
+	}
+
+	attempts, err := webhookSvc.ListDeliveryAttempts(ctx, createdMerchant.ID, sub.ID)
+	if err != nil {
+		t.Fatalf("list delivery attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected exactly one delivery attempt, got %d", len(attempts))
+	}
+	if attempts[0].Status != webhook.DeliverySucceeded {
+		t.Fatalf("expected succeeded attempt, got %s", attempts[0].Status)
 	}
 }
 
