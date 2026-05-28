@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"net"
+	"net/netip"
 	neturl "net/url"
 	"time"
 
+	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
@@ -249,6 +251,34 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		attempt.AttemptNumber, attempt.NextRetryAt, attempt.CancelledAt,
 	)
 	if err != nil {
+		return WebhookDeliveryAttempt{}, err
+	}
+	return attempt, nil
+}
+
+func (r *PostgresRepository) ReserveDeliveryAttempt(ctx context.Context, attempt WebhookDeliveryAttempt) (WebhookDeliveryAttempt, error) {
+	if attempt.ID == "" {
+		attempt.ID = idgen.New("wdl")
+	}
+	attempt.Status = DeliveryPending
+	attempt.AttemptNumber = 1
+	attempt.NextRetryAt = nil
+	attempt.CancelledAt = nil
+
+	_, err := r.db.Exec(ctx, `
+INSERT INTO paygate_webhooks.webhook_delivery_attempts
+    (id, event_id, event_type, subscription_id, merchant_id, status, request_url, request_body,
+     response_code, response_body, error_message, cancel_reason, attempt_number, next_retry_at, cancelled_at)
+VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, NULL, '', '', NULL, 1, NULL, NULL)
+`,
+		attempt.ID, attempt.EventID, attempt.EventType, attempt.SubscriptionID, attempt.MerchantID,
+		attempt.RequestURL, attempt.RequestBody,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return WebhookDeliveryAttempt{}, ErrDeliveryAlreadyReserved
+		}
 		return WebhookDeliveryAttempt{}, err
 	}
 	return attempt, nil
@@ -497,17 +527,60 @@ func validateSubscriptionURL(raw string) error {
 	if err != nil || parsed.Host == "" {
 		return ErrInvalidURL
 	}
-	if parsed.Scheme == "https" {
-		return nil
-	}
-	if parsed.Scheme != "http" {
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
 		return ErrInvalidURL
 	}
 
-	host := parsed.Hostname()
-	ip := net.ParseIP(host)
-	if host == "localhost" || (ip != nil && ip.IsLoopback()) {
+	addrs, err := resolveWebhookHost(parsed.Hostname())
+	if err != nil || len(addrs) == 0 {
+		return ErrInvalidURL
+	}
+	if parsed.Scheme == "http" {
+		for _, addr := range addrs {
+			if !addr.IsLoopback() {
+				return ErrInvalidURL
+			}
+		}
 		return nil
 	}
-	return ErrInvalidURL
+
+	for _, addr := range addrs {
+		if isBlockedWebhookAddr(addr) {
+			return ErrInvalidURL
+		}
+	}
+	return nil
+}
+
+func resolveWebhookHost(host string) ([]netip.Addr, error) {
+	if host == "" {
+		return nil, ErrInvalidURL
+	}
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return []netip.Addr{ip.Unmap()}, nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, err
+	}
+	addrs := make([]netip.Addr, 0, len(ips))
+	for _, ip := range ips {
+		addr, ok := netip.AddrFromSlice(ip)
+		if ok {
+			addrs = append(addrs, addr.Unmap())
+		}
+	}
+	return addrs, nil
+}
+
+func isBlockedWebhookAddr(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	if addr.IsLoopback() || addr.IsPrivate() || addr.IsMulticast() || addr.IsUnspecified() ||
+		addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
+		return true
+	}
+	if prefix, err := netip.ParsePrefix("100.64.0.0/10"); err == nil && prefix.Contains(addr) {
+		return true
+	}
+	return false
 }
