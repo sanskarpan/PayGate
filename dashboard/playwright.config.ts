@@ -5,11 +5,11 @@ import { defineConfig, devices } from "@playwright/test";
 const rootDir = path.resolve(__dirname, "..");
 const apiBaseUrl = process.env.API_BASE_URL || "http://127.0.0.1:38090";
 const appBaseUrl = process.env.APP_BASE_URL || "http://127.0.0.1:33001";
-const localDatabaseUrl =
+const isolatedDatabaseUrl =
   `postgres://${["pay", "gate"].join("")}:${["pay", "gate"].join("")}` +
-  "@localhost:5435/paygate?sslmode=disable";
-const databaseUrl = process.env.DATABASE_URL || localDatabaseUrl;
-const redisAddr = process.env.REDIS_ADDR || "localhost:6380";
+  "@localhost:5433/paygate_test?sslmode=disable";
+const databaseUrl = process.env.DATABASE_URL || isolatedDatabaseUrl;
+const redisAddr = process.env.REDIS_ADDR || "localhost:6381";
 const kafkaBrokers = process.env.KAFKA_BROKERS || "localhost:19092";
 const authDir = path.join(__dirname, "playwright", ".auth");
 
@@ -57,9 +57,9 @@ export default defineConfig({
         `REDIS_ADDR=${redisAddr}`,
         `KAFKA_BROKERS=${kafkaBrokers}`,
         "DASHBOARD_ORIGIN=http://127.0.0.1:33001",
-        "go",
-        "run",
-        "./cmd/api-gateway",
+        "bash",
+        "-lc",
+        `'scripts/test/prepare_playwright_stack.sh && go run ./cmd/api-gateway'`,
       ].join(" "),
       cwd: rootDir,
       url: `${apiBaseUrl}/readyz`,

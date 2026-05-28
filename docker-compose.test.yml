@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres-test:
     image: postgres:16-alpine
@@ -20,4 +18,4 @@ services:
     image: redis:7-alpine
     container_name: paygate-redis-test
     ports:
-      - "6380:6379"
+      - "6381:6379"

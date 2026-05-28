@@ -6,7 +6,7 @@ API_PORT="${API_PORT:-38091}"
 API_BASE_URL="${API_BASE_URL:-http://127.0.0.1:${API_PORT}}"
 TOXIPROXY_NAME="${TOXIPROXY_NAME:-paygate-toxiproxy}"
 TOXIPROXY_API="${TOXIPROXY_API:-http://127.0.0.1:8474}"
-DEFAULT_DATABASE_URL="postgres://pay""gate:pay""gate@localhost:5435/paygate?sslmode=disable"
+DEFAULT_DATABASE_URL="postgres://pay""gate:pay""gate@localhost:5435/paygate_chaos?sslmode=disable"
 START_API="${START_API:-false}"
 API_PID=""
 API_LOG_FILE="${API_LOG_FILE:-/tmp/paygate-chaos-api.log}"
@@ -60,7 +60,7 @@ fi
 
 cd "${ROOT_DIR}"
 
-"${ROOT_DIR}/scripts/test/prepare_local_stack.sh"
+DATABASE_URL="${DATABASE_URL:-${DEFAULT_DATABASE_URL}}" "${ROOT_DIR}/scripts/test/prepare_local_stack.sh"
 
 docker rm -f "${TOXIPROXY_NAME}" >/dev/null 2>&1 || true
 docker run -d --name "${TOXIPROXY_NAME}" \
