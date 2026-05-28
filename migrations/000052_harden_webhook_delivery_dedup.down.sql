@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS paygate_webhooks.idx_webhook_deliveries_event_subscription;
