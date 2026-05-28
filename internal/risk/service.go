@@ -3,6 +3,7 @@ package risk
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/sanskarpan/PayGate/internal/payment"
 )
@@ -14,6 +15,9 @@ type Service struct {
 	alertFn          AlertFunc
 	payments         *payment.Service
 	reserveEscalator func(ctx context.Context, ev RiskEvent) error
+
+	asyncSem     chan struct{}
+	asyncTimeout time.Duration
 }
 
 // WithAlertFunc returns a functional option that sets the alert function on the Service.
@@ -27,7 +31,12 @@ func NewService(repo Repository, logger *slog.Logger, opts ...func(*Service)) *S
 	if logger == nil {
 		logger = slog.Default()
 	}
-	svc := &Service{repo: repo, logger: logger}
+	svc := &Service{
+		repo:         repo,
+		logger:       logger,
+		asyncSem:     make(chan struct{}, 32),
+		asyncTimeout: 5 * time.Second,
+	}
 	for _, opt := range opts {
 		opt(svc)
 	}
@@ -43,6 +52,17 @@ func WithPaymentService(payments *payment.Service) func(*Service) {
 func WithReserveEscalator(fn func(ctx context.Context, ev RiskEvent) error) func(*Service) {
 	return func(s *Service) {
 		s.reserveEscalator = fn
+	}
+}
+
+func WithAsyncConfig(limit int, timeout time.Duration) func(*Service) {
+	return func(s *Service) {
+		if limit > 0 {
+			s.asyncSem = make(chan struct{}, limit)
+		}
+		if timeout > 0 {
+			s.asyncTimeout = timeout
+		}
 	}
 }
 
@@ -129,21 +149,41 @@ func (s *Service) EvaluatePayment(ctx context.Context, in EvalInput) (RiskEvent,
 			"rules", result.TriggeredRules,
 		)
 		if s.alertFn != nil {
-			// Use a context that carries trace/values from ctx but is not
-			// cancelled when the HTTP request completes, so the alert can
-			// finish its own I/O independently.
-			go s.alertFn(context.WithoutCancel(ctx), ev)
+			s.runAsync(context.WithoutCancel(ctx), "risk alert", ev, func(asyncCtx context.Context) error {
+				s.alertFn(asyncCtx, ev)
+				return nil
+			})
 		}
 		if s.reserveEscalator != nil && shouldEscalateReserve(ev) {
-			go func() {
-				if err := s.reserveEscalator(context.WithoutCancel(ctx), ev); err != nil {
-					s.logger.Warn("reserve escalation callback failed", "merchant_id", ev.MerchantID, "payment_id", ev.PaymentID, "error", err)
-				}
-			}()
+			s.runAsync(context.WithoutCancel(ctx), "reserve escalation", ev, func(asyncCtx context.Context) error {
+				return s.reserveEscalator(asyncCtx, ev)
+			})
 		}
 	}
 
 	return ev, nil
+}
+
+func (s *Service) runAsync(ctx context.Context, operation string, ev RiskEvent, fn func(context.Context) error) {
+	select {
+	case s.asyncSem <- struct{}{}:
+	default:
+		s.logger.Warn("risk async callback dropped because queue is full",
+			"operation", operation,
+			"merchant_id", ev.MerchantID,
+			"payment_id", ev.PaymentID,
+		)
+		return
+	}
+
+	go func() {
+		defer func() { <-s.asyncSem }()
+		timeoutCtx, cancel := context.WithTimeout(ctx, s.asyncTimeout)
+		defer cancel()
+		if err := fn(timeoutCtx); err != nil {
+			s.logger.Warn(operation+" failed", "merchant_id", ev.MerchantID, "payment_id", ev.PaymentID, "error", err)
+		}
+	}()
 }
 
 func shouldEscalateReserve(ev RiskEvent) bool {
