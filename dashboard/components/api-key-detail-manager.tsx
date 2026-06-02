@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import IPAllowlistManager from "./ip-allowlist-manager";
+import { RouteIcon } from "./system-icons";
 import { formatTime, type APIKeyItem } from "../lib/types";
 
 type RotateKeyResponse = {
@@ -47,31 +48,69 @@ export default function APIKeyDetailManager({
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Credential Detail</div>
-        <h1>{item.id}</h1>
-        <p className="lede">
-          Review lifecycle metadata, rotate the credential, and manage its source-IP policy.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Mode</span>
-            <strong>{item.mode}</strong>
+      <div className="ops-grid">
+        <div className="hero-card has-glyph">
+          <div className="page-glyph">
+            <div className="page-glyph-badge">
+              <RouteIcon name="api-keys" size={40} />
+            </div>
+            <div className="page-glyph-label">
+              <span>Credential file</span>
+              <strong>Rotation lane</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Scope</span>
-            <strong>{item.scope}</strong>
+          <div className="eyebrow">Credential Detail</div>
+          <h1>{item.id}</h1>
+          <p className="lede">
+            Review lifecycle metadata, rotate the credential, and manage its source-IP policy
+            without dropping out of the security rail.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Mode</span>
+              <strong>{item.mode}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Scope</span>
+              <strong>{item.scope}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Status</span>
+              <strong>{item.status}</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Status</span>
-            <strong>{item.status}</strong>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Security Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Last used</span>
+              <strong>{item.last_used_at ? formatTime(item.last_used_at) : "Never"}</strong>
+              <p>Latest observed use for this merchant credential.</p>
+            </div>
+            <div className="status-block">
+              <span>Allowlist</span>
+              <strong>{item.allowed_ips?.length ?? 0}</strong>
+              <p>Source-IP constraints currently attached to this key.</p>
+            </div>
+            <div className="status-block">
+              <span>Revocation</span>
+              <strong>{item.revoked_at ? "Revoked" : "Live"}</strong>
+              <p>Credential lifecycle state at the moment this page was loaded.</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="detail-grid">
+      <div className="workbench-grid">
         <div className="detail-card">
-          <h2>Lifecycle</h2>
+          <div className="section-head">
+            <div>
+              <div className="eyebrow">Lifecycle Record</div>
+              <h2>Credential chronology</h2>
+            </div>
+          </div>
           <dl className="detail-list">
             <div>
               <dt>Created</dt>
@@ -93,7 +132,12 @@ export default function APIKeyDetailManager({
         </div>
 
         <div className="detail-card">
-          <h2>Rotate key</h2>
+          <div className="section-head">
+            <div>
+              <div className="eyebrow">Rotation Rail</div>
+              <h2>Replace credential</h2>
+            </div>
+          </div>
           <p className="muted">
             Rotation revokes the current credential and issues a replacement with the same mode and scope.
           </p>
