@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import type { DisputeItem } from "../lib/types";
+import { RouteIcon } from "./system-icons";
 
 export default function DisputeActionPanel({
   apiBaseUrl,
@@ -68,9 +69,19 @@ export default function DisputeActionPanel({
 
   return (
     <div className="detail-card">
+      <div className="page-glyph">
+        <div className="page-glyph-badge">
+          <RouteIcon name="disputes" size={40} />
+        </div>
+        <div className="page-glyph-label">
+          <span>Case file</span>
+          <strong>Action rail</strong>
+        </div>
+      </div>
       <div className="section-head">
         <div>
-          <h2>Inline actions</h2>
+          <div className="eyebrow">Action Rail</div>
+          <h2>Dispute operations</h2>
           <div className="section-kicker">Execute dispute operations directly from the dashboard</div>
         </div>
       </div>
@@ -79,7 +90,10 @@ export default function DisputeActionPanel({
         {dispute.status === "open" ? (
           <>
             <div className="spotlight-card">
-              <div className="row-title">Submit evidence</div>
+              <div className="row-title">Submit evidence dossier</div>
+              <div className="muted">
+                Draft merchant evidence in structured JSON and attach it before forcing the case into review.
+              </div>
               <textarea
                 onChange={(event) => setEvidenceText(event.target.value)}
                 rows={10}
@@ -93,8 +107,9 @@ export default function DisputeActionPanel({
               </div>
             </div>
 
-            <div className="detail-grid">
+            <div className="workbench-grid">
               <div className="spotlight-card">
+                <div className="eyebrow">Review Lane</div>
                 <div className="row-title">Move to review</div>
                 <div className="muted">Use once evidence is ready for adjudication.</div>
                 <button
@@ -107,6 +122,7 @@ export default function DisputeActionPanel({
                 </button>
               </div>
               <div className="spotlight-card">
+                <div className="eyebrow">Concession Lane</div>
                 <div className="row-title">Accept dispute</div>
                 <div className="muted">Concede the dispute without contesting the outcome.</div>
                 <button
@@ -124,8 +140,9 @@ export default function DisputeActionPanel({
 
         {dispute.status === "under_review" ? (
           <div className="spotlight-card">
+            <div className="eyebrow">Resolution Lane</div>
             <div className="row-title">Resolve dispute</div>
-            <div className="inline-form">
+            <div className="control-form-grid">
               <label>
                 Outcome
                 <select onChange={(event) => setResolveOutcome(event.target.value)} value={resolveOutcome}>
