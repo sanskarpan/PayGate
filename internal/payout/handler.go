@@ -403,10 +403,11 @@ func handleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, merchant.ErrCapabilityRestricted):
 		httpx.WriteError(w, http.StatusForbidden, httpx.APIError{Code: "CAPABILITY_RESTRICTED", Description: err.Error()})
 	default:
-		// Check for settlement not found too.
-		var errBody struct{ Code string }
-		if b, merr := json.Marshal(err); merr == nil {
-			_ = json.Unmarshal(b, &errBody)
+		// Check if the error is a settlement not found by inspecting the message.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "settlement") && strings.Contains(errMsg, "not found") {
+			httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: errMsg})
+			return
 		}
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error"})
 	}
