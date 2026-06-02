@@ -2,6 +2,7 @@ package billing
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -870,10 +871,10 @@ func presentInvoice(invoice Invoice) map[string]any {
 }
 
 func handleError(w http.ResponseWriter, err error) {
-	switch err {
-	case ErrCustomerNotFound, ErrVirtualAccountNotFound, ErrCollectionNotFound, ErrConnectedAccountNotFound, ErrSubscriptionNotFound, ErrInvoiceNotFound, ErrUPIMandateNotFound, ErrPaymentLinkNotFound:
+	switch {
+	case errors.Is(err, ErrCustomerNotFound), errors.Is(err, ErrVirtualAccountNotFound), errors.Is(err, ErrCollectionNotFound), errors.Is(err, ErrConnectedAccountNotFound), errors.Is(err, ErrSubscriptionNotFound), errors.Is(err, ErrInvoiceNotFound), errors.Is(err, ErrUPIMandateNotFound), errors.Is(err, ErrPaymentLinkNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
-	case ErrInvalidSubscription, ErrInvalidVirtualAccount, ErrInvalidCollection, ErrInvalidConnectedAccount, ErrInvalidSplitInstruction, ErrCardTokenNotReusable, ErrCustomerTokenMismatch, ErrSubscriptionNotActive, ErrInvalidUPIMandate, ErrUPIMandateNotActive, ErrMandateCustomerMismatch, ErrVPAVerificationRequired, ErrInvalidPaymentLink:
+	case errors.Is(err, ErrInvalidSubscription), errors.Is(err, ErrInvalidVirtualAccount), errors.Is(err, ErrInvalidCollection), errors.Is(err, ErrInvalidConnectedAccount), errors.Is(err, ErrInvalidSplitInstruction), errors.Is(err, ErrCardTokenNotReusable), errors.Is(err, ErrCustomerTokenMismatch), errors.Is(err, ErrSubscriptionNotActive), errors.Is(err, ErrInvalidUPIMandate), errors.Is(err, ErrUPIMandateNotActive), errors.Is(err, ErrMandateCustomerMismatch), errors.Is(err, ErrVPAVerificationRequired), errors.Is(err, ErrInvalidPaymentLink):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: err.Error()})
