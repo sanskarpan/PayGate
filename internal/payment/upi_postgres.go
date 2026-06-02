@@ -89,12 +89,14 @@ VALUES ($1,$2,$3,$4,NULLIF($5, ''),NULLIF($6, ''),NULLIF($7, ''),NULLIF($8, ''),
 		return UPIIntentResult{}, fmt.Errorf("insert upi detail: %w", err)
 	}
 
-	_, _ = tx.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 UPDATE paygate_orders.orders
 SET status = CASE WHEN status = 'created' THEN 'attempted' ELSE status END,
     updated_at = NOW()
 WHERE id = $1 AND merchant_id = $2
-`, in.OrderID, in.MerchantID)
+`, in.OrderID, in.MerchantID); err != nil {
+		return UPIIntentResult{}, fmt.Errorf("update order status on upi intent start: %w", err)
+	}
 
 	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{
 		AggregateType: "payment",
