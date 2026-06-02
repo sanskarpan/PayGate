@@ -4,25 +4,41 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import type { DashboardViewer } from "../lib/types";
+import { BrandEmblem, RouteIcon } from "./system-icons";
 
-const links = [
-  ["/overview", "Overview"],
-  ["/orders", "Orders"],
-  ["/compliance", "Compliance"],
-  ["/mandates", "Mandates"],
-  ["/webhooks", "Webhooks"],
-  ["/settlements", "Settlements"],
-  ["/payouts", "Payouts"],
-  ["/reports", "Reports"],
-  ["/recon", "Reconciliation"],
-  ["/control-plane", "Control Plane"],
-  ["/api-keys", "API Keys"],
-  ["/risk", "Risk"],
-  ["/disputes", "Disputes"],
-  ["/gateway", "Gateway"],
-  ["/observability", "Observability"],
-  ["/audit", "Audit Log"],
-  ["/team", "Team"],
+const linkGroups = [
+  {
+    label: "Command",
+    links: [
+      ["/overview", "Overview", "overview"],
+      ["/control-plane", "Control Plane", "control-plane"],
+      ["/observability", "Observability", "observability"],
+      ["/recon", "Reconciliation", "recon"],
+    ],
+  },
+  {
+    label: "Commercial",
+    links: [
+      ["/orders", "Orders", "orders"],
+      ["/settlements", "Settlements", "settlements"],
+      ["/payouts", "Payouts", "payouts"],
+      ["/reports", "Reports", "reports"],
+      ["/mandates", "Mandates", "mandates"],
+    ],
+  },
+  {
+    label: "Governance",
+    links: [
+      ["/compliance", "Compliance", "compliance"],
+      ["/risk", "Risk", "risk"],
+      ["/disputes", "Disputes", "disputes"],
+      ["/webhooks", "Webhooks", "webhooks"],
+      ["/gateway", "Gateway", "gateway"],
+      ["/api-keys", "API Keys", "api-keys"],
+      ["/audit", "Audit Log", "audit"],
+      ["/team", "Team", "team"],
+    ],
+  },
 ] as const;
 
 function isActive(pathname: string, href: string) {
@@ -42,59 +58,90 @@ export default function Nav({
   const pathname = usePathname();
 
   return (
-    <nav className="site-nav">
+    <nav className={`site-nav${viewer ? " is-rail" : " is-public"}`}>
       <div className="nav-brand-block">
         <Link className="brand" href={viewer ? "/overview" : "/"}>
-          <span className="brand-mark">PG</span>
+          <span className="brand-mark" aria-hidden="true">
+            <BrandEmblem size={28} />
+          </span>
           <span>
             PayGate
-            <span className="brand-subtitle">Control</span>
+            <span className="brand-subtitle">Command Fabric</span>
           </span>
         </Link>
-        {viewer ? <span className="brand-context">Merchant operations console</span> : null}
+        <span className="brand-context">
+          {viewer ? "Merchant operating picture" : "Operational access surface"}
+        </span>
       </div>
 
-      <div className="nav-right">
-        <div className="nav-links">
-          {viewer
-            ? links.map(([href, label]) => (
-                <Link
-                  key={href}
-                  href={href}
-                  className={`nav-link${isActive(pathname, href) ? " active" : ""}`}
-                >
-                  {label}
-                </Link>
-              ))
-            : null}
-        </div>
+      {viewer ? (
+        <>
+          <div className="nav-status-band">
+            <div className="status-cell">
+              <span className="status-label">Access Profile</span>
+              <span className="status-value">
+                {viewer.role} / {viewer.auth_type}
+              </span>
+            </div>
+            <div className="status-cell">
+              <span className="status-label">Tenant</span>
+              <span className="status-value">{viewer.merchant_id}</span>
+            </div>
+            <div className="status-cell">
+              <span className="status-label">Domain</span>
+              <span className="status-value">Money / Risk / Runtime / Treasury</span>
+            </div>
+          </div>
 
-        <div className="nav-user">
-          {viewer ? (
-            <>
-              <div className="identity-card">
-                <div className="identity-email">
-                  {viewer.email.length > 30 ? viewer.email.slice(0, 28) + "…" : viewer.email}
-                </div>
-                <div className="identity-meta">
-                  <span className="badge-neutral">{viewer.role}</span>
-                  <span className="badge-info">{viewer.auth_type}</span>
-                  <span>{viewer.merchant_id.slice(-10)}</span>
+          <div className="nav-groups">
+            {linkGroups.map((group) => (
+              <div className="nav-group" key={group.label}>
+                <div className="nav-group-label">{group.label}</div>
+                <div className="nav-links">
+                  {group.links.map(([href, label, icon]) => (
+                    <Link
+                      key={href}
+                      href={href}
+                      className={`nav-link${isActive(pathname, href) ? " active" : ""}`}
+                    >
+                      <RouteIcon name={icon} size={16} />
+                      {label}
+                    </Link>
+                  ))}
                 </div>
               </div>
-              <form action={logoutAction} method="POST">
-                <button className="ghost-button" type="submit">
-                  Sign Out
-                </button>
-              </form>
-            </>
-          ) : (
-            <Link className="ghost-button" href="/">
-              Login
-            </Link>
-          )}
+            ))}
+          </div>
+
+          <div className="nav-user">
+            <div className="identity-card">
+              <div className="identity-email">
+                {viewer.email.length > 30 ? viewer.email.slice(0, 28) + "…" : viewer.email}
+              </div>
+              <div className="identity-meta">
+                <span className="badge-neutral">{viewer.role}</span>
+                <span className="badge-info">{viewer.auth_type}</span>
+                <span className="mono">{viewer.merchant_id.slice(-12)}</span>
+              </div>
+            </div>
+            <form action={logoutAction} method="POST">
+              <button className="ghost-button" type="submit">
+                Sign Out
+              </button>
+            </form>
+          </div>
+        </>
+      ) : (
+        <div className="nav-public-actions">
+          <div className="nav-public-copy">
+            <span className="nav-group-label">Entry Point</span>
+            <p>Merchant dashboard access for payment operations, runtime control, and financial oversight.</p>
+          </div>
+          <Link className="ghost-button" href="/">
+            Login
+          </Link>
         </div>
-      </div>
+      )}
     </nav>
   );
 }
