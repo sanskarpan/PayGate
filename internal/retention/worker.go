@@ -2,25 +2,29 @@ package retention
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
 type Worker struct {
 	svc      *Service
 	interval time.Duration
+	logger   *slog.Logger
 }
 
-func NewWorker(svc *Service, interval time.Duration) *Worker {
+func NewWorker(svc *Service, interval time.Duration, logger *slog.Logger) *Worker {
 	if interval <= 0 {
 		interval = 6 * time.Hour
 	}
-	return &Worker{svc: svc, interval: interval}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Worker{svc: svc, interval: interval, logger: logger}
 }
 
 func (w *Worker) Start(ctx context.Context) {
 	if _, err := w.svc.RunAll(ctx, "system", "retention_worker_startup"); err != nil && ctx.Err() == nil {
-		log.Printf("retention worker startup run failed: %v", err)
+		w.logger.Error("retention worker startup run failed", "error", err)
 	}
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
@@ -30,7 +34,7 @@ func (w *Worker) Start(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if _, err := w.svc.RunAll(ctx, "system", "retention_worker"); err != nil && ctx.Err() == nil {
-				log.Printf("retention worker run failed: %v", err)
+				w.logger.Error("retention worker run failed", "error", err)
 			}
 		}
 	}
