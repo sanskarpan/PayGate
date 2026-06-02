@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { RouteIcon } from "./system-icons";
+
 // Validates a plain IPv4/IPv6 address or a CIDR range.
 // Examples: "192.168.1.1", "10.0.0.0/8", "::1", "2001:db8::/32"
 function isValidIPOrCIDR(value: string): boolean {
@@ -106,61 +108,108 @@ export default function IPAllowlistManager({
 
   return (
     <section className="stack">
-      <div className="hero-card">
-        <div className="eyebrow">Security</div>
-        <h1>IP Allowlist</h1>
-        <p className="lede">
-          Restrict this API key to requests originating from specific IP
-          addresses or CIDR ranges. Leave the list empty to allow all IPs.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Key</span>
-            <code>{keyId}</code>
+      <div className="ops-grid">
+        <div className="hero-card has-glyph">
+          <div className="page-glyph">
+            <div className="page-glyph-badge">
+              <RouteIcon name="gateway" size={40} />
+            </div>
+            <div className="page-glyph-label">
+              <span>Source list</span>
+              <strong>Boundary rail</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Entries</span>
-            <strong>{ips.length}</strong>
+          <div className="eyebrow">Source Boundary</div>
+          <h1>IP allowlist control.</h1>
+          <p className="lede">
+            Restrict this API key to traffic from specific IP addresses or CIDR ranges. Leave the
+            list empty only when open ingress is intentional.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Key</span>
+              <code>{keyId}</code>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Entries</span>
+              <strong>{ips.length}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Policy</span>
+              <strong>{ips.length === 0 ? "Open" : "Restricted"}</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Policy</span>
-            <strong>{ips.length === 0 ? "Open" : "Restricted"}</strong>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Boundary Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Exposure</span>
+              <strong>{ips.length === 0 ? "Open" : "Narrowed"}</strong>
+              <p>Whether this credential is currently limited to explicit source origins.</p>
+            </div>
+            <div className="status-block">
+              <span>Unsaved drift</span>
+              <strong>{dirty ? "Present" : "None"}</strong>
+              <p>Edits made since the page was opened from the server snapshot.</p>
+            </div>
+            <div className="status-block">
+              <span>Address forms</span>
+              <strong>IPv4 / IPv6</strong>
+              <p>Accepts individual addresses and CIDR ranges across both families.</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="list-card">
-        <div className="list-row">
-          <div className="inline-form" style={{ flex: 1 }}>
-            <input
-              className="input"
-              type="text"
-              value={input}
-              placeholder="e.g. 203.0.113.0/24 or 198.51.100.42"
-              onChange={(e) => {
-                setInput(e.target.value);
-                setInputError("");
-              }}
-              onKeyDown={handleKeyDown}
-              aria-label="IP address or CIDR"
-            />
+      <div className="detail-card">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">Add Origin</div>
+            <h2>Ingress constraint</h2>
+          </div>
+        </div>
+        <div className="stack" style={{ marginTop: "16px" }}>
+          <div className="control-form-grid">
+            <label style={{ gridColumn: "1 / -1" }}>
+              IP or CIDR
+              <input
+                className="input"
+                type="text"
+                value={input}
+                placeholder="e.g. 203.0.113.0/24 or 198.51.100.42"
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  setInputError("");
+                }}
+                onKeyDown={handleKeyDown}
+                aria-label="IP address or CIDR"
+              />
+            </label>
+          </div>
+          <div className="hero-actions">
             <button
               className="action-button"
               type="button"
               disabled={pending}
               onClick={addIP}
             >
-              Add
+              Add origin
             </button>
+            <span className="micro-copy">Examples: 203.0.113.8, 198.51.100.0/24, 2001:db8::/32</span>
           </div>
-        </div>
-        {inputError ? <p className="notice error">{inputError}</p> : null}
-        <div className="row-meta">
-          <span>Examples: 203.0.113.8, 198.51.100.0/24, 2001:db8::/32</span>
+          {inputError ? <p className="notice error">{inputError}</p> : null}
         </div>
       </div>
 
       <div className="list-card">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">Allowed Origins</div>
+            <h2>Current entries</h2>
+          </div>
+        </div>
         {ips.length === 0 ? (
           <div className="empty-state">
             <strong>No IP restrictions</strong>
@@ -185,8 +234,14 @@ export default function IPAllowlistManager({
         )}
       </div>
 
-      <div className="list-card">
-        <div className="list-row">
+      <div className="detail-card">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">Persist Changes</div>
+            <h2>Apply boundary</h2>
+          </div>
+        </div>
+        <div className="list-row" style={{ marginTop: "16px" }}>
           <div className="row-actions">
             <button
               className="primary-button"
