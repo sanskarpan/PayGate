@@ -153,55 +153,78 @@ export default function RiskQueueManager({ initialItems }: { initialItems: RiskE
 
   return (
     <div className="stack">
-      <div className="detail-card">
-        <div className="section-head">
-          <div>
-            <h2>Queue workbench</h2>
-            <div className="section-kicker">Filter high-volume risk queues, save views, and act on selections in bulk.</div>
+      <div className="workbench-grid">
+        <div className="detail-card">
+          <div className="section-head">
+            <div>
+              <div className="eyebrow">Queue Filters</div>
+              <h2>Workbench controls</h2>
+              <div className="section-kicker">Shape the queue, preserve views, and narrow operator attention.</div>
+            </div>
+          </div>
+          <div className="stack" style={{ marginTop: "16px" }}>
+            <div className="control-form-grid">
+              <label style={{ minWidth: "220px" }}>
+                Search
+                <input value={query} onChange={(event) => setQuery(event.target.value)} type="text" placeholder="payment, rule, assignee" />
+              </label>
+              <label>
+                Resolution
+                <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                  <option value="open">open</option>
+                  <option value="resolved">resolved</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+              <label>
+                Action
+                <select value={action} onChange={(event) => setAction(event.target.value)}>
+                  <option value="all">all</option>
+                  <option value="allow">allow</option>
+                  <option value="hold">hold</option>
+                  <option value="block">block</option>
+                </select>
+              </label>
+              <label>
+                Assignment
+                <select value={assigned} onChange={(event) => setAssigned(event.target.value)}>
+                  <option value="all">all</option>
+                  <option value="assigned">assigned</option>
+                  <option value="unassigned">unassigned</option>
+                </select>
+              </label>
+            </div>
+            <div className="hero-actions">
+              <button className="ghost-button" type="button" onClick={saveView}>Save current view</button>
+              {savedViews.map((view) => (
+                <button key={view.name} className="filter-pill" type="button" onClick={() => applyView(view)}>
+                  {view.name}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-        <div className="stack" style={{ marginTop: "16px" }}>
-          <div className="inline-form">
-            <label style={{ minWidth: "220px" }}>
-              Search
-              <input value={query} onChange={(event) => setQuery(event.target.value)} type="text" placeholder="payment, rule, assignee" />
-            </label>
-            <label>
-              Resolution
-              <select value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="open">open</option>
-                <option value="resolved">resolved</option>
-                <option value="all">all</option>
-              </select>
-            </label>
-            <label>
-              Action
-              <select value={action} onChange={(event) => setAction(event.target.value)}>
-                <option value="all">all</option>
-                <option value="allow">allow</option>
-                <option value="hold">hold</option>
-                <option value="block">block</option>
-              </select>
-            </label>
-            <label>
-              Assignment
-              <select value={assigned} onChange={(event) => setAssigned(event.target.value)}>
-                <option value="all">all</option>
-                <option value="assigned">assigned</option>
-                <option value="unassigned">unassigned</option>
-              </select>
-            </label>
+
+        <div className="detail-card">
+          <div className="eyebrow">Selection Rail</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Visible</span>
+              <strong>{visibleItems.length}</strong>
+              <p>Risk events currently matching this workbench view.</p>
+            </div>
+            <div className="status-block">
+              <span>Selected</span>
+              <strong>{selected.length}</strong>
+              <p>Events staged for bulk assignment, approval, block, or resolution.</p>
+            </div>
+            <div className="status-block">
+              <span>Saved views</span>
+              <strong>{savedViews.length}</strong>
+              <p>Persistent query snapshots stored on this operator device.</p>
+            </div>
           </div>
           <div className="hero-actions">
-            <button className="ghost-button" type="button" onClick={saveView}>Save current view</button>
-            {savedViews.map((view) => (
-              <button key={view.name} className="filter-pill" type="button" onClick={() => applyView(view)}>
-                {view.name}
-              </button>
-            ))}
-          </div>
-          <div className="hero-actions">
-            <span className="micro-copy">{selected.length} selected</span>
             <button className="ghost-button" type="button" disabled={pending || selected.length === 0} onClick={bulkAssign}>Assign</button>
             <button className="ghost-button" type="button" disabled={pending || selected.length === 0} onClick={() => bulkReview("approve")}>Approve</button>
             <button className="ghost-button" type="button" disabled={pending || selected.length === 0} onClick={() => bulkReview("block")}>Block</button>
@@ -212,6 +235,12 @@ export default function RiskQueueManager({ initialItems }: { initialItems: RiskE
       </div>
 
       <div className="list-card">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">Live Queue</div>
+            <h2>Risk event ledger</h2>
+          </div>
+        </div>
         {visibleItems.length === 0 ? (
           <div className="empty-state">
             <strong>No risk events match this view</strong>
