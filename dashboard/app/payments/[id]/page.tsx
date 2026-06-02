@@ -26,45 +26,73 @@ export default async function PaymentDetailPage({ params }: { params: { id: stri
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Payment Trace</div>
-        <h1>{truncateMiddle(payment.id, 14, 8)}</h1>
-        <p className="mono" style={{ margin: "0 0 8px" }}>{payment.id}</p>
-        <p className="lede">
-          {payment.status} · {formatMoney(payment.amount, payment.currency)} via {payment.method}{isUPIQR ? " QR" : isCardChallenge ? " with 3DS" : ""}.
-        </p>
-        <div className="hero-actions">
-          <Link className="ghost-button" href={`/orders/${payment.order_id}`}>
-            View Parent Order
-          </Link>
-          <Link className="ghost-button" href={`/refunds?payment_id=${payment.id}`}>
-            View Refunds
-          </Link>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Payment Trace</div>
+          <h1>{truncateMiddle(payment.id, 14, 8)}</h1>
+          <p className="mono" style={{ margin: "0 0 8px" }}>{payment.id}</p>
+          <p className="lede">
+            {payment.status} · {formatMoney(payment.amount, payment.currency)} via {payment.method}{isUPIQR ? " QR" : isCardChallenge ? " with 3DS" : ""}.
+          </p>
+          <div className="hero-actions">
+            <Link className="ghost-button" href={`/orders/${payment.order_id}`}>
+              View Parent Order
+            </Link>
+            <Link className="ghost-button" href={`/refunds?payment_id=${payment.id}`}>
+              View Refunds
+            </Link>
+          </div>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Payment Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Lifecycle state</span>
+              <strong>{payment.status}</strong>
+              <p>Current payment state across creation, customer action, authorization, and capture.</p>
+            </div>
+            <div className="status-block">
+              <span>Method lane</span>
+              <strong>{payment.method}{isUPIQR ? " / QR" : isCardChallenge ? " / 3DS" : ""}</strong>
+              <p>Execution lane driving the next-action surface and downstream operator handling.</p>
+            </div>
+            <div className="status-block">
+              <span>Capture posture</span>
+              <strong>{payment.captured ? "Captured" : "Pending"}</strong>
+              <p>Whether commercial settlement can proceed without further capture intervention.</p>
+            </div>
+          </div>
         </div>
       </div>
-      <div className="key-facts">
-        <div className="key-fact">
-          <span className="eyebrow">Status</span>
+
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Status</span>
           <strong>{payment.status}</strong>
+          <span>Current payment lifecycle state.</span>
         </div>
-        <div className="key-fact">
-          <span className="eyebrow">Captured</span>
+        <div className="ops-band-item">
+          <span>Captured</span>
           <strong>{payment.captured ? "Yes" : "No"}</strong>
+          <span>Whether the payment is fully captured for settlement.</span>
         </div>
-        <div className="key-fact">
-          <span className="eyebrow">Method</span>
+        <div className="ops-band-item">
+          <span>Method</span>
           <strong>{payment.method}</strong>
+          <span>Primary commercial execution method on this trace.</span>
         </div>
         {isCardChallenge ? (
-          <div className="key-fact">
-            <span className="eyebrow">Challenge</span>
+          <div className="ops-band-item">
+            <span>Challenge</span>
             <strong>{payment.card_challenge?.status || payment.next_action?.challenge_status || "pending"}</strong>
+            <span>3DS customer action posture for the current card flow.</span>
           </div>
-        ) : null}
-        {upiIntent ? (
-          <div className="key-fact">
-            <span className="eyebrow">UPI Status</span>
+        ) : upiIntent ? (
+          <div className="ops-band-item">
+            <span>UPI Status</span>
             <strong>{upiIntent.provider_status}</strong>
+            <span>Provider-side status observed on the UPI interaction surface.</span>
           </div>
         ) : null}
       </div>
