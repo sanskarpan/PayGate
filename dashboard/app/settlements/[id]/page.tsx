@@ -6,27 +6,59 @@ export default async function SettlementDetailPage({ params }: { params: { id: s
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Settlement Batch</div>
-        <h1>{truncateMiddle(settlement.id, 14, 8)}</h1>
-        <p className="mono" style={{ margin: "0 0 8px" }}>{settlement.id}</p>
-        <p className="lede">
-          Net payout: {formatMoney(settlement.net_amount, settlement.currency)} ·{" "}
-          {settlement.payment_count} payment{settlement.payment_count !== 1 ? "s" : ""}
-        </p>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Settlement Batch</div>
+          <h1>{truncateMiddle(settlement.id, 14, 8)}</h1>
+          <p className="mono" style={{ margin: "0 0 8px" }}>{settlement.id}</p>
+          <p className="lede">
+            Net payout: {formatMoney(settlement.net_amount, settlement.currency)} ·{" "}
+            {settlement.payment_count} payment{settlement.payment_count !== 1 ? "s" : ""}
+          </p>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Settlement Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Batch state</span>
+              <strong>{settlement.status}</strong>
+              <p>Current settlement lifecycle state controlling treasury and payout progression.</p>
+            </div>
+            <div className="status-block">
+              <span>Net payout</span>
+              <strong>{formatMoney(settlement.net_amount, settlement.currency)}</strong>
+              <p>Merchant-facing batch amount remaining after fees and refunds.</p>
+            </div>
+            <div className="status-block">
+              <span>Payment scope</span>
+              <strong>{settlement.payment_count}</strong>
+              <p>Commercial payment traces absorbed into this settlement batch.</p>
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="key-facts">
-        <div className="key-fact">
-          <span className="eyebrow">Status</span>
+
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Status</span>
           <strong>{settlement.status}</strong>
+          <span>Batch state controlling downstream payout behavior.</span>
         </div>
-        <div className="key-fact">
-          <span className="eyebrow">Gross</span>
+        <div className="ops-band-item">
+          <span>Gross</span>
           <strong>{formatMoney(settlement.total_amount, settlement.currency)}</strong>
+          <span>Total captured principal before deductions.</span>
         </div>
-        <div className="key-fact">
-          <span className="eyebrow">Refunds</span>
+        <div className="ops-band-item">
+          <span>Refunds</span>
           <strong>{formatMoney(settlement.total_refunds, settlement.currency)}</strong>
+          <span>Total refund pressure applied to this batch.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Fees</span>
+          <strong>{formatMoney(settlement.total_fees, settlement.currency)}</strong>
+          <span>Platform take deducted prior to merchant payout.</span>
         </div>
       </div>
       <div className="detail-grid">
