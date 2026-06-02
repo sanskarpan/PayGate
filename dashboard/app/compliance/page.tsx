@@ -10,6 +10,7 @@ import {
 } from "../../lib/api";
 import { formatMoney, formatTime } from "../../lib/types";
 import ComplianceOpsConsole from "../../components/compliance-ops-console";
+import { RouteIcon } from "../../components/system-icons";
 
 function stateTone(state: string) {
   switch (state) {
@@ -49,73 +50,102 @@ export default async function CompliancePage() {
   const verifiedOwners = parties.items.filter((item) => item.verification_status === "verified").length;
   const approvedDocs = documents.items.filter((item) => item.status === "approved").length;
   const pendingEscalations = escalations.items.filter((item) => item.status === "pending").length;
+  const enabledCapabilities = capabilities.items.filter((item) => item.status === "enabled").length;
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Merchant Compliance</div>
-        <h1>Onboarding and controls.</h1>
-        <p className="lede">
-          Review onboarding completeness, capability posture, and reserve escalations for {viewer.merchant_id}.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Application state</span>
-            <strong>{onboarding.state}</strong>
+      <div className="ops-grid">
+        <div className="hero-card has-glyph">
+          <div className="page-glyph">
+            <div className="page-glyph-badge">
+              <RouteIcon name="compliance" size={40} />
+            </div>
+            <div className="page-glyph-label">
+              <span>KYB signal</span>
+              <strong>Control lane</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Verified parties</span>
-            <strong>{verifiedOwners}</strong>
+          <div className="eyebrow">Merchant Compliance</div>
+          <h1>Onboarding and controls.</h1>
+          <p className="lede">
+            Review onboarding completeness, capability posture, and reserve escalations for {viewer.merchant_id}.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Application state</span>
+              <strong>{onboarding.state}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Verified parties</span>
+              <strong>{verifiedOwners}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Approved documents</span>
+              <strong>{approvedDocs}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Pending escalations</span>
+              <strong>{pendingEscalations}</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Approved documents</span>
-            <strong>{approvedDocs}</strong>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Pending escalations</span>
-            <strong>{pendingEscalations}</strong>
+          <div className="hero-actions">
+            <form action="/api/proxy/v1/merchants/me/onboarding/submit" method="POST">
+              <input type="hidden" name="_redirect" value="/compliance" />
+              <button className="primary-button" type="submit" disabled={onboarding.state === "approved"}>
+                Submit onboarding
+              </button>
+            </form>
+            <form action="/api/proxy/v1/merchants/me/onboarding/screenings/run" method="POST">
+              <input type="hidden" name="_redirect" value="/compliance" />
+              <input type="hidden" name="screening_type" value="merchant_kyb" />
+              <input type="hidden" name="force_result" value="passed" />
+              <button className="ghost-button" type="submit">Run screening</button>
+            </form>
           </div>
         </div>
-        <div className="hero-actions">
-          <form action="/api/proxy/v1/merchants/me/onboarding/submit" method="POST">
-            <input type="hidden" name="_redirect" value="/compliance" />
-            <button className="primary-button" type="submit" disabled={onboarding.state === "approved"}>
-              Submit onboarding
-            </button>
-          </form>
-          <form action="/api/proxy/v1/merchants/me/onboarding/screenings/run" method="POST">
-            <input type="hidden" name="_redirect" value="/compliance" />
-            <input type="hidden" name="screening_type" value="merchant_kyb" />
-            <input type="hidden" name="force_result" value="passed" />
-            <button className="ghost-button" type="submit">Run screening</button>
-          </form>
+
+        <div className="detail-card">
+          <div className="eyebrow">Control Assessment</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Application lane</span>
+              <strong>{onboarding.state}</strong>
+              <p>{onboarding.submitted_at ? `Submitted ${formatTime(onboarding.submitted_at)}.` : "Still in draft and not yet in formal review."}</p>
+            </div>
+            <div className="status-block">
+              <span>Reserve posture</span>
+              <strong>{reservePolicy.policy_type}</strong>
+              <p>{reservePolicy.percentage_bps / 100}% reserve held for {reservePolicy.hold_days} days at current policy.</p>
+            </div>
+            <div className="status-block">
+              <span>Capability exposure</span>
+              <strong>{enabledCapabilities}</strong>
+              <p>Payment and treasury capabilities currently enabled for live merchant behavior.</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="summary-grid">
-        <div className="metric-card">
-          <div className="eyebrow">Application</div>
-          <div className="stat-value">{onboarding.state}</div>
-          <div className="stat-label">
-            {onboarding.submitted_at ? `Submitted ${formatTime(onboarding.submitted_at)}` : "Draft application"}
-          </div>
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Application</span>
+          <strong>{onboarding.state}</strong>
+          <span>{onboarding.submitted_at ? `Submitted ${formatTime(onboarding.submitted_at)}` : "Draft application"}</span>
         </div>
-        <div className="metric-card">
-          <div className="eyebrow">Reserve policy</div>
-          <div className="stat-value">{reservePolicy.policy_type}</div>
-          <div className="stat-label">
-            {reservePolicy.percentage_bps / 100}% · {reservePolicy.hold_days} day hold
-          </div>
+        <div className="ops-band-item">
+          <span>Reserve policy</span>
+          <strong>{reservePolicy.policy_type}</strong>
+          <span>{reservePolicy.percentage_bps / 100}% · {reservePolicy.hold_days} day hold</span>
         </div>
-        <div className="metric-card">
-          <div className="eyebrow">Capabilities</div>
-          <div className="stat-value">{capabilities.items.filter((item) => item.status === "enabled").length}</div>
-          <div className="stat-label">enabled payment and treasury capabilities</div>
+        <div className="ops-band-item">
+          <span>Capabilities</span>
+          <strong>{enabledCapabilities}</strong>
+          <span>Enabled payment and treasury capabilities.</span>
         </div>
-        <div className="metric-card">
-          <div className="eyebrow">Threshold</div>
-          <div className="stat-value">{formatMoney(reservePolicy.threshold_amount, "INR")}</div>
-          <div className="stat-label">current reserve escalation trigger</div>
+        <div className="ops-band-item">
+          <span>Threshold</span>
+          <strong>{formatMoney(reservePolicy.threshold_amount, "INR")}</strong>
+          <span>Current reserve escalation trigger.</span>
         </div>
       </div>
 
