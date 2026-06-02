@@ -104,12 +104,14 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'failed',$11,$12,$13)
 	if err != nil {
 		return err
 	}
-	_, _ = tx.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 UPDATE paygate_orders.orders
 SET status = CASE WHEN status = 'created' THEN 'attempted' ELSE status END,
     updated_at = NOW()
 WHERE id = $1 AND merchant_id = $2
-`, in.OrderID, in.MerchantID)
+`, in.OrderID, in.MerchantID); err != nil {
+		return fmt.Errorf("update order status on failed attempt: %w", err)
+	}
 	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{AggregateType: "payment_attempt", AggregateID: attemptID, EventType: "payment.failed", MerchantID: in.MerchantID, Payload: map[string]any{"order_id": in.OrderID, "error_code": errorCode}}); err != nil {
 		return err
 	}
@@ -195,12 +197,14 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'created',false)
 	if err := r.insertPaymentSplitsTx(ctx, tx, in.MerchantID, paymentID, in.Splits); err != nil {
 		return CaptureResult{}, err
 	}
-	_, _ = tx.Exec(ctx, `
+	if _, err := tx.Exec(ctx, `
 UPDATE paygate_orders.orders
 SET status = CASE WHEN status = 'created' THEN 'attempted' ELSE status END,
     updated_at = NOW()
 WHERE id=$1 AND merchant_id=$2
-`, in.OrderID, in.MerchantID)
+`, in.OrderID, in.MerchantID); err != nil {
+		return CaptureResult{}, fmt.Errorf("update order status on authorization start: %w", err)
+	}
 
 	if err := r.outbox.WriteTx(ctx, tx, outbox.Event{AggregateType: "payment", AggregateID: paymentID, EventType: "payment.authorized", MerchantID: in.MerchantID, Payload: map[string]any{"payment_id": paymentID, "order_id": in.OrderID}}); err != nil {
 		return CaptureResult{}, err
@@ -894,11 +898,22 @@ WHERE p.merchant_id = $1`
 			return ListResult{}, err
 		}
 		item.Status = PaymentState(status)
-		item.Splits, _ = r.listPaymentSplits(ctx, item.PaymentID)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		return ListResult{}, err
+	}
+	// Batch-fetch splits to avoid N+1 queries.
+	paymentIDs := make([]string, len(items))
+	for i := range items {
+		paymentIDs[i] = items[i].PaymentID
+	}
+	splitsMap, err := r.listPaymentSplitsBatch(ctx, paymentIDs)
+	if err != nil {
+		return ListResult{}, err
+	}
+	for i := range items {
+		items[i].Splits = splitsMap[items[i].PaymentID]
 	}
 	return ListResult{Items: items}, nil
 }
@@ -934,8 +949,12 @@ FOR UPDATE SKIP LOCKED
 			_ = tx.Rollback(ctx)
 			return count, err
 		}
-		// Release the advisory lock; CaptureAuthorizedPayment opens its own TX
-		// with FOR UPDATE on the same row, which will immediately re-acquire.
+		// Release the lock; CaptureAuthorizedPayment opens its own TX with
+		// FOR UPDATE on the same row. The brief window between rollback and
+		// re-acquire is safe because CaptureAuthorizedPayment checks status
+		// after locking: if another goroutine captured first, it returns the
+		// existing result (idempotent). FOR UPDATE SKIP LOCKED above prevents
+		// double-pickup within a single sweeper cycle.
 		_ = tx.Rollback(ctx)
 
 		if _, err := r.CaptureAuthorizedPayment(ctx, merchantID, id, amount); err == nil {
@@ -1066,6 +1085,31 @@ ORDER BY created_at, id
 	}
 	defer rows.Close()
 	return scanPaymentSplits(rows)
+}
+
+func (r *PostgresRepository) listPaymentSplitsBatch(ctx context.Context, paymentIDs []string) (map[string][]PaymentSplit, error) {
+	if len(paymentIDs) == 0 {
+		return map[string][]PaymentSplit{}, nil
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT id, merchant_id, payment_id, destination_type, destination_ref, beneficiary_label, amount, currency, created_at
+FROM paygate_payments.payment_splits
+WHERE payment_id = ANY($1)
+ORDER BY payment_id, created_at, id
+`, paymentIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string][]PaymentSplit)
+	for rows.Next() {
+		var item PaymentSplit
+		if err := rows.Scan(&item.ID, &item.MerchantID, &item.PaymentID, &item.DestinationType, &item.DestinationRef, &item.BeneficiaryLabel, &item.Amount, &item.Currency, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		out[item.PaymentID] = append(out[item.PaymentID], item)
+	}
+	return out, rows.Err()
 }
 
 func (r *PostgresRepository) listPaymentSplitsTx(ctx context.Context, tx pgx.Tx, paymentID string) ([]PaymentSplit, error) {
