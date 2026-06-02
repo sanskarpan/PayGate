@@ -68,48 +68,70 @@ export default function GatewayScenarioControl({
 
   return (
     <div className="stack">
-      <div className="detail-card">
-        <div className="section-head">
-          <div>
-            <h2>Inline scenario control</h2>
-            <div className="section-kicker">Apply known failure modes without leaving the dashboard</div>
+      <div className="workbench-grid">
+        <div className="detail-card">
+          <div className="section-head">
+            <div>
+              <div className="eyebrow">Preset Library</div>
+              <h2>Scenario deck</h2>
+              <div className="section-kicker">Apply known gateway failure shapes instantly.</div>
+            </div>
+          </div>
+          <div className="preset-grid" style={{ marginTop: "16px" }}>
+            {presets.map((preset) => (
+              <button
+                className={`preset-card${active?.mode === preset.mode ? " active-card" : ""}`}
+                disabled={pending}
+                key={preset.mode}
+                onClick={() =>
+                  applyScenario({
+                    mode: preset.mode,
+                    delay_ms: preset.delayMs,
+                    failure_rate: preset.failureRate,
+                    decline_code: preset.declineCode,
+                  })
+                }
+                type="button"
+              >
+                <span className="preset-mode">{preset.mode}</span>
+                <strong>{preset.label}</strong>
+                <p>{preset.desc}</p>
+              </button>
+            ))}
           </div>
         </div>
-        <div className="triple-grid" style={{ marginTop: "16px" }}>
-          {presets.map((preset) => (
-            <button
-              className={`spotlight-card${active?.mode === preset.mode ? " active-card" : ""}`}
-              disabled={pending}
-              key={preset.mode}
-              onClick={() =>
-                applyScenario({
-                  mode: preset.mode,
-                  delay_ms: preset.delayMs,
-                  failure_rate: preset.failureRate,
-                  decline_code: preset.declineCode,
-                })
-              }
-              style={{ textAlign: "left", cursor: "pointer" }}
-              type="button"
-            >
-              <div className="row-title">{preset.label}</div>
-              <div className="row-meta">
-                <span>{preset.mode}</span>
-              </div>
-              <div className="muted">{preset.desc}</div>
-            </button>
-          ))}
+
+        <div className="detail-card">
+          <div className="eyebrow">Live Control</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Mode</span>
+              <strong>{active?.mode ?? mode}</strong>
+              <p>Currently dominant gateway condition in this environment.</p>
+            </div>
+            <div className="status-block">
+              <span>Failure rate</span>
+              <strong>{Math.round((active?.failure_rate ?? failureRate) * 100)}%</strong>
+              <p>Randomized failure pressure applied where the mode supports it.</p>
+            </div>
+            <div className="status-block">
+              <span>Delay</span>
+              <strong>{active?.delay_ms ?? delayMs}ms</strong>
+              <p>Response or callback drag currently shaping the rail.</p>
+            </div>
+          </div>
         </div>
       </div>
 
       <div className="detail-card">
         <div className="section-head">
           <div>
-            <h2>Custom scenario</h2>
-            <div className="section-kicker">Tune latency, failure rate, and decline behavior</div>
+            <div className="eyebrow">Custom Scenario</div>
+            <h2>Dial the rail manually</h2>
+            <div className="section-kicker">Tune latency, failure pressure, and decline signature.</div>
           </div>
         </div>
-        <div className="inline-form" style={{ marginTop: "16px" }}>
+        <div className="control-form-grid" style={{ marginTop: "16px" }}>
           <label>
             Mode
             <select onChange={(event) => setMode(event.target.value)} value={mode}>
@@ -157,6 +179,7 @@ export default function GatewayScenarioControl({
       <div className="list-card">
         <div className="section-head">
           <div>
+            <div className="eyebrow">Change History</div>
             <h2>Scenario history</h2>
             <div className="section-kicker">Most recent control changes</div>
           </div>
