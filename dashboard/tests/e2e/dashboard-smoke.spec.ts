@@ -9,14 +9,14 @@ const pageChecks = [
   { path: "/api-keys", text: "Create Key" },
   { path: "/webhooks", heading: "Webhooks" },
   { path: "/settlements", heading: "Settlement Reports" },
-  { path: "/payouts", heading: "Payouts" },
+  { path: "/payouts", heading: "Bank payout operations." },
   { path: "/reports", heading: "Download center." },
   { path: "/recon", heading: "Reconciliation Control" },
-  { path: "/risk", heading: "Risk Events" },
-  { path: "/gateway", heading: "Payment Gateway Control Panel" },
+  { path: "/risk", heading: "Manual pressure queue." },
+  { path: "/gateway", heading: "Failure-path command deck." },
   { path: "/observability", heading: "Observability" },
-  { path: "/audit", heading: "Audit Log" },
-  { path: "/team", heading: "Team" },
+  { path: "/audit", heading: "Audit event trail." },
+  { path: "/team", heading: "Team access fabric." },
   { path: "/disputes", heading: "Disputes" },
 ] as const;
 
@@ -57,8 +57,9 @@ test("operator dashboard pages render correctly with seeded data", async ({ page
   }
 
   await navigate(`/orders/${seed.orderID}`);
-  await expect(page.getByText("Order Detail")).toBeVisible();
+  await expect(page.getByText("Order Dossier")).toBeVisible();
   await expect(page.getByText(seed.orderID)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Amount ledger" })).toBeVisible();
 
   await navigate(`/payments/${seed.paymentID}`);
   await expect(page.getByText("Payment Trace")).toBeVisible();
@@ -69,27 +70,29 @@ test("operator dashboard pages render correctly with seeded data", async ({ page
   await expect(page.getByText(seed.refundID)).toBeVisible();
 
   await navigate(`/webhooks/${seed.webhookID}`);
-  await expect(page.getByText("Webhook Subscription")).toBeVisible();
-  await expect(page.getByText("Delivery Log")).toBeVisible();
+  await expect(page.getByText("Webhook Subscription", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Delivery Log" })).toBeVisible();
 
   await navigate(`/settlements/${seed.settlementID}`);
-  await expect(page.getByText("Settlement Batch")).toBeVisible();
-  await expect(page.getByText("Payment Items")).toBeVisible();
+  await expect(page.getByText("Settlement Batch", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Payment Items/ })).toBeVisible();
 
   await navigate(`/disputes/${seed.disputeID}`);
-  await expect(page.getByText("Dispute Detail")).toBeVisible();
-  await expect(page.getByText("Case summary")).toBeVisible();
-  await expect(page.getByText("Submitted evidence payload")).toBeVisible();
+  await expect(page.getByText("Dispute Detail", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Case summary" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Submitted evidence payload" })).toBeVisible();
 
   await navigate("/compliance");
-  await expect(page.getByRole("heading", { name: "Review decision" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Capability controls" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Onboarding decision" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Merchant live rails" })).toBeVisible();
 
   await navigate("/risk");
-  await expect(page.getByRole("heading", { name: "Queue workbench" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Workbench controls" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Risk event ledger" })).toBeVisible();
 
   await navigate("/payouts");
-  await expect(page.getByRole("heading", { name: "Approval workbench" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Treasury workbench" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Payout ledger" })).toBeVisible();
 
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
