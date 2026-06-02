@@ -111,56 +111,75 @@ export default async function ObservabilityPage() {
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">System Health</div>
-        <h1>Observability</h1>
-        <p className="lede">
-          Cumulative platform counters since last restart. Use this surface for rapid operator
-          orientation, then move into Grafana for time-series and alert detail on{" "}
-          <a href="http://localhost:3100" target="_blank" rel="noreferrer">
-            localhost:3100
-          </a>.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Outbox</span>
-            <strong>{outboxUnpublished ?? 0}</strong>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">System Health</div>
+          <h1>Observability</h1>
+          <p className="lede">
+            Cumulative platform counters since last restart. Use this surface for rapid operator
+            orientation, then move into Grafana for time-series and alert detail on{" "}
+            <a href="http://localhost:3100" target="_blank" rel="noreferrer">
+              localhost:3100
+            </a>.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Outbox</span>
+              <strong>{outboxUnpublished ?? 0}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Traffic</span>
+              <strong>{formatCompactNumber(httpRequests)}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Webhook attempts</span>
+              <strong>{formatCompactNumber(webhookDeliveries)}</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Traffic</span>
-            <strong>{formatCompactNumber(httpRequests)}</strong>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Webhook attempts</span>
-            <strong>{formatCompactNumber(webhookDeliveries)}</strong>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Control Tower</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Queue Posture</span>
+              <strong>{outboxOk ? "Healthy" : outboxUnpublished === null ? "Unknown" : "Attention"}</strong>
+              <p>Backlog status for unpublished events and asynchronous downstream pressure.</p>
+            </div>
+            <div className="status-block">
+              <span>Gateway Surface</span>
+              <strong>{gatewayRows.length}</strong>
+              <p>Method and provider combinations currently contributing authorization telemetry.</p>
+            </div>
+            <div className="status-block">
+              <span>Signature Modes</span>
+              <strong>{webhookSignatureRows.length}</strong>
+              <p>Webhook signing profiles observed across live delivery traffic.</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="triple-grid">
-        <div className="spotlight-card">
-          <div className="eyebrow">Delivery Health</div>
-          <h2>Async pipeline</h2>
-          <div className={outboxBadge}>{outboxOk ? "Healthy" : outboxUnpublished === null ? "Unknown" : "Needs attention"}</div>
-          <p className="muted">
-            Outbox backlog is {outboxUnpublished ?? "unknown"} and webhook delivery attempts total {fmt(webhookDeliveries)}.
-          </p>
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Delivery Health</span>
+          <strong>{outboxOk ? "Healthy" : outboxUnpublished === null ? "Unknown" : "Needs attention"}</strong>
+          <span>Outbox backlog is {outboxUnpublished ?? "unknown"}.</span>
         </div>
-        <div className="spotlight-card">
-          <div className="eyebrow">Traffic Posture</div>
-          <h2>Request volume</h2>
-          <div className="stat-value">{fmt(httpRequests)}</div>
-          <p className="muted">
-            Aggregate request count since process start across authenticated dashboard and API traffic.
-          </p>
+        <div className="ops-band-item">
+          <span>Request Volume</span>
+          <strong>{fmt(httpRequests)}</strong>
+          <span>Aggregate API and dashboard traffic since process start.</span>
         </div>
-        <div className="spotlight-card">
-          <div className="eyebrow">Money Flow</div>
-          <h2>Commercial load</h2>
-          <div className="stat-value">{fmt(paymentsTotal)}</div>
-          <p className="muted">
-            Payment attempts remain the strongest leading indicator for downstream webhook, refund, and settlement activity.
-          </p>
+        <div className="ops-band-item">
+          <span>Commercial Load</span>
+          <strong>{fmt(paymentsTotal)}</strong>
+          <span>Payment attempts driving downstream lifecycle activity.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Webhook Pressure</span>
+          <strong>{fmt(webhookDeliveries)}</strong>
+          <span>Observed delivery attempts across active subscriptions.</span>
         </div>
       </div>
 
@@ -253,6 +272,37 @@ export default async function ObservabilityPage() {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="detail-card">
+        <div className="section-head">
+          <div>
+            <h2>Telemetry brief</h2>
+            <div className="section-kicker">Operator translation of the current machine posture</div>
+          </div>
+        </div>
+        <div className="intel-grid" style={{ marginTop: "16px" }}>
+          <div className="intel-card">
+            <span>Async pipeline</span>
+            <strong>{outboxUnpublished ?? 0} backlog</strong>
+            <p>Use this as the first indicator of relay pressure, retry loops, or downstream publish stalls.</p>
+          </div>
+          <div className="intel-card">
+            <span>Authorization mesh</span>
+            <strong>{gatewayRows.length} lanes</strong>
+            <p>Each lane represents a method-provider pair with distinct success and latency characteristics.</p>
+          </div>
+          <div className="intel-card">
+            <span>Signature governance</span>
+            <strong>{webhookSignatureRows.length} modes</strong>
+            <p>Track which merchants still depend on compatibility mode versus stronger message-signature posture.</p>
+          </div>
+          <div className="intel-card">
+            <span>Traffic base</span>
+            <strong>{fmt(httpRequests)} requests</strong>
+            <p>Interpret all current counters as process-lifetime cumulative telemetry, not time-window samples.</p>
+          </div>
         </div>
       </div>
 
