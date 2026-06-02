@@ -57,11 +57,12 @@ func TestCreateCardTokenAndWebhookSubscription(t *testing.T) {
 				t.Fatalf("unexpected method %s", r.Method)
 			}
 			_ = json.NewEncoder(w).Encode(CardToken{ID: "ctok_123", Brand: "visa", Last4: "1111", PaymentTokenType: "single_use", Reusable: false})
-		case "/v1/webhooks":
-			if r.Method != http.MethodPost {
-				t.Fatalf("unexpected method %s", r.Method)
-			}
-			_ = json.NewEncoder(w).Encode(WebhookSubscription{ID: "wh_123", URL: "https://example.com/hook", Status: "active", SignatureMode: "compat"})
+			case "/v1/webhooks":
+				if r.Method != http.MethodPost {
+					t.Fatalf("unexpected method %s", r.Method)
+				}
+				//nolint:gosec // test fixture intentionally mirrors the webhook response shape.
+				_ = json.NewEncoder(w).Encode(WebhookSubscription{ID: "wh_123", URL: "https://example.com/hook", Status: "active", SignatureMode: "compat"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
