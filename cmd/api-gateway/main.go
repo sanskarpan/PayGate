@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -81,7 +82,7 @@ func run() error {
 
 	merchantRepo := merchant.NewPostgresRepository(db)
 	merchantSvc := merchant.NewService(merchantRepo, merchant.WithSessionSecret(cfg.DashboardSessionSecret))
-	merchantHandler := merchant.NewHandler(merchantSvc)
+	merchantHandler := merchant.NewHandler(merchantSvc, merchant.WithDashboardOrigin(cfg.DashboardOrigin))
 	authMw := auth.NewMiddlewareWithTrustedProxyCIDRs(merchantSvc, cfg.TrustedProxyCIDRs)
 	redisClient := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	if err := redisClient.Ping(ctx).Err(); err != nil {
@@ -185,7 +186,7 @@ func run() error {
 	reportingHandler := reporting.NewHandler(reportingSvc)
 	retentionSvc := retention.NewService(retention.NewPostgresRepository(db))
 	retentionHandler := retention.NewHandler(retentionSvc)
-	go retention.NewWorker(retentionSvc, 6*time.Hour).Start(ctx)
+	go retention.NewWorker(retentionSvc, 6*time.Hour, l).Start(ctx)
 	sagaRepo := saga.NewPostgresRepository(db)
 	sagaSvc := saga.NewService(sagaRepo, l)
 	sagaHandler := saga.NewHandler(sagaSvc)
@@ -306,8 +307,19 @@ func run() error {
 		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
 	})
 
-	// Prometheus metrics
-	mux.Handle("GET /metrics", promhttp.Handler())
+	// Prometheus metrics — restricted to loopback in production to prevent
+	// information leakage. Set METRICS_PUBLIC=true to allow external access.
+	metricsPublic := os.Getenv("METRICS_PUBLIC") == "true"
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		if !metricsPublic && cfg.AppEnv == "production" {
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil || (host != "127.0.0.1" && host != "::1") {
+				httpx.WriteError(w, http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Description: "metrics endpoint is not publicly accessible"})
+				return
+			}
+		}
+		promhttp.Handler().ServeHTTP(w, r)
+	})
 
 	mux.Handle("GET /v1/merchants/me", authMw.RequireScope(merchant.APIKeyScopeRead, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := httpx.PrincipalFromContext(r.Context())
@@ -341,7 +353,7 @@ func run() error {
 		})
 	})))
 
-	rateLimiter := middleware.NewRateLimiter(25, 25)
+	rateLimiter := middleware.NewRateLimiter(10, 20)
 	dashboardOrigin := cfg.DashboardOrigin
 	if dashboardOrigin == "" {
 		dashboardOrigin = "http://localhost:3001"
