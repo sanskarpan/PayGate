@@ -1,4 +1,5 @@
 import { getBeneficiaries, getPayouts, requireViewer } from "../../lib/api";
+import { RouteIcon } from "../../components/system-icons";
 import { formatMoney, formatTime } from "../../lib/types";
 import PayoutApprovalManager from "../../components/payout-approval-manager";
 
@@ -20,34 +21,93 @@ export default async function PayoutsPage() {
   const [payouts, beneficiaries] = await Promise.all([getPayouts(), getBeneficiaries()]);
   const completed = payouts.items.filter((item) => item.status === "completed").length;
   const pendingApprovals = payouts.items.filter((item) => item.approval_status === "pending").length;
+  const verifiedBeneficiaries = beneficiaries.items.filter((item) => item.status === "approved").length;
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Bank Transfers</div>
-        <h1>Payouts</h1>
-        <p className="lede">
-          {payouts.count} payout{payouts.count !== 1 ? "s" : ""} for {viewer.merchant_id}.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Completed</span>
-            <strong>{completed}</strong>
+      <div className="ops-grid">
+        <div className="hero-card has-glyph">
+          <div className="page-glyph">
+            <div className="page-glyph-badge">
+              <RouteIcon name="payouts" size={40} />
+            </div>
+            <div className="page-glyph-label">
+              <span>Treasury graph</span>
+              <strong>Outbound rail</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Pending / failed</span>
-            <strong>{payouts.count - completed}</strong>
+          <div className="eyebrow">Treasury Rail</div>
+          <h1>Bank payout operations.</h1>
+          <p className="lede">
+            {payouts.count} payout{payouts.count !== 1 ? "s" : ""} for {viewer.merchant_id}. Manage destination approval, treasury
+            readiness, and transfer queue decisions from one surface.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Completed</span>
+              <strong>{completed}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Approval queue</span>
+              <strong>{pendingApprovals}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Approved beneficiaries</span>
+              <strong>{verifiedBeneficiaries}</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Approval queue</span>
-            <strong>{pendingApprovals}</strong>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Treasury Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Payout queue</span>
+              <strong>{payouts.count - completed}</strong>
+              <p>Transfers still pending approval, processing, or recovery.</p>
+            </div>
+            <div className="status-block">
+              <span>Destination trust</span>
+              <strong>{verifiedBeneficiaries}</strong>
+              <p>Beneficiaries already approved for live treasury routing.</p>
+            </div>
+            <div className="status-block">
+              <span>Merchant scope</span>
+              <strong>{viewer.merchant_id}</strong>
+              <p>Current merchant treasury perimeter loaded in this operator session.</p>
+            </div>
           </div>
         </div>
       </div>
+
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Total transfers</span>
+          <strong>{payouts.count}</strong>
+          <span>Visible payout attempts within the current treasury perimeter.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Approvals pending</span>
+          <strong>{pendingApprovals}</strong>
+          <span>Transfers still waiting for a manual treasury decision.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Approved destinations</span>
+          <strong>{verifiedBeneficiaries}</strong>
+          <span>Beneficiaries trusted for live settlement disbursement.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Merchant scope</span>
+          <strong>{viewer.merchant_id.slice(-12)}</strong>
+          <span>Current treasury tenant boundary loaded into the session.</span>
+        </div>
+      </div>
+
       <div className="detail-grid">
         <div className="glass-card">
           <div className="section-head">
             <div>
+              <div className="eyebrow">Destination Setup</div>
               <h2>Create beneficiary</h2>
               <div className="section-kicker">Treasury destination for settlement payouts</div>
             </div>
@@ -88,6 +148,7 @@ export default async function PayoutsPage() {
         <div className="list-card">
           <div className="section-head">
             <div>
+              <div className="eyebrow">Destination Inventory</div>
               <h2>Beneficiaries</h2>
               <div className="section-kicker">Verification and approval status for payout destinations</div>
             </div>
