@@ -35,40 +35,51 @@ export default async function GatewaySimulatorPage() {
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Gateway Simulator</div>
-        <h1>Payment Gateway Control Panel</h1>
-        <p className="lede">
-          Configure simulated gateway behavior for failure-path testing, latency drills, and
-          callback timing edge cases.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Active mode</span>
-            <strong>{active?.mode ?? "success"}</strong>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Saved scenarios</span>
-            <strong>{scenarios.count}</strong>
-          </div>
-        </div>
-      </div>
-
-      {active && (
-        <div className="detail-card">
-          <h2>Active Global Scenario</h2>
-          <div style={{ marginTop: "1rem" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-              <span className={modeBadge(active.mode)} style={{ fontSize: "1rem", padding: "0.4rem 1rem" }}>
-                {active.mode}
-              </span>
-              <p className="lede" style={{ margin: 0 }}>
-                {modeDescription(active.mode, active.failure_rate, active.delay_ms)}
-              </p>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Gateway Rail</div>
+          <h1>Failure-path command deck.</h1>
+          <p className="lede">
+            Shape gateway behavior for decline drills, callback disorder, timeout simulation, and
+            latency pressure without leaving the operator surface.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Active mode</span>
+              <strong>{active?.mode ?? "success"}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Scenario count</span>
+              <strong>{scenarios.count}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Pressure lane</span>
+              <strong>{active?.delay_ms ? `${active.delay_ms}ms` : "Nominal"}</strong>
             </div>
           </div>
         </div>
-      )}
+
+        <div className="detail-card">
+          <div className="eyebrow">Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Global state</span>
+              <strong>{active ? active.mode : "success"}</strong>
+              <p>{active ? modeDescription(active.mode, active.failure_rate, active.delay_ms) : "Default nominal path is active."}</p>
+            </div>
+            <div className="status-block">
+              <span>Decline code</span>
+              <strong>{active?.decline_code ?? "CARD_DECLINED"}</strong>
+              <p>Primary rejection reason applied when the simulator is in a decline lane.</p>
+            </div>
+            <div className="status-block">
+              <span>Callback lag</span>
+              <strong>{active?.delay_ms ? `${active.delay_ms}ms` : "Instant"}</strong>
+              <p>Delay currently shaping callback or authorization response timing.</p>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <GatewayScenarioControl
         apiBaseUrl={getApiBaseUrl()}
@@ -77,7 +88,12 @@ export default async function GatewaySimulatorPage() {
       />
 
       <div className="detail-card">
-        <h2>API Example</h2>
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">Operator API</div>
+            <h2>CLI examples</h2>
+          </div>
+        </div>
         <pre>
 {`# These endpoints require an admin API key or an admin dashboard session.
 # Switch to flaky mode (30% failure rate)
