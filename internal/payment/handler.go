@@ -550,10 +550,11 @@ func presentUPIIntent(out UPIIntentResult, callbackURL string) map[string]any {
 	resp := present(out.CaptureResult, nil)
 	entity := "upi_intent_payment"
 	nextActionType := "upi_intent"
-	if out.FlowType == "qr" {
+	switch out.FlowType {
+	case "qr":
 		entity = "upi_qr_payment"
 		nextActionType = "upi_qr"
-	} else if out.FlowType == "mandate" {
+	case "mandate":
 		entity = "upi_mandate_payment"
 		nextActionType = "upi_mandate"
 	}
