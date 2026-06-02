@@ -12,11 +12,29 @@ import (
 )
 
 type Handler struct {
-	svc *Service
+	svc             *Service
+	dashboardOrigin string
 }
 
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+type HandlerOption func(*Handler)
+
+func WithDashboardOrigin(origin string) HandlerOption {
+	return func(h *Handler) {
+		h.dashboardOrigin = strings.TrimSpace(origin)
+	}
+}
+
+func NewHandler(svc *Service, opts ...HandlerOption) *Handler {
+	h := &Handler{
+		svc:             svc,
+		dashboardOrigin: "http://localhost:3001",
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -279,7 +297,7 @@ func (h *Handler) bootstrapMerchantUser(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) dashboardLogin(w http.ResponseWriter, r *http.Request) {
-	req, redirectTo, wantsRedirect, err := decodeDashboardLoginRequest(r)
+	req, redirectTo, wantsRedirect, err := decodeDashboardLoginRequest(r, h.dashboardOrigin)
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{
 			Code:        "BAD_REQUEST_ERROR",
@@ -325,7 +343,7 @@ func (h *Handler) dashboardLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) dashboardLogout(w http.ResponseWriter, r *http.Request) {
-	redirectTo := normalizeDashboardRedirect(r.URL.Query().Get("redirect_to"), "/")
+	redirectTo := normalizeDashboardRedirect(r.URL.Query().Get("redirect_to"), "/", h.dashboardOrigin)
 	http.SetCookie(w, &http.Cookie{
 		Name:     DashboardSessionCookieName,
 		Value:    "",
@@ -737,7 +755,7 @@ type dashboardLoginRequest struct {
 	Password   string `json:"password"`
 }
 
-func decodeDashboardLoginRequest(r *http.Request) (dashboardLoginRequest, string, bool, error) {
+func decodeDashboardLoginRequest(r *http.Request, dashboardOrigin string) (dashboardLoginRequest, string, bool, error) {
 	redirectTo := r.URL.Query().Get("redirect_to")
 	switch {
 	case strings.Contains(r.Header.Get("Content-Type"), "application/json"):
@@ -753,7 +771,7 @@ func decodeDashboardLoginRequest(r *http.Request) (dashboardLoginRequest, string
 		if redirectTo == "" {
 			redirectTo = r.FormValue("redirect_to")
 		}
-		redirectTo = normalizeDashboardRedirect(redirectTo, "/orders")
+		redirectTo = normalizeDashboardRedirect(redirectTo, "/orders", dashboardOrigin)
 		return dashboardLoginRequest{
 			MerchantID: r.FormValue("merchant_id"),
 			Email:      r.FormValue("email"),
@@ -762,17 +780,41 @@ func decodeDashboardLoginRequest(r *http.Request) (dashboardLoginRequest, string
 	}
 }
 
-func normalizeDashboardRedirect(raw, fallback string) string {
+func normalizeDashboardRedirect(raw, fallback, dashboardOrigin string) string {
+	origin := strings.TrimRight(strings.TrimSpace(dashboardOrigin), "/")
+	if origin == "" {
+		origin = "http://localhost:3001"
+	}
+	joinFallback := func() string {
+		if !strings.HasPrefix(fallback, "/") {
+			fallback = "/" + fallback
+		}
+		return origin + fallback
+	}
 	if raw == "" {
-		return fallback
+		return joinFallback()
 	}
-	if !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
-		return fallback
+	if strings.HasPrefix(raw, "/") && !strings.HasPrefix(raw, "//") {
+		if _, err := url.ParseRequestURI(raw); err != nil {
+			return joinFallback()
+		}
+		return origin + raw
 	}
-	if _, err := url.ParseRequestURI(raw); err != nil {
-		return fallback
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return joinFallback()
 	}
-	return raw
+	base, err := url.Parse(origin)
+	if err != nil {
+		return joinFallback()
+	}
+	if !strings.EqualFold(parsed.Scheme, base.Scheme) || !strings.EqualFold(parsed.Host, base.Host) {
+		return joinFallback()
+	}
+	if parsed.Path == "" || !strings.HasPrefix(parsed.Path, "/") {
+		parsed.Path = fallback
+	}
+	return parsed.String()
 }
 
 func shouldUseSecureDashboardCookie(r *http.Request) bool {
