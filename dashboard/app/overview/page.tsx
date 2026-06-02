@@ -43,66 +43,104 @@ export default async function OverviewPage() {
   const activeWebhooks = webhooks.items.filter((item) => item.status === "active").length;
   const pendingPayouts = payouts.items.filter((item) => item.status !== "completed").length;
   const latestSettlement = settlements.items[0];
+  const latestOrder = orders.items[0];
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Operations Snapshot</div>
-        <h1>Merchant command center.</h1>
-        <p className="lede">
-          Track money flow, operator risk, asynchronous delivery health, and settlement posture
-          for <strong> {viewer.merchant_id}</strong>.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Payments</span>
-            <strong>{formatCompactNumber(paymentsTotal)}</strong>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Operations Snapshot</div>
+          <h1>Merchant command center.</h1>
+          <p className="lede">
+            Track money flow, operator risk, asynchronous delivery health, and settlement posture
+            for <strong> {viewer.merchant_id}</strong>.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Payments</span>
+              <strong>{formatCompactNumber(paymentsTotal)}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Requests</span>
+              <strong>{formatCompactNumber(httpRequests)}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Outbox</span>
+              <strong>{outboxUnpublished ?? 0}</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Requests</span>
-            <strong>{formatCompactNumber(httpRequests)}</strong>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Outbox</span>
-            <strong>{outboxUnpublished ?? 0}</strong>
+          <div className="hero-actions">
+            <Link className="primary-button" href="/orders">
+              Review Orders
+            </Link>
+            <Link className="ghost-button" href="/observability">
+              Open Observability
+            </Link>
+            <Link className="ghost-button" href="/disputes">
+              Inspect Disputes
+            </Link>
+            <Link className="ghost-button" href="/compliance">
+              Review Compliance
+            </Link>
           </div>
         </div>
-        <div className="hero-actions">
-          <Link className="primary-button" href="/orders">
-            Review Orders
-          </Link>
-          <Link className="ghost-button" href="/observability">
-            Open Observability
-          </Link>
-          <Link className="ghost-button" href="/disputes">
-            Inspect Disputes
-          </Link>
-          <Link className="ghost-button" href="/compliance">
-            Review Compliance
-          </Link>
+
+        <div className="detail-card">
+          <div className="eyebrow">Immediate Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Async Queue</span>
+              <strong>{outboxUnpublished ?? 0}</strong>
+              <p>Events waiting for publish across the transactional outbox.</p>
+            </div>
+            <div className="status-block">
+              <span>Risk Pressure</span>
+              <strong>{unresolvedRisk}</strong>
+              <p>Unresolved risk events requiring operator or policy attention.</p>
+            </div>
+            <div className="status-block">
+              <span>Latest Order</span>
+              <strong>{latestOrder ? truncateMiddle(latestOrder.id) : "No traffic"}</strong>
+              <p>{latestOrder ? `${latestOrder.status} · ${formatTime(latestOrder.created_at)}` : "Awaiting new payment sessions."}</p>
+            </div>
+          </div>
+          <div className="command-deck">
+            <Link className="command-link" href="/control-plane">
+              <strong>Runtime control plane</strong>
+              <span>Inspect sagas, ledger holds, and schema governance surfaces.</span>
+            </Link>
+            <Link className="command-link" href="/gateway">
+              <strong>Failure simulation rail</strong>
+              <span>Drive gateway conditions to probe adverse-path behavior.</span>
+            </Link>
+            <Link className="command-link" href="/reports">
+              <strong>Finance export lane</strong>
+              <span>Generate statements, payout artifacts, and tax-oriented data slices.</span>
+            </Link>
+          </div>
         </div>
       </div>
 
-      <div className="summary-grid">
-        <div className="metric-card">
-          <div className="eyebrow">Orders</div>
-          <div className="stat-value">{orders.count}</div>
-          <div className="stat-label">visible records in the current dashboard scope</div>
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Orders in Scope</span>
+          <strong>{orders.count}</strong>
+          <span>Visible records across the current operator view.</span>
         </div>
-        <div className="metric-card">
-          <div className="eyebrow">Active Webhooks</div>
-          <div className="stat-value">{activeWebhooks}</div>
-          <div className="stat-label">subscriptions ready to receive events</div>
+        <div className="ops-band-item">
+          <span>Active Webhooks</span>
+          <strong>{activeWebhooks}</strong>
+          <span>Subscriptions ready to receive merchant events.</span>
         </div>
-        <div className="metric-card">
-          <div className="eyebrow">Open Disputes</div>
-          <div className="stat-value">{openDisputes}</div>
-          <div className="stat-label">cases needing evidence or review decisions</div>
+        <div className="ops-band-item">
+          <span>Open Disputes</span>
+          <strong>{openDisputes}</strong>
+          <span>Cases requiring evidence or review decisions.</span>
         </div>
-        <div className="metric-card">
-          <div className="eyebrow">Pending Payouts</div>
-          <div className="stat-value">{pendingPayouts}</div>
-          <div className="stat-label">transfers not yet fully completed</div>
+        <div className="ops-band-item">
+          <span>Pending Payouts</span>
+          <strong>{pendingPayouts}</strong>
+          <span>Transfers still moving through treasury lanes.</span>
         </div>
       </div>
 
@@ -118,28 +156,26 @@ export default async function OverviewPage() {
                 Risk Queue
               </Link>
             </div>
-            <div className="summary-grid" style={{ marginTop: "16px" }}>
-              <div className="metric-card">
-                <div className="eyebrow">Risk</div>
-                <div className="stat-value">{unresolvedRisk}</div>
-                <div className="stat-label">unresolved risk events</div>
+            <div className="intel-grid" style={{ marginTop: "16px" }}>
+              <div className="intel-card">
+                <span>Risk backlog</span>
+                <strong>{unresolvedRisk}</strong>
+                <p>Unresolved risk events that can affect capture, reserve posture, or manual review.</p>
               </div>
-              <div className="metric-card">
-                <div className="eyebrow">Disputes</div>
-                <div className="stat-value">{openDisputes}</div>
-                <div className="stat-label">open or under review</div>
+              <div className="intel-card">
+                <span>Dispute heat</span>
+                <strong>{openDisputes}</strong>
+                <p>Open or under-review disputes that can alter merchant loss posture.</p>
               </div>
-              <div className="metric-card">
-                <div className="eyebrow">Async Health</div>
-                <div className="stat-value">{outboxUnpublished ?? 0}</div>
-                <div className="stat-label">events waiting for publish</div>
+              <div className="intel-card">
+                <span>Async health</span>
+                <strong>{outboxUnpublished ?? 0}</strong>
+                <p>Events waiting for publish across webhook and downstream processing lanes.</p>
               </div>
-              <div className="metric-card">
-                <div className="eyebrow">Settlement</div>
-                <div className="stat-value">
-                  {latestSettlement ? formatMoney(latestSettlement.net_amount, latestSettlement.currency) : "—"}
-                </div>
-                <div className="stat-label">latest net batch amount</div>
+              <div className="intel-card">
+                <span>Settlement posture</span>
+                <strong>{latestSettlement ? formatMoney(latestSettlement.net_amount, latestSettlement.currency) : "—"}</strong>
+                <p>Latest net batch amount available to treasury and payout workflows.</p>
               </div>
             </div>
           </div>
@@ -210,46 +246,26 @@ export default async function OverviewPage() {
           <div className="detail-card">
             <div className="eyebrow">Control Rails</div>
             <h2>High-leverage actions</h2>
-            <div className="command-list" style={{ marginTop: "16px" }}>
-              <Link className="list-row" href="/api-keys">
-                <div>
-                  <div className="row-title">Integration credentials</div>
-                  <div className="row-meta">
-                    <span>Issue, revoke, and restrict API keys</span>
-                  </div>
-                </div>
+            <div className="command-deck" style={{ marginTop: "16px" }}>
+              <Link className="command-link" href="/api-keys">
+                <strong>Integration credentials</strong>
+                <span>Issue, revoke, and restrict API keys at merchant boundary.</span>
               </Link>
-              <Link className="list-row" href="/webhooks">
-                <div>
-                  <div className="row-title">Webhook reliability</div>
-                  <div className="row-meta">
-                    <span>Inspect subscriptions, retries, and delivery outcomes</span>
-                  </div>
-                </div>
+              <Link className="command-link" href="/webhooks">
+                <strong>Webhook reliability</strong>
+                <span>Inspect subscriptions, retry exhaustion, and delivery outcomes.</span>
               </Link>
-              <Link className="list-row" href="/gateway">
-                <div>
-                  <div className="row-title">Failure-path simulation</div>
-                  <div className="row-meta">
-                    <span>Control gateway behavior for testing adverse scenarios</span>
-                  </div>
-                </div>
+              <Link className="command-link" href="/gateway">
+                <strong>Failure-path simulation</strong>
+                <span>Drive gateway scenarios to test adverse operator conditions.</span>
               </Link>
-              <Link className="list-row" href="/reports">
-                <div>
-                  <div className="row-title">Finance downloads</div>
-                  <div className="row-meta">
-                    <span>Generate statements, exports, and tax reporting artifacts</span>
-                  </div>
-                </div>
+              <Link className="command-link" href="/reports">
+                <strong>Finance downloads</strong>
+                <span>Generate statements, exports, and tax reporting artifacts.</span>
               </Link>
-              <Link className="list-row" href="/control-plane">
-                <div>
-                  <div className="row-title">Runtime control plane</div>
-                  <div className="row-meta">
-                    <span>Inspect sagas, schemas, and ledger holds</span>
-                  </div>
-                </div>
+              <Link className="command-link" href="/control-plane">
+                <strong>Runtime control plane</strong>
+                <span>Inspect sagas, schemas, and ledger holds.</span>
               </Link>
             </div>
           </div>
