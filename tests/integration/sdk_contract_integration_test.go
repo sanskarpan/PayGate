@@ -63,7 +63,7 @@ func TestIntegrationSDKClientsAgainstLiveMux(t *testing.T) {
 	}
 
 	sub, err := client.CreateWebhookSubscription(ctx, map[string]any{
-		"url":            "https://example.test/sdk-hook",
+		"url":            "https://example.com/sdk-hook",
 		"events":         []string{"payment.captured"},
 		"signature_mode": "compat",
 	})
@@ -82,7 +82,7 @@ const order = await client.createOrder({ amount: 4300, currency: 'INR', receipt:
 if (!order.id) throw new Error('missing order id');
 const token = await client.createCardToken({ card_number: '4111111111111111', exp_month: 12, exp_year: 2030, cardholder_name: 'SDK JS', reusable: false });
 if (!token.id) throw new Error('missing card token id');
-const webhook = await client.createWebhookSubscription({ url: 'https://example.test/sdk-js-hook', events: ['payment.captured'], signature_mode: 'compat' });
+const webhook = await client.createWebhookSubscription({ url: 'https://example.com/sdk-js-hook', events: ['payment.captured'], signature_mode: 'compat' });
 if (!webhook.id) throw new Error('missing webhook id');
 `
 	cmd := exec.Command("node", "--input-type=module", "-e", js)

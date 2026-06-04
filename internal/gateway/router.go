@@ -175,6 +175,38 @@ func (r *Router) Name() string {
 	return "gateway_router"
 }
 
+func (r *Router) CreateUPIIntent(ctx context.Context, in payment.GatewayUPIIntentCreateInput) (payment.GatewayUPIIntentResult, error) {
+	upi, ok := r.gateway.(payment.UPIGateway)
+	if !ok {
+		return payment.GatewayUPIIntentResult{}, errors.New("upi intent gateway is not configured")
+	}
+	return upi.CreateUPIIntent(ctx, in)
+}
+
+func (r *Router) PollUPIIntent(ctx context.Context, in payment.GatewayUPIIntentPollInput) (payment.GatewayUPIIntentStatus, error) {
+	upi, ok := r.gateway.(payment.UPIGateway)
+	if !ok {
+		return payment.GatewayUPIIntentStatus{}, errors.New("upi intent gateway is not configured")
+	}
+	return upi.PollUPIIntent(ctx, in)
+}
+
+func (r *Router) CreateRedirectSession(ctx context.Context, in payment.GatewayRedirectCreateInput) (payment.GatewayRedirectResult, error) {
+	redirect, ok := r.gateway.(payment.RedirectGateway)
+	if !ok {
+		return payment.GatewayRedirectResult{}, errors.New("redirect gateway is not configured")
+	}
+	return redirect.CreateRedirectSession(ctx, in)
+}
+
+func (r *Router) PollRedirectSession(ctx context.Context, in payment.GatewayRedirectPollInput) (payment.GatewayRedirectStatus, error) {
+	redirect, ok := r.gateway.(payment.RedirectGateway)
+	if !ok {
+		return payment.GatewayRedirectStatus{}, errors.New("redirect gateway is not configured")
+	}
+	return redirect.PollRedirectSession(ctx, in)
+}
+
 func (r *Router) Authorize(ctx context.Context, amount int64, currency, merchantID, method string) (payment.GatewayAuthResult, error) {
 	result, _, err := r.AuthorizeWithRouting(ctx, amount, currency, merchantID, method)
 	return result, err

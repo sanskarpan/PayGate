@@ -383,6 +383,9 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 			}
 			return CaptureResult{}, err
 		}
+		out.Provider = decision.Provider
+		out.RoutingReason = decision.RoutingReason
+		out.AttemptedProviders = decision.AttemptedProviders
 		return out, nil
 	}
 	if !result.Success {
@@ -404,6 +407,9 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 		return CaptureResult{}, err
 	}
 	_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
+	out.Provider = decision.Provider
+	out.RoutingReason = decision.RoutingReason
+	out.AttemptedProviders = decision.AttemptedProviders
 	if in.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
 		_ = s.cardTokens.CompleteAuthorization(ctx, in.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, true, "")
 	}
