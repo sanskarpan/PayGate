@@ -493,7 +493,7 @@ FROM paygate_payments.payments p
 LEFT JOIN paygate_payments.card_payment_details cpd ON cpd.payment_id = p.id
 LEFT JOIN paygate_payments.card_challenge_sessions ccs ON ccs.payment_id = p.id
 WHERE p.id = $1 AND p.merchant_id = $2
-FOR UPDATE
+FOR UPDATE OF p
 `, paymentID, merchantID).Scan(
 		&current.PaymentID, &current.MerchantID, &current.OrderID, &current.Amount, &current.Currency, &current.Method, &current.MethodState, &current.MethodStateReason, &status, &current.Captured, &current.CreatedAt,
 		&current.PaymentMethodTokenID, &current.CardBrand, &current.CardLast4, &current.CardExpMonth, &current.CardExpYear, &current.CardIssuerName, &current.CardIssuerCountry, &current.CardCountry, &current.FundingType, &current.NetworkTokenType,
@@ -598,7 +598,7 @@ SELECT p.attempt_id, p.order_id, p.status, COALESCE(ccs.callback_token, '')
 FROM paygate_payments.payments p
 LEFT JOIN paygate_payments.card_challenge_sessions ccs ON ccs.payment_id = p.id
 WHERE p.id = $1 AND p.merchant_id = $2
-FOR UPDATE
+FOR UPDATE OF p
 `, paymentID, merchantID).Scan(&attemptID, &orderID, &currentStatus, &storedToken)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
