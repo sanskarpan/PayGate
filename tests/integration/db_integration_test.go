@@ -26,7 +26,9 @@ func testDB(t *testing.T) *pgxpool.Pool {
 	if err := db.Ping(ctx); err != nil {
 		t.Skipf("skip integration: db ping failed: %v", err)
 	}
-	applyMigrations(t, db)
+	if os.Getenv("PAYGATE_TEST_DB_URL") == "" {
+		applyMigrations(t, db)
+	}
 	return db
 }
 
