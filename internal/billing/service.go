@@ -440,7 +440,8 @@ func (s *Service) CreateSubscription(ctx context.Context, in CreateSubscriptionI
 	if in.CollectionMethod == "" {
 		in.CollectionMethod = CollectionMethodCard
 	}
-	if in.CollectionMethod == CollectionMethodCard {
+	switch in.CollectionMethod {
+	case CollectionMethodCard:
 		token, err := s.tokenSvc.GetCardToken(ctx, in.MerchantID, in.PaymentMethodTokenID)
 		if err != nil {
 			return Subscription{}, err
@@ -451,7 +452,7 @@ func (s *Service) CreateSubscription(ctx context.Context, in CreateSubscriptionI
 		if token.CustomerRef != "" && token.CustomerRef != customer.ID {
 			return Subscription{}, ErrCustomerTokenMismatch
 		}
-	} else if in.CollectionMethod == CollectionMethodUPIMandate {
+	case CollectionMethodUPIMandate:
 		mandate, err := s.repo.GetUPIMandate(ctx, in.MerchantID, in.UPIMandateID)
 		if err != nil {
 			return Subscription{}, err

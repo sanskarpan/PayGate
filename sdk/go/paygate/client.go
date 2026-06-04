@@ -69,7 +69,8 @@ type WebhookSubscription struct {
 	Events        []string `json:"events"`
 	Status        string   `json:"status"`
 	SignatureMode string   `json:"signature_mode"`
-	Secret        string   `json:"secret"`
+	//nolint:gosec // webhook API returns a signing secret by design.
+	Secret string `json:"secret"`
 }
 
 func (c *Client) CreateOrder(ctx context.Context, payload map[string]any, idempotencyKey string) (Order, error) {
