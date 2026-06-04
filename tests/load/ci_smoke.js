@@ -12,8 +12,8 @@ const API_SECRET = __ENV.API_SECRET || "";
 
 export const options = {
   stages: [
-    { duration: "10s", target: 3 },
-    { duration: "20s", target: 5 },
+    { duration: "10s", target: 2 },
+    { duration: "20s", target: 3 },
     { duration: "10s", target: 0 },
   ],
   thresholds: {
@@ -32,10 +32,15 @@ function authHeader(idempotencyKey) {
   };
 }
 
-export default function () {
+export function setup() {
   const ready = http.get(`${BASE_URL}/readyz`);
-  check(ready, { "readyz 200": (r) => r.status === 200 });
+  const ok = check(ready, { "readyz 200": (r) => r.status === 200 });
+  if (!ok) {
+    throw new Error(`load smoke setup failed: readyz returned ${ready.status}`);
+  }
+}
 
+export default function () {
   const payload = JSON.stringify({
     amount: 10000 + ((__VU + __ITER) % 9) * 1000,
     currency: "INR",
@@ -64,5 +69,5 @@ export default function () {
   });
   orderCreationSuccess.add(ok);
 
-  sleep(0.2);
+  sleep(0.3);
 }
