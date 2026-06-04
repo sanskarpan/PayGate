@@ -5,11 +5,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var validTableName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.]*$`)
+
+// quoteIdentifier safely quotes a SQL identifier to prevent injection.
+// It splits on dots for schema.table references and quotes each part.
+func quoteIdentifier(name string) string {
+	parts := strings.Split(name, ".")
+	quoted := make([]string, len(parts))
+	for i, p := range parts {
+		quoted[i] = `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
+	}
+	return strings.Join(quoted, ".")
+}
 
 type Publisher interface {
 	Publish(ctx context.Context, topic string, key string, payload []byte) error
@@ -66,7 +80,7 @@ func (r *Relay) WithSchemaVersionResolver(resolver SchemaVersionResolver) *Relay
 }
 
 func (r *Relay) WithTableName(tableName string) *Relay {
-	if tableName != "" {
+	if tableName != "" && validTableName.MatchString(tableName) {
 		r.tableName = tableName
 	}
 	return r
@@ -76,6 +90,7 @@ func (r *Relay) Start(ctx context.Context) {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 	defer func() { _ = r.publisher.Close() }()
+	emptyStreak := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -84,14 +99,27 @@ func (r *Relay) Start(ctx context.Context) {
 			count, err := r.PublishBatch(ctx, 100)
 			if err != nil {
 				r.logger.Error("outbox publish batch failed", "error", err)
+				emptyStreak = 0
 				continue
 			}
 			if count > 0 {
 				r.logger.Info("published outbox events", "count", count)
+				emptyStreak = 0
+			} else {
+				emptyStreak++
 			}
 			if _, err := r.CleanupPublished(ctx, 7*24*time.Hour); err != nil {
 				r.logger.Error("outbox cleanup failed", "error", err)
 			}
+			// Adaptive interval: slow down when idle, speed up when busy.
+			// Clamp between 1s and 30s.
+			interval := r.interval
+			if emptyStreak > 10 {
+				interval = 30 * time.Second
+			} else if emptyStreak > 5 {
+				interval = 5 * time.Second
+			}
+			ticker.Reset(interval)
 		}
 	}
 }
@@ -110,7 +138,7 @@ WHERE published_at IS NULL
 ORDER BY created_at
 LIMIT $1
 FOR UPDATE SKIP LOCKED
-`, r.tableName), limit)
+`, quoteIdentifier(r.tableName)), limit)
 	if err != nil {
 		return 0, fmt.Errorf("query outbox batch: %w", err)
 	}
@@ -138,7 +166,7 @@ FOR UPDATE SKIP LOCKED
 				return 0, err
 			}
 		}
-		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET published_at = NOW() WHERE id = $1`, r.tableName), rec.ID); err != nil {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET published_at = NOW() WHERE id = $1`, quoteIdentifier(r.tableName)), rec.ID); err != nil {
 			return 0, fmt.Errorf("mark outbox published: %w", err)
 		}
 	}
@@ -202,7 +230,7 @@ func (r *Relay) CleanupPublished(ctx context.Context, olderThan time.Duration) (
 	cmd, err := r.db.Exec(ctx, fmt.Sprintf(`
 DELETE FROM %s
 WHERE published_at IS NOT NULL AND published_at < NOW() - ($1::interval)
-`, r.tableName), fmt.Sprintf("%f seconds", olderThan.Seconds()))
+`, quoteIdentifier(r.tableName)), fmt.Sprintf("%f seconds", olderThan.Seconds()))
 	if err != nil {
 		return 0, fmt.Errorf("cleanup outbox rows: %w", err)
 	}
@@ -215,7 +243,7 @@ func (r *Relay) CountUnpublished(ctx context.Context) (int64, error) {
 SELECT COUNT(*)
 FROM %s
 WHERE published_at IS NULL
-`, r.tableName)).Scan(&count); err != nil {
+`, quoteIdentifier(r.tableName))).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count unpublished outbox rows: %w", err)
 	}
 	return count, nil

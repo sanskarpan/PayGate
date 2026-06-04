@@ -9,26 +9,58 @@ export default async function WebhookDetailPage({ params }: { params: { id: stri
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Webhook Subscription</div>
-        <h1>{truncateMiddle(wh.id, 14, 8)}</h1>
-        <p className="mono" style={{ margin: "0 0 8px" }}>{wh.id}</p>
-        <p className="lede">
-          Delivering to <code>{wh.url}</code> · status: {wh.status}
-        </p>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Webhook Subscription</div>
+          <h1>{truncateMiddle(wh.id, 14, 8)}</h1>
+          <p className="mono" style={{ margin: "0 0 8px" }}>{wh.id}</p>
+          <p className="lede">
+            Delivering to <code>{wh.url}</code> · status: {wh.status}
+          </p>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Delivery Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Subscription state</span>
+              <strong>{wh.status}</strong>
+              <p>Current readiness state for outbound delivery and retry behavior.</p>
+            </div>
+            <div className="status-block">
+              <span>Event fan-out</span>
+              <strong>{wh.events.length}</strong>
+              <p>Distinct event types allowed to flow through this subscription contract.</p>
+            </div>
+            <div className="status-block">
+              <span>Delivery attempts</span>
+              <strong>{deliveries.count}</strong>
+              <p>Observed attempts across initial dispatch and retry sequences.</p>
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="key-facts">
-        <div className="key-fact">
-          <span className="eyebrow">Status</span>
+
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Status</span>
           <strong>{wh.status}</strong>
+          <span>Current operational posture of the subscription.</span>
         </div>
-        <div className="key-fact">
-          <span className="eyebrow">Events</span>
+        <div className="ops-band-item">
+          <span>Events</span>
           <strong>{wh.events.length}</strong>
+          <span>Events permitted by the merchant delivery contract.</span>
         </div>
-        <div className="key-fact">
-          <span className="eyebrow">Deliveries</span>
+        <div className="ops-band-item">
+          <span>Deliveries</span>
           <strong>{deliveries.count}</strong>
+          <span>Total attempts recorded on the subscription log.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Endpoint</span>
+          <strong>{truncateMiddle(wh.url, 16, 10)}</strong>
+          <span>Destination currently receiving event payloads.</span>
         </div>
       </div>
       <div className="detail-grid">

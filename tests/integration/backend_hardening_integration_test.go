@@ -347,6 +347,7 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	reportingHandler := reporting.NewHandler(reportingSvc)
 	retentionHandler := retention.NewHandler(retentionSvc)
 	gatewayAdminHandler := gateway.NewAdminHandler(scenarioStore)
+	methodHandler := gateway.NewMethodHandler(methodStore)
 	routingHandler := gateway.NewRoutingHandler(routingStore)
 
 	protected := func(scope merchant.APIKeyScope, next http.Handler) http.Handler {
@@ -388,6 +389,9 @@ func buildGatewayMux(db *pgxpool.Pool) (*http.ServeMux, *merchant.Service, *orde
 	reportingHandler.RegisterRoutesWithAuth(mux, protected)
 	retentionHandler.RegisterRoutesWithAuth(mux, protected)
 	gatewayAdminHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
+		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
+	})
+	methodHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {
 		return authMw.RequireScope(merchant.APIKeyScopeAdmin, next)
 	})
 	routingHandler.RegisterRoutesWithAuth(mux, func(next http.Handler) http.Handler {

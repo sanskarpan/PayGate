@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getDisputes, requireViewer } from "../../lib/api";
 import { formatMoney, formatTime } from "../../lib/types";
+import { RouteIcon } from "../../components/system-icons";
 
 function statusBadge(status: string) {
   switch (status) {
@@ -29,21 +30,78 @@ export default async function DisputesPage() {
   const disputes = await getDisputes();
 
   const openCount = disputes.items.filter((d) => d.status === "open" || d.status === "under_review").length;
+  const terminalCount = disputes.items.filter((d) => ["won", "lost", "accepted"].includes(d.status)).length;
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Chargeback Management</div>
-        <h1>Disputes</h1>
-        <p className="lede">
-          {disputes.count} dispute{disputes.count !== 1 ? "s" : ""} for {viewer.merchant_id}.
-          {openCount > 0 && (
-            <span className="badge-error" style={{ marginLeft: "0.5rem" }}>
-              {openCount} open
-            </span>
-          )}
-        </p>
+      <div className="ops-grid">
+        <div className="hero-card has-glyph">
+          <div className="page-glyph">
+            <div className="page-glyph-badge">
+              <RouteIcon name="disputes" size={40} />
+            </div>
+            <div className="page-glyph-label">
+              <span>Case ledger</span>
+              <strong>Dispute lane</strong>
+            </div>
+          </div>
+          <div className="eyebrow">Chargeback Management</div>
+          <h1>Disputes</h1>
+          <p className="lede">
+            {disputes.count} dispute{disputes.count !== 1 ? "s" : ""} for {viewer.merchant_id}.
+            {openCount > 0 && (
+              <span className="badge-error" style={{ marginLeft: "0.5rem" }}>
+                {openCount} open
+              </span>
+            )}
+          </p>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Case Pressure</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Open queue</span>
+              <strong>{openCount}</strong>
+              <p>Active disputes still requiring evidence, adjudication, or manual case progress.</p>
+            </div>
+            <div className="status-block">
+              <span>Closed cases</span>
+              <strong>{terminalCount}</strong>
+              <p>Terminal disputes already settled into won, lost, or accepted outcomes.</p>
+            </div>
+            <div className="status-block">
+              <span>Total inventory</span>
+              <strong>{disputes.count}</strong>
+              <p>All known disputes currently visible in the merchant operator boundary.</p>
+            </div>
+          </div>
+        </div>
       </div>
+
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Total cases</span>
+          <strong>{disputes.count}</strong>
+          <span>All disputes currently tracked in the merchant scope.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Open cases</span>
+          <strong>{openCount}</strong>
+          <span>Items still capable of affecting merchant loss posture.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Terminal cases</span>
+          <strong>{terminalCount}</strong>
+          <span>Resolved or accepted cases no longer awaiting operator action.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Merchant scope</span>
+          <strong>{viewer.merchant_id.slice(-12)}</strong>
+          <span>Current dispute queue tenant boundary.</span>
+        </div>
+      </div>
+
       <div className="list-card">
         <div className="section-head">
           <div>

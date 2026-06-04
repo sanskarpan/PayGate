@@ -26,6 +26,7 @@ import (
 	"github.com/sanskarpan/PayGate/internal/payout"
 	"github.com/sanskarpan/PayGate/internal/refund"
 	"github.com/sanskarpan/PayGate/internal/settlement"
+	"github.com/sanskarpan/PayGate/internal/tokenization"
 )
 
 func TestIntegrationPayoutCompletesAndWritesLedger(t *testing.T) {
@@ -597,11 +598,12 @@ func createSettledMerchantFlow(t *testing.T, ctx context.Context, db *pgxpool.Po
 		t.Fatalf("create order: %v", err)
 	}
 	auth, err := paymentSvc.Authorize(ctx, payment.AuthorizeInput{
-		MerchantID: createdMerchant.ID,
-		OrderID:    o.ID,
-		Amount:     o.Amount,
-		Currency:   o.Currency,
-		Method:     "card",
+		MerchantID:           createdMerchant.ID,
+		OrderID:              o.ID,
+		Amount:               o.Amount,
+		Currency:             o.Currency,
+		Method:               "card",
+		PaymentMethodTokenID: mustCreateSingleUseCardToken(t, ctx, db, createdMerchant.ID),
 	})
 	if err != nil {
 		t.Fatalf("authorize payment: %v", err)
@@ -635,6 +637,23 @@ func createSettledMerchantFlow(t *testing.T, ctx context.Context, db *pgxpool.Po
 		t.Fatalf("approve beneficiary: %v", err)
 	}
 	return createdMerchant.ID, authHeader, sttl, beneficiary.ID
+}
+
+func mustCreateSingleUseCardToken(t *testing.T, ctx context.Context, db *pgxpool.Pool, merchantID string) string {
+	t.Helper()
+	cardTokenSvc := tokenization.NewService(tokenization.NewPostgresRepository(db))
+	token, err := cardTokenSvc.CreateCardToken(ctx, tokenization.CreateCardTokenInput{
+		MerchantID:     merchantID,
+		CardNumber:     "4111111111111111",
+		ExpMonth:       12,
+		ExpYear:        2030,
+		CardholderName: "Integration Card",
+		Reusable:       false,
+	})
+	if err != nil {
+		t.Fatalf("create card token: %v", err)
+	}
+	return token.ID
 }
 
 func doRailCallback(t *testing.T, mux *http.ServeMux, payload map[string]any, signed bool) *httptest.ResponseRecorder {

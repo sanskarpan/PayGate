@@ -34,10 +34,35 @@ func safeCallbackURL(raw, fallback string) string {
 	return raw
 }
 
+const checkoutPageHTML = `<html><body><h1>PayGate Checkout</h1>
+<form method="POST" action="/checkout/pay">
+<input type="hidden" name="order_id" value="{{.OrderID}}" />
+<input type="hidden" name="merchant_id" value="{{.MerchantID}}" />
+<input type="hidden" name="callback_url" value="{{.CallbackURL}}" />
+<input type="hidden" name="amount" value="{{.Amount}}" />
+<input type="hidden" name="currency" value="{{.Currency}}" />
+<p>Amount: {{.AmountDisplay}}</p>
+<p>Currency: {{.Currency}}</p>
+<label>Method</label><select name="method"><option>card</option><option>upi</option></select>
+<button type="submit">Pay</button>
+</form></body></html>`
+
+const upiIntentHTML = `<html><body><h1>Complete UPI Payment</h1>
+<p>Order: {{.OrderID}}</p>
+<p>Payment ID: {{.PaymentID}}</p>
+<p>Status: {{.Status}}</p>
+<p><a href="{{.DeepLink}}">Open UPI App</a></p>
+<p>Return after payment to: <a href="{{.CallbackURL}}">{{.CallbackURL}}</a></p>
+</body></html>`
+
 type CheckoutHandler struct {
 	paymentSvc    *payment.Service
 	orderSvc      *order.Service
 	cardTokenizer CardTokenizer
+	checkoutTmpl  *template.Template
+	upiTmpl       *template.Template
+	sandboxVPA    string
+	sandboxCard   string
 }
 
 type CardTokenizer interface {
@@ -45,7 +70,14 @@ type CardTokenizer interface {
 }
 
 func NewCheckoutHandler(paymentSvc *payment.Service, orderSvc *order.Service, opts ...func(*CheckoutHandler)) *CheckoutHandler {
-	h := &CheckoutHandler{paymentSvc: paymentSvc, orderSvc: orderSvc}
+	h := &CheckoutHandler{
+		paymentSvc:   paymentSvc,
+		orderSvc:     orderSvc,
+		sandboxVPA:   "customer@upi",
+		sandboxCard:  "4111111111111111",
+	}
+	h.checkoutTmpl = template.Must(template.New("checkout").Parse(checkoutPageHTML))
+	h.upiTmpl = template.Must(template.New("upi-intent").Parse(upiIntentHTML))
 	for _, opt := range opts {
 		opt(h)
 	}
@@ -55,6 +87,22 @@ func NewCheckoutHandler(paymentSvc *payment.Service, orderSvc *order.Service, op
 func WithCardTokenizer(tokenizer CardTokenizer) func(*CheckoutHandler) {
 	return func(h *CheckoutHandler) {
 		h.cardTokenizer = tokenizer
+	}
+}
+
+func WithSandboxVPA(vpa string) func(*CheckoutHandler) {
+	return func(h *CheckoutHandler) {
+		if vpa != "" {
+			h.sandboxVPA = vpa
+		}
+	}
+}
+
+func WithSandboxCard(card string) func(*CheckoutHandler) {
+	return func(h *CheckoutHandler) {
+		if card != "" {
+			h.sandboxCard = card
+		}
 	}
 }
 
@@ -79,20 +127,7 @@ func (h *CheckoutHandler) checkoutPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page := `<html><body><h1>PayGate Checkout</h1>
-<form method="POST" action="/checkout/pay">
-<input type="hidden" name="order_id" value="{{.OrderID}}" />
-<input type="hidden" name="merchant_id" value="{{.MerchantID}}" />
-<input type="hidden" name="callback_url" value="{{.CallbackURL}}" />
-<input type="hidden" name="amount" value="{{.Amount}}" />
-<input type="hidden" name="currency" value="{{.Currency}}" />
-<p>Amount: {{.AmountDisplay}}</p>
-<p>Currency: {{.Currency}}</p>
-<label>Method</label><select name="method"><option>card</option><option>upi</option></select>
-<button type="submit">Pay</button>
-</form></body></html>`
-	t := template.Must(template.New("checkout").Parse(page))
-	_ = t.Execute(w, map[string]string{
+	_ = h.checkoutTmpl.Execute(w, map[string]string{
 		"OrderID":       orderID,
 		"MerchantID":    merchantID,
 		"CallbackURL":   callbackURL,
@@ -138,22 +173,14 @@ func (h *CheckoutHandler) pay(w http.ResponseWriter, r *http.Request) {
 			OrderID:          orderID,
 			Amount:           o.AmountDue,
 			Currency:         o.Currency,
-			VPA:              "customer@upi",
+			VPA:              h.sandboxVPA,
 			ExpiresInSeconds: 300,
 		})
 		if upiErr != nil {
 			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: upiErr.Error()})
 			return
 		}
-		page := `<html><body><h1>Complete UPI Payment</h1>
-<p>Order: {{.OrderID}}</p>
-<p>Payment ID: {{.PaymentID}}</p>
-<p>Status: {{.Status}}</p>
-<p><a href="{{.DeepLink}}">Open UPI App</a></p>
-<p>Return after payment to: <a href="{{.CallbackURL}}">{{.CallbackURL}}</a></p>
-</body></html>`
-		t := template.Must(template.New("upi-intent").Parse(page))
-		_ = t.Execute(w, map[string]string{
+		_ = h.upiTmpl.Execute(w, map[string]string{
 			"OrderID":     orderID,
 			"PaymentID":   intent.PaymentID,
 			"Status":      string(intent.Status),
@@ -174,7 +201,7 @@ func (h *CheckoutHandler) pay(w http.ResponseWriter, r *http.Request) {
 		expires := time.Now().UTC().AddDate(3, 0, 0)
 		token, tokenErr := h.cardTokenizer.CreateCardToken(r.Context(), tokenization.CreateCardTokenInput{
 			MerchantID: merchantID,
-			CardNumber: "4111111111111111",
+			CardNumber: h.sandboxCard,
 			ExpMonth:   int(expires.Month()),
 			ExpYear:    expires.Year(),
 		})

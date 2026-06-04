@@ -63,7 +63,7 @@ func TestIntegrationSDKClientsAgainstLiveMux(t *testing.T) {
 	}
 
 	sub, err := client.CreateWebhookSubscription(ctx, map[string]any{
-		"url":            "https://example.test/sdk-hook",
+		"url":            server.URL + "/sdk-hook",
 		"events":         []string{"payment.captured"},
 		"signature_mode": "compat",
 	})
@@ -80,9 +80,19 @@ import { createClient } from './sdk/js/paygate.js';
 const client = createClient({ baseUrl: process.env.SDK_BASE_URL, keyId: process.env.SDK_KEY_ID, keySecret: process.env.SDK_KEY_SECRET });
 const order = await client.createOrder({ amount: 4300, currency: 'INR', receipt: 'sdk-js-live' }, 'sdk-js-order');
 if (!order.id) throw new Error('missing order id');
-const token = await client.createCardToken({ card_number: '4111111111111111', exp_month: 12, exp_year: 2030, cardholder_name: 'SDK JS', reusable: false });
+let token;
+try {
+  token = await client.createCardToken({ card_number: '5555555555554444', exp_month: 12, exp_year: 2031, cardholder_name: 'SDK JS', reusable: false });
+} catch (err) {
+  throw new Error('createCardToken failed: ' + err.message);
+}
 if (!token.id) throw new Error('missing card token id');
-const webhook = await client.createWebhookSubscription({ url: 'https://example.test/sdk-js-hook', events: ['payment.captured'], signature_mode: 'compat' });
+let webhook;
+try {
+  webhook = await client.createWebhookSubscription({ url: process.env.SDK_BASE_URL + '/sdk-js-hook', events: ['payment.captured'], signature_mode: 'compat' });
+} catch (err) {
+  throw new Error('createWebhookSubscription failed: ' + err.message);
+}
 if (!webhook.id) throw new Error('missing webhook id');
 `
 	cmd := exec.Command("node", "--input-type=module", "-e", js)

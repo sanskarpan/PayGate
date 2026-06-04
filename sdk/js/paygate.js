@@ -43,7 +43,8 @@ export function createClient({ baseUrl, keyId, keySecret, fetchImpl = fetch }) {
     }
     const response = await fetchImpl(`${baseUrl}${path}`, { ...init, headers });
     if (!response.ok) {
-      throw new Error(`PayGate request failed: ${response.status}`);
+      const detail = await response.text();
+      throw new Error(`PayGate request failed: ${response.status}${detail ? ` ${detail}` : ""}`);
     }
     return response.json();
   }

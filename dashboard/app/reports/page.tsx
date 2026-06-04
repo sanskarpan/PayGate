@@ -14,27 +14,73 @@ export default async function ReportsPage() {
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Reporting</div>
-        <h1>Download center.</h1>
-        <p className="lede">Generate finance exports, inspect completed files, and maintain tax profile defaults.</p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Report types</span>
-            <strong>{catalog.count}</strong>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Reporting</div>
+          <h1>Download center.</h1>
+          <p className="lede">Generate finance exports, inspect completed files, and maintain tax profile defaults.</p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Report types</span>
+              <strong>{catalog.count}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Exports</span>
+              <strong>{exports.count}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Default tax rate</span>
+              <strong>{taxProfile.default_tax_rate_bps / 100}%</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Exports</span>
-            <strong>{exports.count}</strong>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Default tax rate</span>
-            <strong>{taxProfile.default_tax_rate_bps / 100}%</strong>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Reporting Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Catalog width</span>
+              <strong>{catalog.count}</strong>
+              <p>Available report surfaces currently exposed to the merchant reporting lane.</p>
+            </div>
+            <div className="status-block">
+              <span>Export history</span>
+              <strong>{exports.count}</strong>
+              <p>Previously generated artifact jobs available for review and download.</p>
+            </div>
+            <div className="status-block">
+              <span>Tax baseline</span>
+              <strong>{taxProfile.default_tax_rate_bps / 100}%</strong>
+              <p>Default tax profile rate currently shaping statement and tax-summary output.</p>
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="detail-grid">
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Report types</span>
+          <strong>{catalog.count}</strong>
+          <span>Report surfaces currently available to operators.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Export jobs</span>
+          <strong>{exports.count}</strong>
+          <span>Artifacts generated in the current reporting inventory.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Tax rate</span>
+          <strong>{taxProfile.default_tax_rate_bps / 100}%</strong>
+          <span>Default merchant tax baseline used for summaries.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Jurisdiction</span>
+          <strong>{taxProfile.place_of_supply || "Unset"}</strong>
+          <span>Current place-of-supply anchor for reporting defaults.</span>
+        </div>
+      </div>
+
+      <div className="ops-grid">
         <div className="glass-card">
           <div className="section-head">
             <div>

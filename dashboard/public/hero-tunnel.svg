@@ -1,0 +1,28 @@
+<svg width="1200" height="900" viewBox="0 0 1200 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="900" fill="#171213"/>
+  <g opacity="0.92">
+    <ellipse cx="850" cy="450" rx="270" ry="362" stroke="#E9E0DD" stroke-opacity="0.58" stroke-width="2"/>
+    <ellipse cx="850" cy="450" rx="240" ry="330" stroke="#E9E0DD" stroke-opacity="0.46" stroke-width="2"/>
+    <ellipse cx="850" cy="450" rx="210" ry="298" stroke="#E9E0DD" stroke-opacity="0.4" stroke-width="2"/>
+    <ellipse cx="850" cy="450" rx="180" ry="266" stroke="#E9E0DD" stroke-opacity="0.33" stroke-width="2"/>
+    <ellipse cx="850" cy="450" rx="150" ry="234" stroke="#E9E0DD" stroke-opacity="0.28" stroke-width="2"/>
+    <ellipse cx="850" cy="450" rx="120" ry="202" stroke="#E9E0DD" stroke-opacity="0.24" stroke-width="2"/>
+    <ellipse cx="850" cy="450" rx="90" ry="170" stroke="#E9E0DD" stroke-opacity="0.18" stroke-width="2"/>
+  </g>
+  <g opacity="0.86">
+    <path d="M600 50C694 148 760 302 760 450C760 598 694 752 600 850" stroke="#E9E0DD" stroke-opacity="0.36" stroke-width="2"/>
+    <path d="M680 50C752 158 796 304 796 450C796 596 752 742 680 850" stroke="#E9E0DD" stroke-opacity="0.26" stroke-width="2"/>
+    <path d="M520 50C448 158 404 304 404 450C404 596 448 742 520 850" stroke="#E9E0DD" stroke-opacity="0.26" stroke-width="2"/>
+    <path d="M440 50C346 148 280 302 280 450C280 598 346 752 440 850" stroke="#E9E0DD" stroke-opacity="0.36" stroke-width="2"/>
+  </g>
+  <path d="M300 610L826 372" stroke="#F35B5B" stroke-width="56" stroke-linecap="square" />
+  <path d="M345 705L890 453" stroke="#FF726B" stroke-width="26" stroke-linecap="square" opacity="0.9" />
+  <circle cx="850" cy="450" r="56" fill="#141111" stroke="#F8F1F1" stroke-opacity="0.48" stroke-width="2"/>
+  <circle cx="850" cy="450" r="14" fill="#F35B5B"/>
+  <g opacity="0.42">
+    <path d="M70 130H410" stroke="#F8F1F1" stroke-width="2" />
+    <path d="M70 770H410" stroke="#F8F1F1" stroke-width="2" />
+    <path d="M70 130V770" stroke="#F8F1F1" stroke-width="2" />
+    <path d="M410 130V770" stroke="#F8F1F1" stroke-width="2" />
+  </g>
+</svg>

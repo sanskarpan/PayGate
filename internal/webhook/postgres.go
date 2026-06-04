@@ -10,8 +10,8 @@ import (
 	neturl "net/url"
 	"time"
 
-	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
 	"github.com/sanskarpan/PayGate/internal/common/protect"

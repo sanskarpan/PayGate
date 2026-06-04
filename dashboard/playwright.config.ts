@@ -12,6 +12,9 @@ const databaseUrl = process.env.DATABASE_URL || isolatedDatabaseUrl;
 const redisAddr = process.env.REDIS_ADDR || "localhost:6381";
 const kafkaBrokers = process.env.KAFKA_BROKERS || "localhost:19092";
 const authDir = path.join(__dirname, "playwright", ".auth");
+const preparePlaywrightStack = process.env.PLAYWRIGHT_SKIP_BOOTSTRAP === "true"
+  ? "true"
+  : "scripts/test/prepare_playwright_stack.sh";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -59,7 +62,7 @@ export default defineConfig({
         "DASHBOARD_ORIGIN=http://127.0.0.1:33001",
         "bash",
         "-lc",
-        `'scripts/test/prepare_playwright_stack.sh && go run ./cmd/api-gateway'`,
+        `'${preparePlaywrightStack} && go run ./cmd/api-gateway'`,
       ].join(" "),
       cwd: rootDir,
       url: `${apiBaseUrl}/readyz`,

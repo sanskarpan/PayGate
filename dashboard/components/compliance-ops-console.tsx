@@ -7,6 +7,7 @@ import type {
   CapabilityItem,
   OnboardingApplicationItem,
 } from "../lib/types";
+import { RouteIcon } from "./system-icons";
 
 type Props = {
   merchantID: string;
@@ -82,16 +83,26 @@ export default function ComplianceOpsConsole({ merchantID, onboarding, capabilit
   }
 
   return (
-    <div className="detail-grid">
+    <div className="workbench-grid">
       <div className="detail-card">
         <div className="section-head">
           <div>
-            <h2>Review decision</h2>
+            <div className="eyebrow">Review Rail</div>
+            <h2>Onboarding decision</h2>
             <div className="section-kicker">Move the merchant into review, request more information, approve, or reject.</div>
           </div>
         </div>
+        <div className="page-glyph" style={{ position: "absolute", right: "18px", top: "18px" }}>
+          <div className="page-glyph-badge">
+            <RouteIcon name="compliance" size={36} />
+          </div>
+          <div className="page-glyph-label">
+            <span>Review file</span>
+            <strong>Decision rail</strong>
+          </div>
+        </div>
         <div className="stack" style={{ marginTop: "16px" }}>
-          <div className="inline-form">
+          <div className="control-form-grid">
             <label>
               Decision
               <select value={reviewState} onChange={(event) => setReviewState(event.target.value as OnboardingDecision)}>
@@ -120,9 +131,31 @@ export default function ComplianceOpsConsole({ merchantID, onboarding, capabilit
       </div>
 
       <div className="detail-card">
-        <div className="section-head">
+        <div className="eyebrow">Capability Posture</div>
+        <div className="status-matrix">
+          <div className="status-block">
+            <span>Application state</span>
+            <strong>{onboarding.state}</strong>
+            <p>Latest submitted onboarding state at the time this console was rendered.</p>
+          </div>
+          <div className="status-block">
+            <span>Capabilities</span>
+            <strong>{capabilities.length}</strong>
+            <p>Total live merchant capability rails visible to this operator.</p>
+          </div>
+          <div className="status-block">
+            <span>Enabled rails</span>
+            <strong>{capabilities.filter((item) => item.status === "enabled").length}</strong>
+            <p>Capabilities currently admitted for production use.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="detail-card" style={{ gridColumn: "1 / -1" }}>
+        <div className="section-head with-glyph">
           <div>
-            <h2>Capability controls</h2>
+            <div className="eyebrow">Capability Controls</div>
+            <h2>Merchant live rails</h2>
             <div className="section-kicker">Enable or restrict merchant live capabilities from the same review surface.</div>
           </div>
         </div>
@@ -157,9 +190,8 @@ export default function ComplianceOpsConsole({ merchantID, onboarding, capabilit
             </div>
           ))}
         </div>
+        {message ? <p className={`notice ${message.includes("failed") || message.includes("error") ? "error" : "success"}`}>{message}</p> : null}
       </div>
-
-      {message ? <p className={`notice ${message.includes("failed") || message.includes("error") ? "error" : "success"}`}>{message}</p> : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@ package saga
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
@@ -34,7 +35,7 @@ func (w *Worker) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := w.drain(ctx, leaseOwner); err != nil && ctx.Err() == nil {
+			if err := w.drain(ctx, leaseOwner); err != nil && ctx.Err() == nil && !isClosedPoolError(err) {
 				w.logger.Error("saga worker drain failed", "error", err)
 			}
 		}
@@ -58,4 +59,8 @@ func (w *Worker) drain(ctx context.Context, leaseOwner string) error {
 			return nil
 		}
 	}
+}
+
+func isClosedPoolError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "closed pool")
 }

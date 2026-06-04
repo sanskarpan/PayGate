@@ -2,7 +2,6 @@ package billing
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -151,8 +150,4 @@ func (s *Service) refreshPaymentLinkStatus(ctx context.Context, link PaymentLink
 		return s.repo.UpdatePaymentLinkStatus(ctx, link.MerchantID, link.ID, PaymentLinkPaid)
 	}
 	return link, nil
-}
-
-func paymentLinkRedirectPath(link PaymentLink) string {
-	return fmt.Sprintf("/checkout?merchant_id=%s&order_id=%s&callback_url=%s", link.MerchantID, link.OrderID, link.CallbackURL)
 }

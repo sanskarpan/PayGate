@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -439,7 +440,8 @@ func (s *Service) CreateSubscription(ctx context.Context, in CreateSubscriptionI
 	if in.CollectionMethod == "" {
 		in.CollectionMethod = CollectionMethodCard
 	}
-	if in.CollectionMethod == CollectionMethodCard {
+	switch in.CollectionMethod {
+	case CollectionMethodCard:
 		token, err := s.tokenSvc.GetCardToken(ctx, in.MerchantID, in.PaymentMethodTokenID)
 		if err != nil {
 			return Subscription{}, err
@@ -450,7 +452,7 @@ func (s *Service) CreateSubscription(ctx context.Context, in CreateSubscriptionI
 		if token.CustomerRef != "" && token.CustomerRef != customer.ID {
 			return Subscription{}, ErrCustomerTokenMismatch
 		}
-	} else if in.CollectionMethod == CollectionMethodUPIMandate {
+	case CollectionMethodUPIMandate:
 		mandate, err := s.repo.GetUPIMandate(ctx, in.MerchantID, in.UPIMandateID)
 		if err != nil {
 			return Subscription{}, err
@@ -614,9 +616,7 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 		},
 	})
 	if err != nil {
-		nextAt, retryCount := subscriptionFailureSchedule(subscription)
-		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, "", "", "ORDER_CREATE_FAILED", err.Error())
-		invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "ORDER_CREATE_FAILED", err.Error(), nextAt, retryCount)
+		invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, "", "", "ORDER_CREATE_FAILED", err)
 		return invoice, payment.CaptureResult{}, err
 	}
 	_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptStarted, orderResult.ID, "", "", "")
@@ -624,16 +624,13 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 	if subscription.CollectionMethod == CollectionMethodUPIMandate {
 		mandate, err := s.repo.GetUPIMandate(ctx, subscription.MerchantID, subscription.UPIMandateID)
 		if err != nil {
-			nextAt, retryCount := subscriptionFailureSchedule(subscription)
-			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "MANDATE_LOOKUP_FAILED", err.Error())
-			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "MANDATE_LOOKUP_FAILED", err.Error(), nextAt, retryCount)
+			invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, orderResult.ID, "", "MANDATE_LOOKUP_FAILED", err)
 			return invoice, payment.CaptureResult{}, err
 		}
 		if mandate.Status != UPIMandateActive {
-			nextAt, retryCount := subscriptionFailureSchedule(subscription)
-			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "MANDATE_NOT_ACTIVE", ErrUPIMandateNotActive.Error())
-			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "MANDATE_NOT_ACTIVE", ErrUPIMandateNotActive.Error(), nextAt, retryCount)
-			return invoice, payment.CaptureResult{}, ErrUPIMandateNotActive
+			err = ErrUPIMandateNotActive
+			invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, orderResult.ID, "", "MANDATE_NOT_ACTIVE", err)
+			return invoice, payment.CaptureResult{}, err
 		}
 		upiResult, err := s.paymentSvc.CreateUPIMandateCharge(ctx, payment.CreateUPIMandateChargeInput{
 			MerchantID:     subscription.MerchantID,
@@ -647,10 +644,10 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 			PaymentID:      idgen.New("pay"),
 		})
 		if err != nil {
-			nextAt, retryCount := subscriptionFailureSchedule(subscription)
-			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "MANDATE_CHARGE_FAILED", err.Error())
-			_ = s.repo.RecordUPIMandateChargeResult(ctx, subscription.MerchantID, mandate.ID, MandateEventChargeErr, "", err.Error(), map[string]any{"invoice_id": invoice.ID, "subscription_id": subscription.ID})
-			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "MANDATE_CHARGE_FAILED", err.Error(), nextAt, retryCount)
+			if recordErr := s.repo.RecordUPIMandateChargeResult(ctx, subscription.MerchantID, mandate.ID, MandateEventChargeErr, "", err.Error(), map[string]any{"invoice_id": invoice.ID, "subscription_id": subscription.ID}); recordErr != nil {
+				err = errors.Join(err, fmt.Errorf("record mandate charge failure: %w", recordErr))
+			}
+			invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, orderResult.ID, "", "MANDATE_CHARGE_FAILED", err)
 			return invoice, payment.CaptureResult{}, err
 		}
 		captureResult = upiResult.CaptureResult
@@ -668,18 +665,16 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 			PaymentID:            idgen.New("pay"),
 		})
 		if err != nil {
-			nextAt, retryCount := subscriptionFailureSchedule(subscription)
-			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, "", "AUTH_FAILED", err.Error())
-			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "AUTH_FAILED", err.Error(), nextAt, retryCount)
+			invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, orderResult.ID, "", "AUTH_FAILED", err)
 			return invoice, payment.CaptureResult{}, err
 		}
 		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptAuthorized, orderResult.ID, authResult.PaymentID, "", "")
 		captureResult, err = s.paymentSvc.CaptureForMerchant(ctx, subscription.MerchantID, authResult.PaymentID, subscription.Amount)
 		if err != nil {
-			_, _ = s.paymentSvc.ReverseAuthorization(ctx, subscription.MerchantID, authResult.PaymentID, "subscription capture failed")
-			nextAt, retryCount := subscriptionFailureSchedule(subscription)
-			_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptFailed, orderResult.ID, authResult.PaymentID, "CAPTURE_FAILED", err.Error())
-			invoice, _ = s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, "CAPTURE_FAILED", err.Error(), nextAt, retryCount)
+			if _, reverseErr := s.paymentSvc.ReverseAuthorization(ctx, subscription.MerchantID, authResult.PaymentID, "subscription capture failed"); reverseErr != nil {
+				err = errors.Join(err, fmt.Errorf("reverse authorization after capture failure: %w", reverseErr))
+			}
+			invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, orderResult.ID, authResult.PaymentID, "CAPTURE_FAILED", err)
 			return invoice, payment.CaptureResult{}, err
 		}
 		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptCaptured, orderResult.ID, captureResult.PaymentID, "", "")
@@ -697,4 +692,21 @@ func subscriptionFailureSchedule(subscription Subscription) (time.Time, int) {
 		return time.Now().UTC().Add(time.Duration(subscription.RetryIntervalHours) * time.Hour), retryCount
 	}
 	return nextPeriodStart(subscription.NextBillingAt, subscription.IntervalUnit, subscription.IntervalCount), 0
+}
+
+func (s *Service) markSubscriptionInvoiceFailure(ctx context.Context, subscription Subscription, attemptID string, invoice Invoice, orderID, paymentID, failureCode string, primaryErr error) (Invoice, error) {
+	nextAt, retryCount := subscriptionFailureSchedule(subscription)
+	var cleanupErrs []error
+	if err := s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attemptID, InvoiceAttemptFailed, orderID, paymentID, failureCode, primaryErr.Error()); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("mark invoice attempt failed: %w", err))
+	}
+	failedInvoice, err := s.repo.MarkInvoiceFailed(ctx, subscription.MerchantID, invoice.ID, failureCode, primaryErr.Error(), nextAt, retryCount)
+	if err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("mark invoice failed: %w", err))
+		failedInvoice = invoice
+	}
+	if len(cleanupErrs) == 0 {
+		return failedInvoice, primaryErr
+	}
+	return failedInvoice, errors.Join(append([]error{primaryErr}, cleanupErrs...)...)
 }

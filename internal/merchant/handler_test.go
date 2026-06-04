@@ -94,7 +94,7 @@ func TestDashboardLoginRejectsUnsafeRedirectAndSetsSecureCookieForHTTPS(t *testi
 	}); err != nil {
 		t.Fatalf("bootstrap user: %v", err)
 	}
-	h := NewHandler(svc)
+	h := NewHandler(svc, WithDashboardOrigin("https://dashboard.paygate.test"))
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -109,7 +109,7 @@ func TestDashboardLoginRejectsUnsafeRedirectAndSetsSecureCookieForHTTPS(t *testi
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	if got := rr.Header().Get("Location"); got != "/orders" {
+	if got := rr.Header().Get("Location"); got != "https://dashboard.paygate.test/orders" {
 		t.Fatalf("expected fallback redirect, got %q", got)
 	}
 	cookies := rr.Result().Cookies()
@@ -124,7 +124,7 @@ func TestDashboardLoginRejectsUnsafeRedirectAndSetsSecureCookieForHTTPS(t *testi
 func TestDashboardLogoutRejectsUnsafeRedirect(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo)
-	h := NewHandler(svc)
+	h := NewHandler(svc, WithDashboardOrigin("https://dashboard.paygate.test"))
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -136,7 +136,39 @@ func TestDashboardLogoutRejectsUnsafeRedirect(t *testing.T) {
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d", rr.Code)
 	}
-	if got := rr.Header().Get("Location"); got != "/" {
+	if got := rr.Header().Get("Location"); got != "https://dashboard.paygate.test/" {
 		t.Fatalf("expected safe fallback redirect, got %q", got)
+	}
+}
+
+func TestDashboardLoginAllowsConfiguredAbsoluteRedirect(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo, WithSessionSecret("abcdefghijklmnopqrstuvwxyz012345"))
+	merchantRecord, err := svc.CreateMerchant(context.Background(), CreateMerchantInput{Name: "Acme", Email: "owner@acme.com", BusinessType: "company"})
+	if err != nil {
+		t.Fatalf("create merchant: %v", err)
+	}
+	if _, err := svc.BootstrapMerchantUser(context.Background(), merchantRecord.ID, BootstrapMerchantUserInput{
+		Email:    "owner@acme.com",
+		Password: "strong-password-123",
+	}); err != nil {
+		t.Fatalf("bootstrap user: %v", err)
+	}
+	h := NewHandler(svc, WithDashboardOrigin("http://127.0.0.1:33001"))
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	form := "merchant_id=" + merchantRecord.ID + "&email=owner%40acme.com&password=strong-password-123&redirect_to=http%3A%2F%2F127.0.0.1%3A33001%2Foverview"
+	req := httptest.NewRequest(http.MethodPost, "/v1/dashboard/login", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != "http://127.0.0.1:33001/overview" {
+		t.Fatalf("expected configured absolute redirect, got %q", got)
 	}
 }

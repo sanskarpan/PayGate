@@ -29,29 +29,60 @@ export default async function DisputeDetailPage({ params }: { params: { id: stri
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Dispute Detail</div>
-        <h1>{truncateMiddle(dispute.id, 14, 8)}</h1>
-        <p className="mono" style={{ margin: "0 0 8px" }}>{dispute.id}</p>
-        <p className="lede">
-          <span className={statusBadge(dispute.status)}>{dispute.status}</span>{" "}
-          for {formatMoney(dispute.amount, dispute.currency)} tied to payment{" "}
-          {truncateMiddle(dispute.payment_id)}.
-        </p>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Dispute Detail</div>
+          <h1>{truncateMiddle(dispute.id, 14, 8)}</h1>
+          <p className="mono" style={{ margin: "0 0 8px" }}>{dispute.id}</p>
+          <p className="lede">
+            <span className={statusBadge(dispute.status)}>{dispute.status}</span>{" "}
+            for {formatMoney(dispute.amount, dispute.currency)} tied to payment{" "}
+            {truncateMiddle(dispute.payment_id)}.
+          </p>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Case Posture</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Status</span>
+              <strong>{dispute.status}</strong>
+              <p>Current dispute state across open, under-review, and terminal case outcomes.</p>
+            </div>
+            <div className="status-block">
+              <span>Evidence posture</span>
+              <strong>{submitted ? "Submitted" : "Pending"}</strong>
+              <p>Whether the operator has provided a merchant-side evidence package.</p>
+            </div>
+            <div className="status-block">
+              <span>Exposure</span>
+              <strong>{formatMoney(dispute.amount, dispute.currency)}</strong>
+              <p>Commercial amount currently at stake in the case workflow.</p>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div className="key-facts">
-        <div className="key-fact">
-          <span className="eyebrow">Status</span>
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Status</span>
           <strong>{dispute.status}</strong>
+          <span>Current case state.</span>
         </div>
-        <div className="key-fact">
-          <span className="eyebrow">Reason</span>
+        <div className="ops-band-item">
+          <span>Reason</span>
           <strong>{dispute.reason}</strong>
+          <span>Primary network or issuer rationale for the case.</span>
         </div>
-        <div className="key-fact">
-          <span className="eyebrow">Evidence</span>
+        <div className="ops-band-item">
+          <span>Evidence</span>
           <strong>{submitted ? "Submitted" : "Pending"}</strong>
+          <span>Merchant response material submitted to the dispute lane.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Resolution</span>
+          <strong>{resolved ? formatTime(dispute.resolved_at || 0) : "Open"}</strong>
+          <span>Timestamp of terminal resolution, if one exists.</span>
         </div>
       </div>
 

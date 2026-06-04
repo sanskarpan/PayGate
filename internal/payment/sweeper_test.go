@@ -8,9 +8,15 @@ import (
 )
 
 type fakeRepo struct {
-	mu           sync.Mutex
-	autoCalled   bool
-	expireCalled bool
+	mu                   sync.Mutex
+	autoCalled           bool
+	expireCalled         bool
+	updatedRouting       bool
+	markedAuthFailed     bool
+	failedUPIIntent      bool
+	updateRoutingErr     error
+	markAuthorizationErr error
+	failUPIIntentErr     error
 }
 
 func (f *fakeRepo) StartAuthorization(context.Context, CreateAuthorizedInput) (CaptureResult, error) {
@@ -20,7 +26,10 @@ func (f *fakeRepo) AttachCardPaymentDetails(context.Context, string, string, Car
 	return nil
 }
 func (f *fakeRepo) UpdateGatewayRouting(context.Context, string, string, GatewayRouteDecision) error {
-	return nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updatedRouting = true
+	return f.updateRoutingErr
 }
 func (f *fakeRepo) CreateFailedAttempt(context.Context, CreateAuthorizedInput, string, string) error {
 	return nil
@@ -32,7 +41,10 @@ func (f *fakeRepo) MarkAuthorizationRequiresAction(context.Context, string, stri
 	return CaptureResult{}, nil
 }
 func (f *fakeRepo) MarkAuthorizationFailed(context.Context, string, string, string, string) error {
-	return nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markedAuthFailed = true
+	return f.markAuthorizationErr
 }
 func (f *fakeRepo) CompleteCardChallenge(context.Context, string, string, string, string, string, time.Time) (CaptureResult, bool, error) {
 	return CaptureResult{}, false, nil
@@ -59,7 +71,10 @@ func (f *fakeRepo) CompleteUPIIntent(context.Context, string, string, string, ti
 	return UPIIntentResult{}, false, nil
 }
 func (f *fakeRepo) FailUPIIntent(context.Context, string, string, UPIProviderStatus, string, string, time.Time) (UPIIntentResult, bool, error) {
-	return UPIIntentResult{}, false, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failedUPIIntent = true
+	return UPIIntentResult{}, false, f.failUPIIntentErr
 }
 func (f *fakeRepo) AbandonUPIIntent(context.Context, string, string, string, time.Time) (UPIIntentResult, error) {
 	return UPIIntentResult{}, nil

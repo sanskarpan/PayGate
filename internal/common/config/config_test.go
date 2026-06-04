@@ -41,7 +41,7 @@ func TestFromEnvUsesDockerBackedLocalDefaults(t *testing.T) {
 func TestValidateAllowsEnvEncryptionProviderInProduction(t *testing.T) {
 	cfg := Config{
 		AppEnv:                 "production",
-		DatabaseURL:            "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable",
+		DatabaseURL:            "postgres://localhost:5435/paygate?sslmode=disable",
 		DashboardSessionSecret: "abcdefghijklmnopqrstuvwxyz012345",
 		PayoutRailSecret:       "abcdefghijklmnopqrstuvwxyz",
 		TrustedProxyCIDRs:      []string{"127.0.0.1/32"},
@@ -57,7 +57,7 @@ func TestValidateAllowsEnvEncryptionProviderInProduction(t *testing.T) {
 func TestValidateRejectsKMSStubInProduction(t *testing.T) {
 	cfg := Config{
 		AppEnv:                 "production",
-		DatabaseURL:            "postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable",
+		DatabaseURL:            "postgres://localhost:5435/paygate?sslmode=disable",
 		DashboardSessionSecret: "abcdefghijklmnopqrstuvwxyz012345",
 		PayoutRailSecret:       "abcdefghijklmnopqrstuvwxyz",
 		TrustedProxyCIDRs:      []string{"127.0.0.1/32"},

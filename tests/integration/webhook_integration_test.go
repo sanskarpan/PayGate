@@ -386,13 +386,6 @@ func TestIntegrationWebhookSignatureModes(t *testing.T) {
 	_, merchantSvc, _, _ := buildGatewayMux(db)
 	webhookSvc := webhook.NewService(webhook.NewPostgresRepository(db))
 
-	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Signature Merchant", Email: "signature@test.com", BusinessType: "company",
-	})
-	if err != nil {
-		t.Fatalf("create merchant: %v", err)
-	}
-
 	type requestRecord struct {
 		Header http.Header
 		Body   []byte
@@ -419,8 +412,16 @@ func TestIntegrationWebhookSignatureModes(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			modeMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
+				Name:         "Signature Merchant " + tc.name,
+				Email:        uniqueTestEmail(t, "signature-"+tc.name),
+				BusinessType: "company",
+			})
+			if err != nil {
+				t.Fatalf("create subtest merchant: %v", err)
+			}
 			sub, err := webhookSvc.CreateSubscription(ctx, webhook.CreateInput{
-				MerchantID:    createdMerchant.ID,
+				MerchantID:    modeMerchant.ID,
 				URL:           mockServer.URL,
 				Events:        []string{"payment.captured"},
 				SignatureMode: tc.mode,
@@ -431,7 +432,7 @@ func TestIntegrationWebhookSignatureModes(t *testing.T) {
 
 			payload := map[string]any{"event_type": "payment.captured", "mode": tc.name}
 			eventID := "evt_signature_" + tc.name
-			if err := webhookSvc.DeliverEvent(ctx, eventID, createdMerchant.ID, "payment.captured", payload); err != nil {
+			if err := webhookSvc.DeliverEvent(ctx, eventID, modeMerchant.ID, "payment.captured", payload); err != nil {
 				t.Fatalf("deliver event: %v", err)
 			}
 
@@ -455,7 +456,7 @@ func TestIntegrationWebhookSignatureModes(t *testing.T) {
 				t.Fatalf("did not expect structured Signature header for mode %s", tc.mode)
 			}
 
-			fetched, err := webhookSvc.GetSubscription(ctx, createdMerchant.ID, sub.ID)
+			fetched, err := webhookSvc.GetSubscription(ctx, modeMerchant.ID, sub.ID)
 			if err != nil {
 				t.Fatalf("get subscription: %v", err)
 			}

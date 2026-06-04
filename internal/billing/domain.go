@@ -452,9 +452,9 @@ func ValidateSplitInstructions(amount, fee int64, splits []SplitInstruction) err
 func nextPeriodStart(from time.Time, unit IntervalUnit, count int) time.Time {
 	switch unit {
 	case IntervalDay:
-		return from.Add(time.Duration(count) * 24 * time.Hour)
+		return from.AddDate(0, 0, count)
 	case IntervalWeek:
-		return from.Add(time.Duration(count*7) * 24 * time.Hour)
+		return from.AddDate(0, 0, count*7)
 	default:
 		return from.AddDate(0, count, 0)
 	}

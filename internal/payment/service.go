@@ -361,12 +361,8 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 	}
 	metrics.GatewayAuthorizationDuration.WithLabelValues(in.Method, provider).Observe(time.Since(startedAt).Seconds())
 	if err != nil {
-		_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
 		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "error").Inc()
-		if in.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
-			_ = s.cardTokens.CompleteAuthorization(ctx, in.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, false, "gateway error")
-		}
-		_ = s.repo.MarkAuthorizationFailed(ctx, in.MerchantID, pending.PaymentID, "GATEWAY_ERROR", err.Error())
+		err = s.persistAuthorizationFailure(ctx, pending, decision, "GATEWAY_ERROR", err.Error(), "gateway error", err)
 		return CaptureResult{}, fmt.Errorf("gateway authorize: %w", err)
 	}
 	if result.RequiresAction {
@@ -387,16 +383,15 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 			}
 			return CaptureResult{}, err
 		}
+		out.Provider = decision.Provider
+		out.RoutingReason = decision.RoutingReason
+		out.AttemptedProviders = decision.AttemptedProviders
 		return out, nil
 	}
 	if !result.Success {
-		_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
 		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "declined").Inc()
-		if in.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
-			_ = s.cardTokens.CompleteAuthorization(ctx, in.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, false, result.ErrorDescription)
-		}
-		_ = s.repo.MarkAuthorizationFailed(ctx, in.MerchantID, pending.PaymentID, result.ErrorCode, result.ErrorDescription)
-		return CaptureResult{}, ErrAuthorizationDeclined
+		err = s.persistAuthorizationFailure(ctx, pending, decision, result.ErrorCode, result.ErrorDescription, result.ErrorDescription, ErrAuthorizationDeclined)
+		return CaptureResult{}, err
 	}
 
 	var autoCaptureAt *time.Time
@@ -412,6 +407,9 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 		return CaptureResult{}, err
 	}
 	_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
+	out.Provider = decision.Provider
+	out.RoutingReason = decision.RoutingReason
+	out.AttemptedProviders = decision.AttemptedProviders
 	if in.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
 		_ = s.cardTokens.CompleteAuthorization(ctx, in.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, true, "")
 	}
@@ -498,7 +496,7 @@ func (s *Service) CreateUPIIntent(ctx context.Context, in CreateUPIIntentInput) 
 		ExpiresAt:  intent.ExpiresAt,
 	})
 	if err != nil {
-		_, _, _ = s.repo.FailUPIIntent(ctx, intent.PaymentID, "", UPIProviderStatusFailed, "UPI_GATEWAY_ERROR", err.Error(), time.Now().UTC())
+		err = s.persistUPIIntentFailure(ctx, intent.PaymentID, "UPI_GATEWAY_ERROR", err.Error(), err)
 		return UPIIntentResult{}, fmt.Errorf("create upi intent: %w", err)
 	}
 	return s.repo.AttachUPIIntentGatewayData(ctx, intent.MerchantID, intent.PaymentID, gatewayResult)
@@ -561,7 +559,7 @@ func (s *Service) CreateUPIQR(ctx context.Context, in CreateUPIQRInput) (UPIInte
 		ExpiresAt:   intent.ExpiresAt,
 	})
 	if err != nil {
-		_, _, _ = s.repo.FailUPIIntent(ctx, intent.PaymentID, "", UPIProviderStatusFailed, "UPI_GATEWAY_ERROR", err.Error(), time.Now().UTC())
+		err = s.persistUPIIntentFailure(ctx, intent.PaymentID, "UPI_GATEWAY_ERROR", err.Error(), err)
 		return UPIIntentResult{}, fmt.Errorf("create upi qr: %w", err)
 	}
 	return s.repo.AttachUPIIntentGatewayData(ctx, intent.MerchantID, intent.PaymentID, gatewayResult)
@@ -611,7 +609,7 @@ func (s *Service) CreateUPIMandateCharge(ctx context.Context, in CreateUPIMandat
 		ExpiresAt:   intent.ExpiresAt,
 	})
 	if err != nil {
-		_, _, _ = s.repo.FailUPIIntent(ctx, intent.PaymentID, "", UPIProviderStatusFailed, "UPI_MANDATE_GATEWAY_ERROR", err.Error(), time.Now().UTC())
+		err = s.persistUPIIntentFailure(ctx, intent.PaymentID, "UPI_MANDATE_GATEWAY_ERROR", err.Error(), err)
 		return UPIIntentResult{}, fmt.Errorf("create upi mandate charge: %w", err)
 	}
 	intent, err = s.repo.AttachUPIIntentGatewayData(ctx, intent.MerchantID, intent.PaymentID, gatewayResult)
@@ -709,6 +707,32 @@ func (s *Service) CaptureForMerchant(ctx context.Context, merchantID, paymentID 
 
 func (s *Service) ReverseAuthorization(ctx context.Context, merchantID, paymentID, reason string) (CaptureResult, error) {
 	return s.repo.ReverseAuthorization(ctx, merchantID, paymentID, reason)
+}
+
+func (s *Service) persistAuthorizationFailure(ctx context.Context, pending CaptureResult, decision GatewayRouteDecision, errorCode, errorDescription, tokenReason string, primaryErr error) error {
+	var cleanupErrs []error
+	if err := s.repo.UpdateGatewayRouting(ctx, pending.MerchantID, pending.PaymentID, decision); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("update gateway routing: %w", err))
+	}
+	if pending.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
+		if err := s.cardTokens.CompleteAuthorization(ctx, pending.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, false, tokenReason); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("complete card token authorization: %w", err))
+		}
+	}
+	if err := s.repo.MarkAuthorizationFailed(ctx, pending.MerchantID, pending.PaymentID, errorCode, errorDescription); err != nil {
+		cleanupErrs = append(cleanupErrs, fmt.Errorf("mark authorization failed: %w", err))
+	}
+	if len(cleanupErrs) == 0 {
+		return primaryErr
+	}
+	return errors.Join(append([]error{primaryErr}, cleanupErrs...)...)
+}
+
+func (s *Service) persistUPIIntentFailure(ctx context.Context, paymentID, errorCode, errorDescription string, primaryErr error) error {
+	if _, _, err := s.repo.FailUPIIntent(ctx, paymentID, "", UPIProviderStatusFailed, errorCode, errorDescription, time.Now().UTC()); err != nil {
+		return errors.Join(primaryErr, fmt.Errorf("persist upi intent failure state: %w", err))
+	}
+	return primaryErr
 }
 
 func (s *Service) CompleteCardChallenge(ctx context.Context, in CompleteCardChallengeInput) (CaptureResult, bool, error) {

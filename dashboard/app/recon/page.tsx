@@ -23,36 +23,82 @@ export default async function ReconPage() {
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Reconciliation</div>
-        <h1>Reconciliation Control</h1>
-        <p className="lede">
-          {open.length} open mismatch{open.length !== 1 ? "es" : ""} · {resolved.length} resolved
-          for {viewer.merchant_id}.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Open</span>
-            <strong>{formatCompactNumber(open.length)}</strong>
+      <div className="ops-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Reconciliation</div>
+          <h1>Reconciliation Control</h1>
+          <p className="lede">
+            {open.length} open mismatch{open.length !== 1 ? "es" : ""} · {resolved.length} resolved
+            for {viewer.merchant_id}.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Open</span>
+              <strong>{formatCompactNumber(open.length)}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Resolved</span>
+              <strong>{formatCompactNumber(resolved.length)}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Distinct mismatch types</span>
+              <strong>{Object.keys(groupedOpen).length}</strong>
+            </div>
           </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Resolved</span>
-            <strong>{formatCompactNumber(resolved.length)}</strong>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Distinct mismatch types</span>
-            <strong>{Object.keys(groupedOpen).length}</strong>
+        </div>
+
+        <div className="detail-card">
+          <div className="eyebrow">Control Assessment</div>
+          <div className="status-matrix">
+            <div className="status-block">
+              <span>Open anomaly set</span>
+              <strong>{open.length}</strong>
+              <p>Current mismatches that can block finance confidence or merchant closeout.</p>
+            </div>
+            <div className="status-block">
+              <span>Resolved history</span>
+              <strong>{resolved.length}</strong>
+              <p>Historical anomalies already acknowledged, corrected, or operationally accepted.</p>
+            </div>
+            <div className="status-block">
+              <span>Type breadth</span>
+              <strong>{Object.keys(groupedOpen).length}</strong>
+              <p>Distinct mismatch categories currently represented in the open queue.</p>
+            </div>
           </div>
         </div>
       </div>
 
+      <div className="ops-band">
+        <div className="ops-band-item">
+          <span>Open mismatches</span>
+          <strong>{open.length}</strong>
+          <span>Items still requiring operator acknowledgement or remediation.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Resolved mismatches</span>
+          <strong>{resolved.length}</strong>
+          <span>Historical items closed out by manual or systemic correction.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Mismatch classes</span>
+          <strong>{Object.keys(groupedOpen).length}</strong>
+          <span>Number of distinct mismatch patterns present in the current queue.</span>
+        </div>
+        <div className="ops-band-item">
+          <span>Merchant scope</span>
+          <strong>{truncateMiddle(viewer.merchant_id)}</strong>
+          <span>Current reconciliation surface is scoped to this operator tenant.</span>
+        </div>
+      </div>
+
       {open.length > 0 ? (
-        <div className="summary-grid">
+        <div className="intel-grid">
           {Object.entries(groupedOpen).map(([type, count]) => (
-            <div className="metric-card" key={type}>
-              <div className="eyebrow">Mismatch Type</div>
-              <div className="stat-value">{count}</div>
-              <div className="stat-label">{mismatchTypeLabel[type] ?? type}</div>
+            <div className="intel-card" key={type}>
+              <span>Mismatch type</span>
+              <strong>{count}</strong>
+              <p>{mismatchTypeLabel[type] ?? type}</p>
             </div>
           ))}
         </div>

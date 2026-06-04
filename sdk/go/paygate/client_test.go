@@ -61,6 +61,7 @@ func TestCreateCardTokenAndWebhookSubscription(t *testing.T) {
 			if r.Method != http.MethodPost {
 				t.Fatalf("unexpected method %s", r.Method)
 			}
+			//nolint:gosec // test fixture intentionally mirrors the webhook response shape.
 			_ = json.NewEncoder(w).Encode(WebhookSubscription{ID: "wh_123", URL: "https://example.com/hook", Status: "active", SignatureMode: "compat"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)

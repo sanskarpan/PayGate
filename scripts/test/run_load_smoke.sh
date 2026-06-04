@@ -9,6 +9,7 @@ DEFAULT_DATABASE_URL="postgres://pay""gate:pay""gate@localhost:5435/paygate_load
 START_API="${START_API:-false}"
 API_PID=""
 API_LOG_FILE="${API_LOG_FILE:-/tmp/paygate-load-api.log}"
+CONTAINER_PROBE_IMAGE="${CONTAINER_PROBE_IMAGE:-curlimages/curl:8.8.0}"
 
 wait_for_api() {
   local attempts="${1:-60}"
@@ -29,6 +30,27 @@ wait_for_api() {
   done
 
   echo "timed out waiting for api-gateway readiness at ${BASE_URL}/readyz" >&2
+  if [[ -f "${API_LOG_FILE}" ]]; then
+    cat "${API_LOG_FILE}" >&2
+  fi
+  return 1
+}
+
+wait_for_container_api() {
+  local attempts="${1:-30}"
+  local delay_seconds="${2:-1}"
+
+  for ((i = 0; i < attempts; i++)); do
+    if docker run --rm \
+      --add-host=host.docker.internal:host-gateway \
+      "${CONTAINER_PROBE_IMAGE}" \
+      -fsS "${K6_BASE_URL}/readyz" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "${delay_seconds}"
+  done
+
+  echo "timed out waiting for container access to ${K6_BASE_URL}/readyz" >&2
   if [[ -f "${API_LOG_FILE}" ]]; then
     cat "${API_LOG_FILE}" >&2
   fi
@@ -79,6 +101,8 @@ fi
 
 K6_BASE_URL="${K6_BASE_URL:-${BASE_URL/127.0.0.1/host.docker.internal}}"
 K6_BASE_URL="${K6_BASE_URL/localhost/host.docker.internal}"
+
+wait_for_container_api 30 1
 
 docker run --rm \
   --add-host=host.docker.internal:host-gateway \

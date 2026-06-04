@@ -110,32 +110,87 @@ export default function APIKeyManager({
 
   return (
     <section className="stack fade-up">
-      <div className="hero-card">
-        <div className="eyebrow">Access Surface</div>
-        <h1>API Keys</h1>
-        <p className="lede">
-          Manage live credentials for integrations. Active keys: {activeCount}.
-        </p>
-        <div className="metric-strip">
-          <div className="metric-chip">
-            <span className="metric-chip-label">Total keys</span>
-            <strong>{items.length}</strong>
-          </div>
-          <div className="metric-chip">
-            <span className="metric-chip-label">Active</span>
-            <strong>{activeCount}</strong>
+      <div className="workbench-grid">
+        <div className="hero-card">
+          <div className="eyebrow">Credential Control</div>
+          <h1>Issue and constrain keys.</h1>
+          <p className="lede">
+            Manage live credentials for integrations with immediate visibility into mode, scope,
+            revoke state, and allowlist posture.
+          </p>
+          <div className="metric-strip">
+            <div className="metric-chip">
+              <span className="metric-chip-label">Total keys</span>
+              <strong>{items.length}</strong>
+            </div>
+            <div className="metric-chip">
+              <span className="metric-chip-label">Active</span>
+              <strong>{activeCount}</strong>
+            </div>
           </div>
         </div>
-        <div className="inline-form">
-          <label style={{ minWidth: "220px" }}>
-            Search
-            <input
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Filter by key id, mode, scope, or status"
-              type="text"
-              value={query}
-            />
-          </label>
+
+        <div className="detail-card">
+          <div className="section-head">
+            <div>
+              <div className="eyebrow">Create Credential</div>
+              <h2>New key issuance</h2>
+            </div>
+          </div>
+          <div className="stack" style={{ marginTop: "16px" }}>
+            <div className="control-form-grid">
+              <label>
+                Mode
+                <select value={mode} onChange={(event) => setMode(event.target.value)}>
+                  <option value="test">test</option>
+                  <option value="live">live</option>
+                </select>
+              </label>
+              <label>
+                Scope
+                <select value={scope} onChange={(event) => setScope(event.target.value)}>
+                  <option value="read">read</option>
+                  <option value="write">write</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
+            </div>
+            <div className="hero-actions">
+              <button className="primary-button" type="button" disabled={pending} onClick={createKey}>
+                {pending ? "Working..." : "Create key"}
+              </button>
+            </div>
+            {message ? <p className="notice error">{message}</p> : null}
+            {created ? (
+              <div className="secret-card">
+                <div className="eyebrow">Secret Shown Once</div>
+                <code>{created.key_id}</code>
+                <code>{created.key_secret}</code>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="detail-card">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">Query Controls</div>
+            <h2>Filter inventory</h2>
+          </div>
+        </div>
+        <div className="stack" style={{ marginTop: "16px" }}>
+          <div className="control-form-grid">
+            <label style={{ minWidth: "220px" }}>
+              Search
+              <input
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Filter by key id, mode, scope, or status"
+                type="text"
+                value={query}
+              />
+            </label>
+          </div>
           <div className="filter-bar" role="tablist" aria-label="API key status filter">
             {[
               ["all", `All (${items.length})`],
@@ -155,37 +210,15 @@ export default function APIKeyManager({
             ))}
           </div>
         </div>
-        <div className="inline-form">
-          <label>
-            Mode
-            <select value={mode} onChange={(event) => setMode(event.target.value)}>
-              <option value="test">test</option>
-              <option value="live">live</option>
-            </select>
-          </label>
-          <label>
-            Scope
-            <select value={scope} onChange={(event) => setScope(event.target.value)}>
-              <option value="read">read</option>
-              <option value="write">write</option>
-              <option value="admin">admin</option>
-            </select>
-          </label>
-          <button className="primary-button" type="button" disabled={pending} onClick={createKey}>
-            {pending ? "Working..." : "Create Key"}
-          </button>
-        </div>
-        {message ? <p className="notice error">{message}</p> : null}
-        {created ? (
-          <div className="secret-card">
-            <div className="eyebrow">Secret Shown Once</div>
-            <code>{created.key_id}</code>
-            <code>{created.key_secret}</code>
-          </div>
-        ) : null}
       </div>
 
       <div className="list-card">
+        <div className="section-head">
+          <div>
+            <div className="eyebrow">Key Inventory</div>
+            <h2>Issued credentials</h2>
+          </div>
+        </div>
         {visibleItems.length === 0 ? (
           <div className="empty-state">
             <strong>{items.length === 0 ? "No keys issued yet" : "No keys match this filter"}</strong>
