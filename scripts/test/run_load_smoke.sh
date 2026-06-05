@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 API_PORT="${API_PORT:-38090}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${API_PORT}}"
 LOAD_SCRIPT="${LOAD_SCRIPT:-tests/load/ci_smoke.js}"
+LOAD_SCRIPT_NAME="$(basename "${LOAD_SCRIPT}")"
 DEFAULT_DATABASE_URL="postgres://pay""gate:pay""gate@localhost:5435/paygate_load?sslmode=disable"
 START_API="${START_API:-false}"
 API_PID=""
@@ -96,7 +97,28 @@ if [[ "${START_API}" == "true" ]]; then
 fi
 
 if [[ -z "${API_KEY:-}" || -z "${API_SECRET:-}" ]]; then
-  eval "$(API_BASE_URL="${BASE_URL}" BOOTSTRAP_KEY_SCOPE=write "${ROOT_DIR}/scripts/test/bootstrap_test_merchant.sh")"
+  bootstrap_count="${BOOTSTRAP_KEY_COUNT:-1}"
+  if [[ "${LOAD_SCRIPT_NAME}" == "spike.js" && -z "${BOOTSTRAP_KEY_COUNT:-}" ]]; then
+    bootstrap_count=4
+  fi
+
+  if (( bootstrap_count <= 1 )); then
+    eval "$(API_BASE_URL="${BASE_URL}" BOOTSTRAP_KEY_SCOPE=write "${ROOT_DIR}/scripts/test/bootstrap_test_merchant.sh")"
+    API_KEYS="${API_KEY}"
+    API_SECRETS="${API_SECRET}"
+  else
+    api_keys=()
+    api_secrets=()
+    for ((i = 0; i < bootstrap_count; i++)); do
+      eval "$(API_BASE_URL="${BASE_URL}" BOOTSTRAP_KEY_SCOPE=write BOOTSTRAP_SUFFIX="load-${LOAD_SCRIPT_NAME%.*}-${i}-$$-$(date +%s)" "${ROOT_DIR}/scripts/test/bootstrap_test_merchant.sh")"
+      api_keys+=("${API_KEY}")
+      api_secrets+=("${API_SECRET}")
+    done
+    API_KEY="${api_keys[0]}"
+    API_SECRET="${api_secrets[0]}"
+    API_KEYS="$(IFS=,; echo "${api_keys[*]}")"
+    API_SECRETS="$(IFS=,; echo "${api_secrets[*]}")"
+  fi
 fi
 
 K6_BASE_URL="${K6_BASE_URL:-${BASE_URL/127.0.0.1/host.docker.internal}}"
@@ -112,4 +134,6 @@ docker run --rm \
   --env BASE_URL="${K6_BASE_URL}" \
   --env API_KEY="${API_KEY}" \
   --env API_SECRET="${API_SECRET}" \
+  --env API_KEYS="${API_KEYS:-${API_KEY}}" \
+  --env API_SECRETS="${API_SECRETS:-${API_SECRET}}" \
   "${LOAD_SCRIPT}"
