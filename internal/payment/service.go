@@ -359,15 +359,19 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 	} else {
 		result, err = s.gateway.Authorize(ctx, in.Amount, in.Currency, in.MerchantID, in.Method)
 	}
-	metrics.GatewayAuthorizationDuration.WithLabelValues(in.Method, provider).Observe(time.Since(startedAt).Seconds())
+	metricProvider := decision.Provider
+	if metricProvider == "" {
+		metricProvider = provider
+	}
+	metrics.GatewayAuthorizationDuration.WithLabelValues(in.Method, metricProvider).Observe(time.Since(startedAt).Seconds())
 	if err != nil {
-		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "error").Inc()
+		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, metricProvider, "error").Inc()
 		err = s.persistAuthorizationFailure(ctx, pending, decision, "GATEWAY_ERROR", err.Error(), "gateway error", err)
 		return CaptureResult{}, fmt.Errorf("gateway authorize: %w", err)
 	}
 	if result.RequiresAction {
 		_ = s.repo.UpdateGatewayRouting(ctx, in.MerchantID, pending.PaymentID, decision)
-		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "requires_action").Inc()
+		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, metricProvider, "requires_action").Inc()
 		out, err := s.repo.MarkAuthorizationRequiresAction(ctx, in.MerchantID, pending.PaymentID, CardChallengeSessionInput{
 			SessionID:            idgen.New("chlg"),
 			CardTokenID:          in.PaymentMethodTokenID,
@@ -389,7 +393,7 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 		return out, nil
 	}
 	if !result.Success {
-		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "declined").Inc()
+		metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, metricProvider, "declined").Inc()
 		err = s.persistAuthorizationFailure(ctx, pending, decision, result.ErrorCode, result.ErrorDescription, result.ErrorDescription, ErrAuthorizationDeclined)
 		return CaptureResult{}, err
 	}
@@ -413,7 +417,7 @@ func (s *Service) Authorize(ctx context.Context, in AuthorizeInput) (CaptureResu
 	if in.Method == "card" && s.cardTokens != nil && pending.PaymentMethodTokenID != "" {
 		_ = s.cardTokens.CompleteAuthorization(ctx, in.MerchantID, pending.PaymentMethodTokenID, pending.PaymentID, true, "")
 	}
-	metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, provider, "authorized").Inc()
+	metrics.GatewayAuthorizationsTotal.WithLabelValues(in.Method, metricProvider, "authorized").Inc()
 	return out, nil
 }
 
