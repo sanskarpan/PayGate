@@ -31,7 +31,7 @@ key_json="$(
 )"
 api_key="$(jq -r '.key_id' <<<"${key_json}")"
 api_secret="$(jq -r '.key_secret' <<<"${key_json}")"
-auth_b64="$(printf '%s' "${api_key}:${api_secret}" | base64)"
+auth_b64="$(printf '%s' "${api_key}:${api_secret}" | base64 | tr -d '\r\n')"
 
 printf 'MERCHANT_ID=%q\n' "${merchant_id}"
 printf 'API_KEY=%q\n' "${api_key}"
