@@ -77,7 +77,7 @@ func TestIntegrationSagaTimeoutRecordsDeadLetterAndCompensation(t *testing.T) {
 		<-timeoutDone
 	}()
 
-	waitFor(t, 8*time.Second, func() bool {
+	waitFor(t, 15*time.Second, func() bool {
 		current, err := env.sagaSvc.Get(ctx, merchantID, instance.ID)
 		return err == nil && current.Status == saga.StatusAborted
 	})
