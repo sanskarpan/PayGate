@@ -1,17 +1,18 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Instrument_Sans, Syne } from "next/font/google";
+import { IBM_Plex_Mono, Inter_Tight, Onest } from "next/font/google";
 import "./globals.css";
 import Nav from "../components/nav";
 import { getAppBaseUrl, getApiBaseUrl, getViewerOptional } from "../lib/api";
 
-const displayFont = Syne({
+const displayFont = Inter_Tight({
   subsets: ["latin"],
-  weight: ["500", "600", "700", "800"],
+  weight: ["500", "600", "700", "800", "900"],
   variable: "--font-display",
 });
 
-const bodyFont = Instrument_Sans({
+const bodyFont = Onest({
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
   variable: "--font-body",
 });
 
@@ -22,8 +23,8 @@ const monoFont = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PayGate Command Fabric",
-  description: "Operational command surface for money movement, control policy, and system visibility.",
+  title: "PayGate",
+  description: "Premium merchant operating system for money movement, treasury, control, and runtime visibility.",
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
