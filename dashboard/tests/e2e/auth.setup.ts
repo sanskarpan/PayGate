@@ -9,7 +9,7 @@ setup("seed merchant data and authenticate dashboard session", async ({ page, re
   await page.getByLabel("Merchant ID").fill(seed.merchantID);
   await page.getByLabel("User Email").fill(seed.email);
   await page.getByLabel("Password").fill(seed.password);
-  await page.getByRole("button", { name: "Open dashboard" }).click();
+  await page.getByRole("button", { name: "Enter Control Room" }).click();
 
   await page.waitForURL("**/overview");
   await expect(page.getByRole("heading", { name: "Merchant command center." })).toBeVisible();
