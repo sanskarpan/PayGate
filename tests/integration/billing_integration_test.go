@@ -22,7 +22,7 @@ func TestIntegrationSubscriptionRecurringChargeFlow(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Billing Merchant", Email: "billing@test.com", BusinessType: "company",
+		Name: "Billing Merchant", Email: uniqueTestEmail(t, "billing"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -105,7 +105,7 @@ func TestIntegrationSubscriptionPauseResumeCancel(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Billing Lifecycle", Email: "billinglifecycle@test.com", BusinessType: "company",
+		Name: "Billing Lifecycle", Email: uniqueTestEmail(t, "billinglifecycle"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -157,7 +157,7 @@ func TestIntegrationVirtualAccountMatchAndReviewQueue(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Collection Merchant", Email: "collections@test.com", BusinessType: "company",
+		Name: "Collection Merchant", Email: uniqueTestEmail(t, "collections"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -236,7 +236,7 @@ func TestIntegrationConnectedAccountSplitsAppearInSettlement(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Marketplace Merchant", Email: "marketplace@test.com", BusinessType: "company",
+		Name: "Marketplace Merchant", Email: uniqueTestEmail(t, "marketplace"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
