@@ -45,8 +45,19 @@ type CollectionResponse<T> = {
   next_cursor?: string;
 };
 
+// Browser-facing API origin. Used for form actions, redirects and anything
+// handed to a client component, so it must be reachable from the user's browser.
 export function getApiBaseUrl() {
   return process.env.API_BASE_URL || "http://localhost:8090";
+}
+
+// API origin for calls made by the dashboard server itself. When the dashboard
+// runs in a container or pod, the browser-facing URL is often unreachable from
+// inside it (localhost is the container, and hairpinning through the ingress is
+// wasteful), so allow an internal address. Defaults to the public one, which is
+// correct for a single-URL deployment.
+export function getInternalApiBaseUrl() {
+  return process.env.API_INTERNAL_BASE_URL || getApiBaseUrl();
 }
 
 export function getAppBaseUrl() {
@@ -69,7 +80,7 @@ async function apiFetch(path: string, init?: RequestInit) {
   if (!headers.has("content-type") && init?.body) {
     headers.set("content-type", "application/json");
   }
-  return fetch(`${getApiBaseUrl()}${path}`, {
+  return fetch(`${getInternalApiBaseUrl()}${path}`, {
     ...init,
     headers,
     cache: "no-store",
@@ -512,7 +523,7 @@ export async function getActiveGatewayScenario() {
  */
 export async function getPrometheusMetricSum(metricName: string): Promise<number | null> {
   try {
-    const res = await fetch(`${getApiBaseUrl()}/metrics`, {
+    const res = await fetch(`${getInternalApiBaseUrl()}/metrics`, {
       cache: 'no-store',
     });
     if (!res.ok) return null;
@@ -544,7 +555,7 @@ export async function getPrometheusMetricSum(metricName: string): Promise<number
 
 export async function getPrometheusMetricSeries(metricName: string): Promise<PrometheusSeriesPoint[]> {
   try {
-    const res = await fetch(`${getApiBaseUrl()}/metrics`, { cache: "no-store" });
+    const res = await fetch(`${getInternalApiBaseUrl()}/metrics`, { cache: "no-store" });
     if (!res.ok) return [];
     const text = await res.text();
     const lines = text.split("\n");
