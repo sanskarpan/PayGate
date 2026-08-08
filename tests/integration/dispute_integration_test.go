@@ -26,7 +26,7 @@ func TestIntegrationDisputeLifecycleAndValidation(t *testing.T) {
 	ctx := context.Background()
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Dispute Merchant", Email: "dispute@test.com", BusinessType: "company",
+		Name: "Dispute Merchant", Email: uniqueTestEmail(t, "dispute"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
