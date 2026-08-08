@@ -26,7 +26,7 @@ func TestIntegrationReportingExportTaxProfileAndStatements(t *testing.T) {
 
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Reporting Merchant", Email: "reporting@test.com", BusinessType: "company",
+		Name: "Reporting Merchant", Email: uniqueTestEmail(t, "reporting"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -131,7 +131,7 @@ func TestIntegrationReconSourceImportAssignmentAndResolution(t *testing.T) {
 
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Recon Ops Merchant", Email: "recon-ops@test.com", BusinessType: "company",
+		Name: "Recon Ops Merchant", Email: uniqueTestEmail(t, "recon-ops"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -255,7 +255,7 @@ func TestIntegrationPaymentMethodStatesForCardAndUPI(t *testing.T) {
 
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Method State Merchant", Email: "method-state@test.com", BusinessType: "company",
+		Name: "Method State Merchant", Email: uniqueTestEmail(t, "method-state"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
