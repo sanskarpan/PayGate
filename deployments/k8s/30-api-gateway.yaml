@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paygate-api-gateway
+  namespace: paygate
+  labels:
+    app.kubernetes.io/name: paygate
+    app.kubernetes.io/component: api-gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paygate
+      app.kubernetes.io/component: api-gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paygate
+        app.kubernetes.io/component: api-gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8090"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api-gateway
+          image: ghcr.io/sanskarpan/paygate/api-gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+          envFrom:
+            - configMapRef:
+                name: paygate-config
+            - secretRef:
+                name: paygate-secrets
+          # /healthz is a liveness signal only. /readyz checks Postgres, so it
+          # gates traffic: a pod that loses its database stops receiving
+          # requests but is not killed and restarted in a loop.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          # The event schema registry is bootstrapped from fixtures at startup,
+          # so allow generous headroom before the liveness probe engages.
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paygate-api-gateway
+  namespace: paygate
+  labels:
+    app.kubernetes.io/name: paygate
+    app.kubernetes.io/component: api-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: paygate
+    app.kubernetes.io/component: api-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: paygate-api-gateway
+  namespace: paygate
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paygate
+      app.kubernetes.io/component: api-gateway
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: paygate-api-gateway
+  namespace: paygate
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: paygate-api-gateway
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
