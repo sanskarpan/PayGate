@@ -7,9 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
+	"os"
+	"syscall"
 	"time"
 )
 
@@ -22,6 +27,78 @@ const (
 	signatureInputHeader = "Signature-Input"
 	httpSignatureHeader  = "Signature"
 )
+
+// ErrBlockedWebhookTarget is reported when a webhook endpoint resolves to an
+// address the deliverer is not permitted to reach.
+var ErrBlockedWebhookTarget = errors.New("webhook target address is blocked")
+
+// dialPolicy decides which resolved IPs a single delivery may connect to. It
+// mirrors validateSubscriptionURL: https may only reach public addresses, and
+// http may only reach loopback.
+type dialPolicy int
+
+const (
+	policyPublicOnly dialPolicy = iota
+	policyLoopbackOnly
+)
+
+type dialPolicyKey struct{}
+
+func withDialPolicy(ctx context.Context, p dialPolicy) context.Context {
+	return context.WithValue(ctx, dialPolicyKey{}, p)
+}
+
+// dialPolicyFrom fails closed: an unlabelled context gets the strict policy.
+func dialPolicyFrom(ctx context.Context) dialPolicy {
+	if p, ok := ctx.Value(dialPolicyKey{}).(dialPolicy); ok {
+		return p
+	}
+	return policyPublicOnly
+}
+
+// loopbackDeliveryAllowed reports whether http-to-loopback delivery is
+// permitted. Local development and the Playwright suite post to
+// http://127.0.0.1 receivers, so it stays on outside production.
+func loopbackDeliveryAllowed() bool {
+	return os.Getenv("APP_ENV") != "production"
+}
+
+// checkWebhookDialAddr validates the address the transport is about to connect
+// to. It runs after DNS resolution, so a hostname that passed validation at
+// subscription time but later resolves to an internal address (DNS rebinding)
+// is still refused.
+func checkWebhookDialAddr(ctx context.Context, network, address string, allowLoopback bool) error {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+	default:
+		return fmt.Errorf("%w: unsupported network %q", ErrBlockedWebhookTarget, network)
+	}
+
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrBlockedWebhookTarget, err)
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return fmt.Errorf("%w: %q is not an IP literal", ErrBlockedWebhookTarget, host)
+	}
+	addr = addr.Unmap()
+
+	if dialPolicyFrom(ctx) == policyLoopbackOnly {
+		if !allowLoopback {
+			return fmt.Errorf("%w: http delivery to %s is disabled in production", ErrBlockedWebhookTarget, addr)
+		}
+		if !addr.IsLoopback() {
+			return fmt.Errorf("%w: %s is not loopback (http allows loopback only)", ErrBlockedWebhookTarget, addr)
+		}
+		return nil
+	}
+
+	if isBlockedWebhookAddr(addr) {
+		return fmt.Errorf("%w: %s", ErrBlockedWebhookTarget, addr)
+	}
+	return nil
+}
 
 // DeliveryResult holds the outcome of a single HTTP delivery attempt.
 type DeliveryResult struct {
@@ -37,9 +114,41 @@ type Deliverer struct {
 }
 
 // NewDeliverer creates a Deliverer with a 10-second per-request timeout.
+//
+// The client deliberately refuses redirects and validates every resolved
+// address at dial time. Without both, a merchant could register a public
+// endpoint that redirects to an internal service (or re-resolve its hostname to
+// one) and read the response back through the delivery log.
 func NewDeliverer() *Deliverer {
+	allowLoopback := loopbackDeliveryAllowed()
+
+	dialer := &net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+		ControlContext: func(ctx context.Context, network, address string, _ syscall.RawConn) error {
+			return checkWebhookDialAddr(ctx, network, address, allowLoopback)
+		},
+	}
+
 	return &Deliverer{
-		client: &http.Client{Timeout: deliveryTimeout},
+		client: &http.Client{
+			Timeout: deliveryTimeout,
+			// Proxy is nil on purpose: an env-configured proxy would bypass the dial guard.
+			Transport: &http.Transport{
+				Proxy:                 nil,
+				DialContext:           dialer.DialContext,
+				ForceAttemptHTTP2:     true,
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   4,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   10 * time.Second,
+				ExpectContinueTimeout: time.Second,
+			},
+			// Record the 3xx itself as a failed delivery instead of following it.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 
@@ -55,6 +164,14 @@ func (d *Deliverer) Deliver(ctx context.Context, url, secret, eventType string, 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return DeliveryResult{Error: err.Error()}
+	}
+	switch req.URL.Scheme {
+	case "http":
+		req = req.WithContext(withDialPolicy(req.Context(), policyLoopbackOnly))
+	case "https":
+		req = req.WithContext(withDialPolicy(req.Context(), policyPublicOnly))
+	default:
+		return DeliveryResult{Error: fmt.Sprintf("%v: unsupported scheme %q", ErrBlockedWebhookTarget, req.URL.Scheme)}
 	}
 	digest := contentDigest(payload)
 	signatureInput := structuredSignatureInput(createdAt)
