@@ -165,7 +165,7 @@ func presentTime(ts *time.Time) any {
 
 func handleError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, ErrRefundNotFound):
+	case errors.Is(err, ErrRefundNotFound), errors.Is(err, ErrPaymentNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
 	case errors.Is(err, ErrPaymentNotCaptured),
 		errors.Is(err, ErrRefundAmountExceedsRefundable),
