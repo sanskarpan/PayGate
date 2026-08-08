@@ -45,7 +45,7 @@ func TestIntegrationIdempotentOrderCreateReplaysResponse(t *testing.T) {
 	ctx := context.Background()
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "Replay Merchant",
-		Email:        "replay@test.com",
+		Email:        uniqueTestEmail(t, "replay"),
 		BusinessType: "company",
 	})
 	if err != nil {
@@ -104,7 +104,7 @@ func TestIntegrationDashboardSessionAuthAndAPIKeyManagement(t *testing.T) {
 	ctx := context.Background()
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "Dashboard Merchant",
-		Email:        "dashboard@test.com",
+		Email:        uniqueTestEmail(t, "dashboard"),
 		BusinessType: "company",
 	})
 	if err != nil {
@@ -173,7 +173,7 @@ func TestIntegrationExpireAuthorizationWindowMarksOrderFailedAndWritesEvent(t *t
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "Expiry Merchant",
-		Email:        "expiry@test.com",
+		Email:        uniqueTestEmail(t, "expiry"),
 		BusinessType: "company",
 	})
 	if err != nil {
