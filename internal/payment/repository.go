@@ -51,6 +51,12 @@ type Repository interface {
 	MarkAuthorizationFailed(ctx context.Context, merchantID, paymentID, errorCode, errorDescription string) error
 	CompleteCardChallenge(ctx context.Context, merchantID, paymentID, callbackToken, gatewayReference, authCode string, completedAt time.Time) (CaptureResult, bool, error)
 	FailCardChallenge(ctx context.Context, merchantID, paymentID, callbackToken, errorCode, errorDescription string, status string, failedAt time.Time) (CaptureResult, bool, error)
+	// ResolveCardChallengeMerchant returns the merchant that owns the challenge
+	// session identified by paymentID and callbackToken. Gateways calling the
+	// public callback URL only ever hold those two values.
+	ResolveCardChallengeMerchant(ctx context.Context, paymentID, callbackToken string) (string, error)
+	// ResolveUPIIntentMerchant is the equivalent lookup for UPI intent callbacks.
+	ResolveUPIIntentMerchant(ctx context.Context, paymentID, callbackToken string) (string, error)
 	CreateUPIIntent(ctx context.Context, in CreateUPIIntentRecordInput) (UPIIntentResult, error)
 	AttachUPIIntentGatewayData(ctx context.Context, merchantID, paymentID string, gatewayResult GatewayUPIIntentResult) (UPIIntentResult, error)
 	GetUPIIntent(ctx context.Context, merchantID, paymentID string) (UPIIntentResult, error)
