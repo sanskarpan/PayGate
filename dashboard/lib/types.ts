@@ -541,6 +541,14 @@ export function truncateMiddle(value: string, head = 8, tail = 6) {
   return `${value.slice(0, head)}...${value.slice(-tail)}`;
 }
 
+// Timestamps are rendered on the server and hydrated in the browser. Without an
+// explicit timeZone, toLocaleString follows the runtime's zone, so a server
+// running UTC and a viewer in any other zone produce different strings and React
+// throws a hydration mismatch (errors #418/#423/#425) on every page showing a
+// time. Pin the zone so both sides agree; en-IN/INR is already assumed
+// throughout the dashboard.
+export const DISPLAY_TIME_ZONE = "Asia/Kolkata";
+
 export function formatTime(unixSeconds: number) {
   if (!unixSeconds) {
     return "Not available";
@@ -548,5 +556,6 @@ export function formatTime(unixSeconds: number) {
   return new Date(unixSeconds * 1000).toLocaleString("en-IN", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: DISPLAY_TIME_ZONE,
   });
 }
