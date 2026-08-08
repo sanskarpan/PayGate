@@ -1,0 +1,66 @@
+# Runs PayGate itself on top of the infrastructure in docker-compose.yml.
+#
+#   docker compose up -d                                   # infrastructure
+#   docker compose -f docker-compose.app.yml up -d --build  # migrations, API, dashboard
+#
+# API       -> http://localhost:8090
+# Dashboard -> http://localhost:3001
+#
+# The dashboard build needs egress to fonts.googleapis.com (next/font/google
+# downloads the font files at build time).
+services:
+  migrate:
+    image: migrate/migrate:v4.19.1
+    container_name: paygate-migrate
+    network_mode: host
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://paygate:paygate@localhost:5435/paygate?sslmode=disable"
+      - "up"
+    restart: "no"
+
+  api-gateway:
+    build:
+      context: .
+      args:
+        SERVICE: api-gateway
+    image: paygate/api-gateway:local
+    container_name: paygate-api-gateway
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${PAYGATE_API_PORT:-8090}:8090"
+    environment:
+      DATABASE_URL: postgres://paygate:paygate@host.docker.internal:5435/paygate?sslmode=disable
+      REDIS_ADDR: host.docker.internal:6380
+      KAFKA_BROKERS: host.docker.internal:9092
+      # Must match the origin the browser uses to reach the dashboard, or the
+      # session cookie set at login will not be sent back.
+      DASHBOARD_ORIGIN: http://localhost:${PAYGATE_DASHBOARD_PORT:-3001}
+      TZ: Asia/Kolkata
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+    image: paygate/dashboard:local
+    container_name: paygate-dashboard
+    depends_on:
+      - api-gateway
+    ports:
+      - "${PAYGATE_DASHBOARD_PORT:-3001}:3001"
+    environment:
+      # The browser posts the login form directly to the API, so this has to be
+      # an address the browser can reach — not a compose service name.
+      API_BASE_URL: http://localhost:${PAYGATE_API_PORT:-8090}
+      # Server-side rendering runs inside this container, where localhost is the
+      # container itself, so it talks to the API over the compose network.
+      API_INTERNAL_BASE_URL: http://api-gateway:8090
+      APP_BASE_URL: http://localhost:${PAYGATE_DASHBOARD_PORT:-3001}
+      TZ: Asia/Kolkata
+    restart: unless-stopped
