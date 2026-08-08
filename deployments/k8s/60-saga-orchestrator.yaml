@@ -1,0 +1,53 @@
+# Optional: run the saga worker as its own deployment instead of in-process.
+#
+# The api-gateway runs the saga worker itself by default. To extract it, set
+# SAGA_WORKER_ENABLED=false on the api-gateway Deployment and apply this.
+# Keep exactly one of the two enabled.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paygate-saga-orchestrator
+  namespace: paygate
+  labels:
+    app.kubernetes.io/name: paygate
+    app.kubernetes.io/component: saga-orchestrator
+spec:
+  # The worker claims work with FOR UPDATE SKIP LOCKED, so more than one
+  # replica is safe.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: paygate
+      app.kubernetes.io/component: saga-orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paygate
+        app.kubernetes.io/component: saga-orchestrator
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: saga-orchestrator
+          image: ghcr.io/sanskarpan/paygate/saga-orchestrator:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: paygate-config
+            - secretRef:
+                name: paygate-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      terminationGracePeriodSeconds: 30
