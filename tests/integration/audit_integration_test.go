@@ -60,7 +60,7 @@ func TestIntegrationAuditLogRecordsOrderCreate(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Audit Merchant", Email: "audit@test.com", BusinessType: "company",
+		Name: "Audit Merchant", Email: uniqueTestEmail(t, "audit"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -122,7 +122,7 @@ func TestIntegrationAuditLogFiltersOutGetRequests(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Audit Read Merchant", Email: "auditread@test.com", BusinessType: "company",
+		Name: "Audit Read Merchant", Email: uniqueTestEmail(t, "auditread"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
