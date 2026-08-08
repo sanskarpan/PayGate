@@ -473,6 +473,48 @@ WHERE id = $1
 	return tx.Commit(ctx)
 }
 
+// ResolveCardChallengeMerchant maps a (payment, callback token) pair back to its
+// merchant. The token is the shared secret in the public callback URL, so a
+// mismatch is reported as a rejected callback rather than a missing payment.
+func (r *PostgresRepository) ResolveCardChallengeMerchant(ctx context.Context, paymentID, callbackToken string) (string, error) {
+	if paymentID == "" || callbackToken == "" {
+		return "", ErrCardChallengeRejected
+	}
+	var merchantID string
+	err := r.db.QueryRow(ctx, `
+SELECT merchant_id
+FROM paygate_payments.card_challenge_sessions
+WHERE payment_id = $1 AND callback_token = $2
+`, paymentID, callbackToken).Scan(&merchantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrCardChallengeRejected
+	}
+	if err != nil {
+		return "", err
+	}
+	return merchantID, nil
+}
+
+// ResolveUPIIntentMerchant is the UPI equivalent of ResolveCardChallengeMerchant.
+func (r *PostgresRepository) ResolveUPIIntentMerchant(ctx context.Context, paymentID, callbackToken string) (string, error) {
+	if paymentID == "" || callbackToken == "" {
+		return "", ErrUPICallbackRejected
+	}
+	var merchantID string
+	err := r.db.QueryRow(ctx, `
+SELECT merchant_id
+FROM paygate_payments.upi_payment_details
+WHERE payment_id = $1 AND callback_token = $2
+`, paymentID, callbackToken).Scan(&merchantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUPICallbackRejected
+	}
+	if err != nil {
+		return "", err
+	}
+	return merchantID, nil
+}
+
 func (r *PostgresRepository) CompleteCardChallenge(ctx context.Context, merchantID, paymentID, callbackToken, gatewayReference, authCode string, completedAt time.Time) (CaptureResult, bool, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
