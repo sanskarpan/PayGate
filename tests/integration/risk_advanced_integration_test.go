@@ -21,7 +21,7 @@ func TestIntegrationRiskBlockedByMerchantFraudConfig(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Risk Config Merchant", Email: "riskconfig@test.com", BusinessType: "company",
+		Name: "Risk Config Merchant", Email: uniqueTestEmail(t, "riskconfig"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -79,7 +79,7 @@ func TestIntegrationRiskHoldAssignAndApproveCapture(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Risk Review Merchant", Email: "riskreview@test.com", BusinessType: "company",
+		Name: "Risk Review Merchant", Email: uniqueTestEmail(t, "riskreview"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -153,7 +153,7 @@ func TestIntegrationRiskHoldBlockReversesAuthorization(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Risk Block Review Merchant", Email: "riskblockreview@test.com", BusinessType: "company",
+		Name: "Risk Block Review Merchant", Email: uniqueTestEmail(t, "riskblockreview"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -224,7 +224,7 @@ func TestIntegrationRiskBlockQueuesReserveEscalationAndApproval(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Reserve Escalation Merchant", Email: "reserve-escalation@test.com", BusinessType: "company",
+		Name: "Reserve Escalation Merchant", Email: uniqueTestEmail(t, "reserve-escalation"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
