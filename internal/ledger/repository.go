@@ -73,6 +73,39 @@ WHERE merchant_id = $1 AND account_code = $2
 	return balance, nil
 }
 
+// GetAllBalances returns the balance of every configured ledger account for a
+// merchant, including accounts with no entries yet (reported as zero). Callers
+// must not hand-pick a subset: omitting clearing accounts makes the reported
+// figures fail to reconcile after refunds, settlements or payouts.
+func (r *Repository) GetAllBalances(ctx context.Context, merchantID string) (map[string]int64, error) {
+	rows, err := r.db.Query(ctx, `
+SELECT a.code, COALESCE(SUM(e.debit_amount - e.credit_amount), 0)
+FROM paygate_ledger.ledger_accounts a
+LEFT JOIN paygate_ledger.ledger_entries e
+  ON e.account_code = a.code AND e.merchant_id = $1
+GROUP BY a.code
+ORDER BY a.code
+`, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("query ledger balances: %w", err)
+	}
+	defer rows.Close()
+
+	balances := map[string]int64{}
+	for rows.Next() {
+		var code string
+		var balance int64
+		if err := rows.Scan(&code, &balance); err != nil {
+			return nil, fmt.Errorf("scan ledger balance: %w", err)
+		}
+		balances[code] = balance
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ledger balances: %w", err)
+	}
+	return balances, nil
+}
+
 func (r *Repository) GetBalanceByCurrency(ctx context.Context, merchantID, accountCode, currency string) (int64, error) {
 	var balance int64
 	err := r.db.QueryRow(ctx, `
