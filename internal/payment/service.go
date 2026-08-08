@@ -668,6 +668,15 @@ func (s *Service) PollUPIIntent(ctx context.Context, merchantID, paymentID strin
 }
 
 func (s *Service) ApplyUPICallback(ctx context.Context, merchantID, paymentID, callbackToken, eventID, status, gatewayReference, errorCode, errorDescription string) (UPIIntentResult, bool, error) {
+	// PSPs calling the public callback URL hold only the payment id and the
+	// callback token, so derive the merchant from the token when absent.
+	if merchantID == "" {
+		resolved, err := s.repo.ResolveUPIIntentMerchant(ctx, paymentID, callbackToken)
+		if err != nil {
+			return UPIIntentResult{}, false, err
+		}
+		merchantID = resolved
+	}
 	intent, err := s.repo.GetUPIIntent(ctx, merchantID, paymentID)
 	if err != nil {
 		return UPIIntentResult{}, false, err
@@ -738,6 +747,17 @@ func (s *Service) persistUPIIntentFailure(ctx context.Context, paymentID, errorC
 func (s *Service) CompleteCardChallenge(ctx context.Context, in CompleteCardChallengeInput) (CaptureResult, bool, error) {
 	if in.Status == "" {
 		in.Status = "succeeded"
+	}
+	// The public callback URL only carries the payment id and the callback
+	// token, so derive the merchant from the token when the caller did not
+	// supply one. A wrong token resolves to nothing and is rejected here rather
+	// than surfacing as a missing payment.
+	if in.MerchantID == "" {
+		merchantID, err := s.repo.ResolveCardChallengeMerchant(ctx, in.PaymentID, in.CallbackToken)
+		if err != nil {
+			return CaptureResult{}, false, err
+		}
+		in.MerchantID = merchantID
 	}
 	current, err := s.repo.GetPayment(ctx, in.MerchantID, in.PaymentID)
 	if err != nil {
