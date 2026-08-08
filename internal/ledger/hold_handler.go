@@ -243,6 +243,8 @@ func presentHold(h Hold) map[string]any {
 
 func handleHoldError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, ErrInvalidHoldInput):
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	case errors.Is(err, ErrHoldNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
 	case errors.Is(err, ErrHoldNotActive), errors.Is(err, ErrHoldAlreadyHandled):
