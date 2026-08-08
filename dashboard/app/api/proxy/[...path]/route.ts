@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { getApiBaseUrl } from "../../../../lib/api";
+import { getInternalApiBaseUrl } from "../../../../lib/api";
 
 function coerce(value: FormDataEntryValue) {
   if (typeof value !== "string") {
@@ -65,7 +65,7 @@ async function forward(req: NextRequest, { params }: { params: { path: string[] 
     body = JSON.stringify(payload);
   }
 
-  const response = await fetch(`${getApiBaseUrl()}/${targetPath}`, {
+  const response = await fetch(`${getInternalApiBaseUrl()}/${targetPath}`, {
     method,
     headers,
     body,
