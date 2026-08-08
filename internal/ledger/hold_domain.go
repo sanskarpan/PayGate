@@ -19,6 +19,9 @@ var (
 	ErrHoldNotActive      = errors.New("ledger hold is not active")
 	ErrHoldInsufficient   = errors.New("insufficient payoutable balance")
 	ErrHoldAlreadyHandled = errors.New("ledger hold is already finalized")
+	// ErrInvalidHoldInput marks a caller mistake so the handler can answer 400
+	// instead of falling through to a 500.
+	ErrInvalidHoldInput = errors.New("account_code, source_type and source_id are required and amount must be positive")
 )
 
 type Hold struct {
