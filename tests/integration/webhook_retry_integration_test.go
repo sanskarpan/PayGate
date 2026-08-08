@@ -23,7 +23,7 @@ func TestIntegrationWebhookSecretRotation(t *testing.T) {
 	ctx := context.Background()
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Rotate Merchant", Email: "rotate@test.com", BusinessType: "company",
+		Name: "Rotate Merchant", Email: uniqueTestEmail(t, "rotate"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -82,7 +82,7 @@ func TestIntegrationWebhookReplay(t *testing.T) {
 	createdMerchant, err := merchant.NewService(
 		merchant.NewPostgresRepository(db),
 	).CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Replay Webhook Merchant", Email: "replay-wh@test.com", BusinessType: "company",
+		Name: "Replay Webhook Merchant", Email: uniqueTestEmail(t, "replay-wh"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -136,7 +136,7 @@ func TestIntegrationWebhookRetryWorker(t *testing.T) {
 	createdMerchant, err := merchant.NewService(
 		merchant.NewPostgresRepository(db),
 	).CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Retry Worker Merchant", Email: "retry-worker@test.com", BusinessType: "company",
+		Name: "Retry Worker Merchant", Email: uniqueTestEmail(t, "retry-worker"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -235,7 +235,7 @@ func TestIntegrationWebhookDeadLettersAfterRetryBudget(t *testing.T) {
 	createdMerchant, err := merchant.NewService(
 		merchant.NewPostgresRepository(db),
 	).CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Dead Letter Merchant", Email: "dead-letter@test.com", BusinessType: "company",
+		Name: "Dead Letter Merchant", Email: uniqueTestEmail(t, "dead-letter"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
