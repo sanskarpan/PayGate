@@ -24,7 +24,7 @@ func TestIntegrationRefundCapturedPayment(t *testing.T) {
 
 	// Set up merchant and API key.
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Refund Merchant", Email: "refund@test.com", BusinessType: "company",
+		Name: "Refund Merchant", Email: uniqueTestEmail(t, "refund"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
