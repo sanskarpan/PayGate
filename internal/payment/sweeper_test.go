@@ -52,6 +52,12 @@ func (f *fakeRepo) CompleteCardChallenge(context.Context, string, string, string
 func (f *fakeRepo) FailCardChallenge(context.Context, string, string, string, string, string, string, time.Time) (CaptureResult, bool, error) {
 	return CaptureResult{}, false, nil
 }
+func (f *fakeRepo) ResolveCardChallengeMerchant(context.Context, string, string) (string, error) {
+	return "", ErrCardChallengeRejected
+}
+func (f *fakeRepo) ResolveUPIIntentMerchant(context.Context, string, string) (string, error) {
+	return "", ErrUPICallbackRejected
+}
 func (f *fakeRepo) CreateUPIIntent(context.Context, CreateUPIIntentRecordInput) (UPIIntentResult, error) {
 	return UPIIntentResult{}, nil
 }
