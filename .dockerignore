@@ -1,0 +1,30 @@
+# Local caches and state — these are large and must never enter the build context.
+.gocache/
+.golangci-cache/
+.gomodcache/
+.pnpm-store/
+.pgdata/
+.redis/
+.minio/
+.prometheus_data/
+.grafana_data/
+
+.git/
+.github/
+.claude/
+
+# Dashboard build output and dependencies (the dashboard has its own Dockerfile).
+dashboard/node_modules/
+dashboard/.next/
+dashboard/playwright-report/
+dashboard/test-results/
+dashboard/playwright/.auth/
+
+# Prebuilt binaries and local env files.
+api-gateway
+examples/**/server-only-go
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
