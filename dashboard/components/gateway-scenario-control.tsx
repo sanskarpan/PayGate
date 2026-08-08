@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import type { GatewayScenario } from "../lib/types";
+import { formatTime, type GatewayScenario } from "../lib/types";
 
 const presets = [
   { mode: "success", label: "Happy Path", desc: "All authorizations succeed", failureRate: 0, delayMs: 0, declineCode: "CARD_DECLINED" },
@@ -199,7 +199,7 @@ export default function GatewayScenarioControl({
                   {sc.failure_rate > 0 ? <span>{Math.round(sc.failure_rate * 100)}% failure</span> : null}
                   {sc.delay_ms > 0 ? <span>{sc.delay_ms}ms delay</span> : null}
                   {sc.active ? <span className="badge-success">active</span> : null}
-                  <span>{new Date(sc.created_at * 1000).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</span>
+                  <span>{formatTime(sc.created_at)}</span>
                 </div>
               </div>
             </div>
