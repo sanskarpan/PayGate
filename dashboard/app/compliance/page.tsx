@@ -97,7 +97,7 @@ export default async function CompliancePage() {
             </form>
             <form action="/api/proxy/v1/merchants/me/onboarding/screenings/run" method="POST">
               <input type="hidden" name="_redirect" value="/compliance" />
-              <input type="hidden" name="screening_type" value="merchant_kyb" />
+              <input type="hidden" name="screening_type" value="kyb" />
               <input type="hidden" name="force_result" value="passed" />
               <button className="ghost-button" type="submit">Run screening</button>
             </form>
