@@ -362,7 +362,9 @@ func run() error {
 				appmetrics.MetricsMiddleware(
 					middleware.Logging(l,
 						middleware.MaxBody(middleware.MaxBodyBytes,
-							rateLimiter.Middleware(mux),
+							middleware.RejectNullBytes(
+								rateLimiter.Middleware(mux),
+							),
 						),
 					),
 				),
