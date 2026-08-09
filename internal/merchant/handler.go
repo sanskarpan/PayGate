@@ -697,6 +697,7 @@ func handleMerchantError(w http.ResponseWriter, err error, step string) {
 		errors.Is(err, ErrInvalidDocumentState),
 		errors.Is(err, ErrInvalidPartyData),
 		errors.Is(err, ErrInvalidCapability),
+		errors.Is(err, ErrInvalidScreeningType),
 		errors.Is(err, ErrInvalidReservePolicy):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{
 			Code:        "BAD_REQUEST_ERROR",

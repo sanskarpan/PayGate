@@ -129,6 +129,14 @@ func (r *PostgresRepository) StartAuthorization(ctx context.Context, in CreateAu
 		return CaptureResult{}, ErrAmountMismatch
 	}
 
+	// Validate the method before it reaches the payment_attempts CHECK
+	// constraint, which would otherwise surface as an unhandled 500.
+	switch in.Method {
+	case "card", "upi", "netbanking", "wallet":
+	default:
+		return CaptureResult{}, ErrInvalidPaymentMethod
+	}
+
 	var orderStatus string
 	var orderAmount int64
 	var orderAmountDue int64
@@ -167,6 +175,28 @@ FOR UPDATE
 		return CaptureResult{}, ErrAmountMismatch
 	}
 
+	// Cap the order's total live exposure. The order row is locked above, but
+	// its status only becomes "paid" once something is captured, so without
+	// this an order could be authorized any number of times while it sat in
+	// "attempted" and every one of those authorizations could then be captured
+	// — charging the customer a multiple of the order value.
+	//
+	// Only payments that can still take money count; failed, reversed and
+	// auto-refunded attempts release their claim.
+	var committedAmount int64
+	if err := tx.QueryRow(ctx, `
+SELECT COALESCE(SUM(amount), 0)
+FROM paygate_payments.payments
+WHERE order_id = $1
+  AND merchant_id = $2
+  AND status NOT IN ('failed', 'authorization_reversed', 'auto_refunded')
+`, in.OrderID, in.MerchantID).Scan(&committedAmount); err != nil {
+		return CaptureResult{}, fmt.Errorf("sum order payments: %w", err)
+	}
+	if committedAmount+in.Amount > orderAmount {
+		return CaptureResult{}, ErrOrderAmountExceeded
+	}
+
 	attemptID := idgen.New("attempt")
 	paymentID := in.PaymentID
 	if paymentID == "" {
@@ -177,7 +207,7 @@ FOR UPDATE
 INSERT INTO paygate_payments.payment_attempts
 (id, order_id, merchant_id, payment_id, amount, currency, method, provider, routing_reason, attempted_providers, status, idempotency_key)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'processing',$11)
-`, attemptID, in.OrderID, in.MerchantID, paymentID, in.Amount, in.Currency, in.Method, nonEmptyText(in.Provider), nonEmptyText(in.RoutingReason), normalizeAttemptedProviders(in.AttemptedProviders), in.IdempotencyKey)
+`, attemptID, in.OrderID, in.MerchantID, paymentID, in.Amount, in.Currency, in.Method, nonEmptyText(in.Provider), nonEmptyText(in.RoutingReason), normalizeAttemptedProviders(in.AttemptedProviders), nullableText(in.IdempotencyKey))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if in.IdempotencyKey != "" && errors.As(err, &pgErr) && pgErr.Code == "23505" {

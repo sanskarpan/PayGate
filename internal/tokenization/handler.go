@@ -174,6 +174,8 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	case errors.Is(err, ErrCardTokenNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
+	case errors.Is(err, ErrCardTokenExists):
+		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "CARD_TOKEN_EXISTS", Description: err.Error()})
 	case errors.Is(err, ErrCardTokenInactive):
 		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	default:

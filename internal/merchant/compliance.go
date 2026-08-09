@@ -75,6 +75,7 @@ var (
 	ErrInvalidCapability             = errors.New("invalid merchant capability")
 	ErrInvalidDocumentState          = errors.New("invalid onboarding document state transition")
 	ErrInvalidPartyData              = errors.New("invalid onboarding party data")
+	ErrInvalidScreeningType          = errors.New("screening_type must be one of kyb, beneficial_owner, controller")
 	ErrInvalidReservePolicy          = errors.New("invalid reserve policy")
 	ErrReserveEscalationNotFound     = errors.New("reserve escalation not found")
 )

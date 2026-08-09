@@ -33,6 +33,7 @@ var (
 	ErrInvalidExpiry     = errors.New("invalid card expiry")
 	ErrCardTokenNotFound = errors.New("card token not found")
 	ErrCardTokenInactive = errors.New("card token is not active")
+	ErrCardTokenExists   = errors.New("an active token already exists for this card")
 )
 
 type CardToken struct {

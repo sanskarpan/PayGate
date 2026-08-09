@@ -29,6 +29,7 @@ var (
 	ErrInvalidAmount     = errors.New("amount must be positive")
 	ErrInvalidCurrency   = errors.New("currency must be INR or USD")
 	ErrInvalidTransition = errors.New("invalid state transition")
+	ErrInvalidCursor     = errors.New("cursor is not a valid pagination cursor")
 )
 
 type Order struct {

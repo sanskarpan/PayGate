@@ -178,31 +178,81 @@ func (h *Handler) upsertFraudConfig(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
 		return
 	}
-	cfg := DefaultMerchantFraudConfig(p.MerchantID)
+	// Start from whatever is stored (falling back to defaults) so an omitted
+	// field keeps its current value. Decoding into plain ints would zero every
+	// key the caller left out, which both destroys the config and violates the
+	// positive-value constraints on the table, surfacing as a 500.
+	cfg, err := h.svc.GetMerchantFraudConfig(r.Context(), p.MerchantID)
+	if err != nil {
+		cfg = DefaultMerchantFraudConfig(p.MerchantID)
+	}
 	var body struct {
-		IPVelocityThreshold       int      `json:"ip_velocity_threshold"`
-		DeviceVelocityThreshold   int      `json:"device_velocity_threshold"`
-		MerchantVelocityThreshold int      `json:"merchant_velocity_threshold"`
-		AmountSpikeFactor         int      `json:"amount_spike_factor"`
-		ReviewThreshold           int      `json:"review_threshold"`
-		BlockThreshold            int      `json:"block_threshold"`
+		IPVelocityThreshold       *int     `json:"ip_velocity_threshold"`
+		DeviceVelocityThreshold   *int     `json:"device_velocity_threshold"`
+		MerchantVelocityThreshold *int     `json:"merchant_velocity_threshold"`
+		AmountSpikeFactor         *int     `json:"amount_spike_factor"`
+		ReviewThreshold           *int     `json:"review_threshold"`
+		BlockThreshold            *int     `json:"block_threshold"`
 		BlockedCountries          []string `json:"blocked_countries"`
 		BlockedBINs               []string `json:"blocked_bins"`
-		ReviewOnCountryMismatch   bool     `json:"review_on_country_mismatch"`
+		ReviewOnCountryMismatch   *bool    `json:"review_on_country_mismatch"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
 		return
 	}
-	cfg.IPVelocityThreshold = body.IPVelocityThreshold
-	cfg.DeviceVelocityThreshold = body.DeviceVelocityThreshold
-	cfg.MerchantVelocityThreshold = body.MerchantVelocityThreshold
-	cfg.AmountSpikeFactor = body.AmountSpikeFactor
-	cfg.ReviewThreshold = body.ReviewThreshold
-	cfg.BlockThreshold = body.BlockThreshold
-	cfg.BlockedCountries = body.BlockedCountries
-	cfg.BlockedBINs = body.BlockedBINs
-	cfg.ReviewOnCountryMismatch = body.ReviewOnCountryMismatch
+
+	positive := map[string]*int{
+		"ip_velocity_threshold":       body.IPVelocityThreshold,
+		"device_velocity_threshold":   body.DeviceVelocityThreshold,
+		"merchant_velocity_threshold": body.MerchantVelocityThreshold,
+		"amount_spike_factor":         body.AmountSpikeFactor,
+	}
+	for field, value := range positive {
+		if value != nil && *value <= 0 {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: field + " must be greater than zero"})
+			return
+		}
+	}
+	nonNegative := map[string]*int{
+		"review_threshold": body.ReviewThreshold,
+		"block_threshold":  body.BlockThreshold,
+	}
+	for field, value := range nonNegative {
+		if value != nil && *value < 0 {
+			httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: field + " must not be negative"})
+			return
+		}
+	}
+
+	if body.IPVelocityThreshold != nil {
+		cfg.IPVelocityThreshold = *body.IPVelocityThreshold
+	}
+	if body.DeviceVelocityThreshold != nil {
+		cfg.DeviceVelocityThreshold = *body.DeviceVelocityThreshold
+	}
+	if body.MerchantVelocityThreshold != nil {
+		cfg.MerchantVelocityThreshold = *body.MerchantVelocityThreshold
+	}
+	if body.AmountSpikeFactor != nil {
+		cfg.AmountSpikeFactor = *body.AmountSpikeFactor
+	}
+	if body.ReviewThreshold != nil {
+		cfg.ReviewThreshold = *body.ReviewThreshold
+	}
+	if body.BlockThreshold != nil {
+		cfg.BlockThreshold = *body.BlockThreshold
+	}
+	if body.BlockedCountries != nil {
+		cfg.BlockedCountries = body.BlockedCountries
+	}
+	if body.BlockedBINs != nil {
+		cfg.BlockedBINs = body.BlockedBINs
+	}
+	if body.ReviewOnCountryMismatch != nil {
+		cfg.ReviewOnCountryMismatch = *body.ReviewOnCountryMismatch
+	}
+
 	out, err := h.svc.UpsertMerchantFraudConfig(r.Context(), cfg)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "failed to update fraud config"})

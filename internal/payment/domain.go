@@ -38,6 +38,8 @@ var (
 	ErrOrderExpired          = errors.New("order is expired")
 	ErrCurrencyMismatch      = errors.New("payment currency must match order currency")
 	ErrAmountMismatch        = errors.New("payment amount does not match order constraints")
+	ErrOrderAmountExceeded   = errors.New("payments already in flight for this order would exceed the order amount")
+	ErrInvalidPaymentMethod  = errors.New("method must be one of card, upi, netbanking, wallet")
 	ErrAuthorizationDeclined = errors.New("payment authorization declined by gateway")
 	ErrInvalidPaymentAmount  = errors.New("payment amount must be greater than zero")
 	ErrUPIIntentNotFound     = errors.New("upi intent not found")

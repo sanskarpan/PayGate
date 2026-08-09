@@ -127,7 +127,7 @@ func presentOrder(o Order) map[string]any {
 
 func handleOrderError(w http.ResponseWriter, err error, step string) {
 	switch {
-	case errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrInvalidCurrency):
+	case errors.Is(err, ErrInvalidAmount), errors.Is(err, ErrInvalidCurrency), errors.Is(err, ErrInvalidCursor):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error(), Source: "business", Step: step, Reason: "input_validation_failed"})
 	case errors.Is(err, ErrOrderNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error(), Source: "business", Step: step, Reason: "resource_missing"})

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sanskarpan/PayGate/internal/common/idgen"
 )
@@ -29,7 +30,7 @@ func (r *PostgresRepository) CreateCardToken(ctx context.Context, in CreateCardT
 
 	var out CardToken
 	var meta []byte
-	if err := tx.QueryRow(ctx, `
+	insertErr := tx.QueryRow(ctx, `
 INSERT INTO paygate_vault.card_tokens
 (id, merchant_id, token_class, status, fingerprint_hash, last4, bin, brand, exp_month, exp_year, customer_ref, network_reference, metadata)
 VALUES ($1,$2,$3,'active',$4,$5,$6,$7,$8,$9,$10,$11,$12)
@@ -51,8 +52,17 @@ RETURNING id, merchant_id, token_class, status, last4, bin, brand, exp_month, ex
 		&out.LastUsedAt,
 		&out.ConsumedAt,
 		&out.DisabledAt,
-	); err != nil {
-		return CardToken{}, fmt.Errorf("insert card token: %w", err)
+	)
+	if insertErr != nil {
+		// A repeat save of the same card by the same merchant hits the partial
+		// unique index on the active fingerprint. That is a caller conflict —
+		// the normal "returning customer re-saves their card" path — not a
+		// server fault.
+		var pgErr *pgconn.PgError
+		if errors.As(insertErr, &pgErr) && pgErr.Code == "23505" {
+			return CardToken{}, ErrCardTokenExists
+		}
+		return CardToken{}, fmt.Errorf("insert card token: %w", insertErr)
 	}
 	applyMetadata(&out, meta)
 	if err := writeAuditTx(ctx, tx, out.ID, out.MerchantID, "", "tokenized", "", "merchant_api"); err != nil {

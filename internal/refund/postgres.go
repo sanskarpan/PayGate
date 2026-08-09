@@ -225,9 +225,11 @@ WHERE id = $1 AND merchant_id = $2
 		return Refund{}, err
 	}
 
-	ref.Status = StateProcessed
-	ref.ProcessedAt = &now
-	return ref, nil
+	// Re-read the committed row. The SELECT above only pulls the columns the
+	// transaction needs, so fields like created_at are still zero on `ref`, and
+	// returning it directly made the create response report a zero timestamp
+	// (-62135596800) even though the stored row was correct.
+	return r.GetRefund(ctx, ref.MerchantID, refundID)
 }
 
 // FailRefund transitions processing → failed and releases amount_refunded_pending.
