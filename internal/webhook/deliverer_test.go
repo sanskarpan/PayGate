@@ -37,6 +37,8 @@ func TestSignAndVerify(t *testing.T) {
 }
 
 func TestDelivererSuccessfulDelivery(t *testing.T) {
+	// The deliverer refuses loopback over http in production; httptest is loopback.
+	t.Setenv("APP_ENV", "development")
 	received := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -98,6 +100,8 @@ func TestVerifyHTTPMessageSignatureRejectsTampering(t *testing.T) {
 }
 
 func TestDelivererFailsOn4xx5xx(t *testing.T) {
+	// The deliverer refuses loopback over http in production; httptest is loopback.
+	t.Setenv("APP_ENV", "development")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -128,6 +132,8 @@ func TestDelivererNetworkError(t *testing.T) {
 }
 
 func TestDelivererSignatureModes(t *testing.T) {
+	// The deliverer refuses loopback over http in production; httptest is loopback.
+	t.Setenv("APP_ENV", "development")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mode := r.URL.Query().Get("mode")
 		switch mode {
