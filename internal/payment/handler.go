@@ -646,10 +646,13 @@ func handleError(w http.ResponseWriter, err error) {
 		errors.Is(err, ErrCurrencyMismatch),
 		errors.Is(err, ErrAmountMismatch),
 		errors.Is(err, ErrInvalidPaymentAmount),
+		errors.Is(err, ErrInvalidPaymentMethod),
 		errors.Is(err, ErrInvalidUPIVPA),
 		errors.Is(err, ErrPaymentMethodTokenRequired),
 		errors.Is(err, ErrPaymentMethodTokenInvalid):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
+	case errors.Is(err, ErrOrderAmountExceeded):
+		httpx.WriteError(w, http.StatusConflict, httpx.APIError{Code: "ORDER_AMOUNT_EXCEEDED", Description: err.Error()})
 	case errors.Is(err, ErrUPICallbackRejected):
 		httpx.WriteError(w, http.StatusForbidden, httpx.APIError{Code: "FORBIDDEN", Description: err.Error()})
 	case errors.Is(err, ErrCardChallengeRejected):
