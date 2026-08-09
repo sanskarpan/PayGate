@@ -25,12 +25,12 @@ export default function ComplianceOpsConsole({ merchantID, onboarding, capabilit
   const [reviewState, setReviewState] = useState<OnboardingDecision>("in_review");
   const [reviewNotes, setReviewNotes] = useState("");
 
-  async function run(path: string, body: unknown, success: string) {
+  async function run(path: string, body: unknown, success: string, method: "POST" | "PUT" = "POST") {
     setPending(true);
     setMessage("");
     try {
       const response = await fetch(`/api/proxy${path}`, {
-        method: "POST",
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -79,6 +79,8 @@ export default function ComplianceOpsConsole({ merchantID, onboarding, capabilit
         ],
       },
       `Capability ${item.capability_code} updated.`,
+      // The capabilities route is registered as PUT; posting to it returns 405.
+      "PUT",
     );
   }
 
