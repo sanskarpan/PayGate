@@ -22,7 +22,7 @@ func TestIntegrationTeamInviteAndAccept(t *testing.T) {
 
 	// Create a merchant and a dashboard admin user.
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "RBAC Merchant", Email: "rbac@test.com", BusinessType: "company",
+		Name: "RBAC Merchant", Email: uniqueTestEmail(t, "rbac"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -138,7 +138,7 @@ func TestIntegrationAPIKeyIPAllowlist(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "IP Allowlist Merchant", Email: "ipallowlist@test.com", BusinessType: "company",
+		Name: "IP Allowlist Merchant", Email: uniqueTestEmail(t, "ipallowlist"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)

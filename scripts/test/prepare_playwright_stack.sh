@@ -8,13 +8,34 @@ cd "${ROOT_DIR}"
 
 docker compose -f docker-compose.test.yml up -d postgres-test redis-test >/dev/null
 
-until docker exec paygate-postgres-test pg_isready -U paygate -d postgres >/dev/null 2>&1; do
-  sleep 1
-done
+# Wait for a service to answer a real command, not just a liveness probe.
+#
+# pg_isready succeeds against the TEMPORARY server that initdb runs on a first
+# boot. That server then shuts down so the real one can start, so a single
+# successful probe is not enough: the next psql call fails with
+# "the database system is shutting down". Require several consecutive
+# successes, and bound the wait so CI fails loudly instead of hanging.
+wait_for() {
+  local name="$1" required="$2" attempts="$3"
+  shift 3
+  local streak=0
+  for _ in $(seq 1 "${attempts}"); do
+    if "$@" >/dev/null 2>&1; then
+      streak=$((streak + 1))
+      if [[ "${streak}" -ge "${required}" ]]; then
+        return 0
+      fi
+    else
+      streak=0
+    fi
+    sleep 1
+  done
+  echo "timed out waiting for ${name} to become ready" >&2
+  return 1
+}
 
-until docker exec paygate-redis-test redis-cli ping >/dev/null 2>&1; do
-  sleep 1
-done
+wait_for "postgres-test" 5 120 docker exec paygate-postgres-test psql -U paygate -d postgres -c 'SELECT 1'
+wait_for "redis-test" 3 60 docker exec paygate-redis-test redis-cli ping
 
 DATABASE_NAME="${DATABASE_URL##*/}"
 DATABASE_NAME="${DATABASE_NAME%%\?*}"

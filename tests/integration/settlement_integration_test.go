@@ -24,7 +24,7 @@ func TestIntegrationSettlementBatch(t *testing.T) {
 	ctx := context.Background()
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Settlement Merchant", Email: "settlement@test.com", BusinessType: "company",
+		Name: "Settlement Merchant", Email: uniqueTestEmail(t, "settlement"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)

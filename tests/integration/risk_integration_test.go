@@ -107,7 +107,7 @@ func TestIntegrationRiskEventRecordedOnPaymentAuthorize(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Risk Merchant", Email: "risk@test.com", BusinessType: "company",
+		Name: "Risk Merchant", Email: uniqueTestEmail(t, "risk"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -177,7 +177,7 @@ func TestIntegrationRiskEventListAndResolve(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Risk Resolve Merchant", Email: "riskresolve@test.com", BusinessType: "company",
+		Name: "Risk Resolve Merchant", Email: uniqueTestEmail(t, "riskresolve"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)

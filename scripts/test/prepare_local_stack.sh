@@ -25,17 +25,35 @@ cd "${ROOT_DIR}"
 
 docker compose up -d postgres redis kafka >/dev/null
 
-until docker exec "${POSTGRES_CONTAINER}" pg_isready -U paygate -d postgres >/dev/null 2>&1; do
-  sleep 2
-done
+# Wait for a service to answer a real command, not just a liveness probe.
+#
+# pg_isready succeeds against the TEMPORARY server that initdb runs on a first
+# boot. That server then shuts down so the real one can start, so a single
+# successful probe is not enough: the next psql call fails with
+# "the database system is shutting down". Require several consecutive
+# successes, and bound the wait so a broken stack fails loudly.
+wait_for() {
+  local name="$1" required="$2" attempts="$3"
+  shift 3
+  local streak=0
+  for _ in $(seq 1 "${attempts}"); do
+    if "$@" >/dev/null 2>&1; then
+      streak=$((streak + 1))
+      if [[ "${streak}" -ge "${required}" ]]; then
+        return 0
+      fi
+    else
+      streak=0
+    fi
+    sleep 2
+  done
+  echo "timed out waiting for ${name} to become ready" >&2
+  return 1
+}
 
-until docker exec "${REDIS_CONTAINER}" redis-cli ping >/dev/null 2>&1; do
-  sleep 2
-done
-
-until docker exec "${KAFKA_CONTAINER}" /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; do
-  sleep 2
-done
+wait_for "postgres" 5 90 docker exec "${POSTGRES_CONTAINER}" psql -U paygate -d postgres -c 'SELECT 1'
+wait_for "redis" 3 45 docker exec "${REDIS_CONTAINER}" redis-cli ping
+wait_for "kafka" 2 60 docker exec "${KAFKA_CONTAINER}" /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
 
 if [[ "${RESET_DATABASE}" == "true" ]]; then
   docker exec "${POSTGRES_CONTAINER}" psql -U paygate -d postgres -v ON_ERROR_STOP=1 \

@@ -22,7 +22,7 @@ func TestIntegrationRetentionRunAndLegalHoldLifecycle(t *testing.T) {
 	ctx := context.Background()
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "Retention Merchant",
-		Email:        "retention@test.com",
+		Email:        uniqueTestEmail(t, "retention"),
 		BusinessType: "company",
 	})
 	if err != nil {

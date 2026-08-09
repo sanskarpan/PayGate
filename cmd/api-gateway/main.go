@@ -336,15 +336,13 @@ func run() error {
 			httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
 			return
 		}
-		accountCodes := []string{"CUSTOMER_RECEIVABLE", "MERCHANT_PAYABLE", "PLATFORM_FEE_REVENUE"}
-		balances := make(map[string]int64, len(accountCodes))
-		for _, code := range accountCodes {
-			bal, err := ledgerSvc.GetBalance(r.Context(), p.MerchantID, code)
-			if err != nil {
-				httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "could not retrieve balance"})
-				return
-			}
-			balances[code] = bal
+		// Report every ledger account. Reporting only a hand-picked subset hides
+		// the clearing and reserve accounts, so the numbers stop reconciling as
+		// soon as a refund, settlement or payout is in flight.
+		balances, err := ledgerSvc.GetAllBalances(r.Context(), p.MerchantID)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "could not retrieve balance"})
+			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"entity":      "merchant_balance",

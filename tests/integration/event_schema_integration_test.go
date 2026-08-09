@@ -27,7 +27,7 @@ func TestIntegrationEventSchemaRegistryAndDualPublish(t *testing.T) {
 	}
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "Schema Merchant",
-		Email:        "schema@test.com",
+		Email:        uniqueTestEmail(t, "schema"),
 		BusinessType: "company",
 	})
 	if err != nil {
@@ -204,7 +204,7 @@ func TestIntegrationEventSchemaDeprecatedVersionAlerts(t *testing.T) {
 	ctx := context.Background()
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "Schema Alert Merchant",
-		Email:        "schema-alert@test.com",
+		Email:        uniqueTestEmail(t, "schema-alert"),
 		BusinessType: "company",
 	})
 	if err != nil {

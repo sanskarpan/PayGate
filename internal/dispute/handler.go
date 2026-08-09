@@ -117,10 +117,20 @@ func (h *Handler) submitEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var evidence map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&evidence); err != nil {
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: "invalid request body"})
 		return
+	}
+
+	// The documented shape is {"evidence": {...}}, but the whole body used to be
+	// stored verbatim, which nested it as evidence.evidence. Unwrap the wrapper
+	// when present and keep accepting a bare object for existing callers.
+	evidence := body
+	if len(body) == 1 {
+		if inner, ok := body["evidence"].(map[string]any); ok {
+			evidence = inner
+		}
 	}
 
 	d, err := h.svc.SubmitEvidence(r.Context(), p.MerchantID, r.PathValue("disputeID"), evidence)

@@ -34,7 +34,7 @@ func TestIntegrationOpenAPIContractCoreRoutes(t *testing.T) {
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
 		Name:         "OpenAPI Contract Merchant",
-		Email:        "openapi-contract@test.com",
+		Email:        uniqueTestEmail(t, "openapi-contract"),
 		BusinessType: "company",
 	})
 	if err != nil {

@@ -29,6 +29,7 @@ const (
 var (
 	ErrInvalidTransition             = errors.New("invalid refund state transition")
 	ErrRefundNotFound                = errors.New("refund not found")
+	ErrPaymentNotFound               = errors.New("payment not found")
 	ErrPaymentNotCaptured            = errors.New("refund requires a captured payment")
 	ErrRefundAmountExceedsRefundable = errors.New("refund amount exceeds refundable balance")
 	ErrZeroRefundAmount              = errors.New("refund amount must be greater than zero")

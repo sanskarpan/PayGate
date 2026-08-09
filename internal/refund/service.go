@@ -31,7 +31,16 @@ func (s *Service) Get(ctx context.Context, merchantID, refundID string) (Refund,
 }
 
 // ListByPayment returns all refunds for a payment, scoped to the merchant.
+// An unknown payment is a 404 rather than an empty collection, which otherwise
+// makes a typo indistinguishable from a payment that simply has no refunds.
 func (s *Service) ListByPayment(ctx context.Context, merchantID, paymentID string) ([]Refund, error) {
+	exists, err := s.repo.PaymentExists(ctx, merchantID, paymentID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrPaymentNotFound
+	}
 	return s.repo.ListRefunds(ctx, merchantID, paymentID)
 }
 

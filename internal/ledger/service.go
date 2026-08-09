@@ -50,6 +50,11 @@ func (s *Service) GetBalance(ctx context.Context, merchantID, accountCode string
 	return s.repo.GetBalance(ctx, merchantID, accountCode)
 }
 
+// GetAllBalances returns every ledger account balance for a merchant.
+func (s *Service) GetAllBalances(ctx context.Context, merchantID string) (map[string]int64, error) {
+	return s.repo.GetAllBalances(ctx, merchantID)
+}
+
 func (s *Service) GetBalanceByCurrency(ctx context.Context, merchantID, accountCode, currency string) (int64, error) {
 	if currency == "" {
 		currency = "INR"
@@ -65,7 +70,7 @@ func (s *Service) CreateHold(ctx context.Context, in CreateHoldInput) (Hold, err
 	in.SourceType = strings.TrimSpace(in.SourceType)
 	in.SourceID = strings.TrimSpace(in.SourceID)
 	if in.AccountCode == "" || in.SourceType == "" || in.SourceID == "" || in.Amount <= 0 {
-		return Hold{}, fmt.Errorf("invalid hold input")
+		return Hold{}, ErrInvalidHoldInput
 	}
 	return s.repo.CreateHold(ctx, in)
 }

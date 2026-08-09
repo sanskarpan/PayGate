@@ -28,6 +28,11 @@ type Repository interface {
 
 	// ListRefunds returns all refunds for a payment, scoped to merchantID.
 	ListRefunds(ctx context.Context, merchantID, paymentID string) ([]Refund, error)
+
+	// PaymentExists reports whether the payment exists and belongs to merchantID,
+	// so listing refunds for an unknown payment can 404 instead of returning an
+	// empty collection.
+	PaymentExists(ctx context.Context, merchantID, paymentID string) (bool, error)
 }
 
 // CreateInput carries the caller-supplied fields for a new refund.

@@ -26,7 +26,7 @@ func TestIntegrationWebhookSubscriptionCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Webhook Merchant", Email: "webhook@test.com", BusinessType: "company",
+		Name: "Webhook Merchant", Email: uniqueTestEmail(t, "webhook"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -170,7 +170,7 @@ func TestIntegrationWebhookDelivery(t *testing.T) {
 	defer mockServer.Close()
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Delivery Merchant", Email: "delivery@test.com", BusinessType: "company",
+		Name: "Delivery Merchant", Email: uniqueTestEmail(t, "delivery"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -264,7 +264,7 @@ func TestIntegrationWebhookIdempotentDelivery(t *testing.T) {
 	createdMerchant, err := merchant.NewService(
 		merchant.NewPostgresRepository(db),
 	).CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Idem Webhook Merchant", Email: "idem-wh@test.com", BusinessType: "company",
+		Name: "Idem Webhook Merchant", Email: uniqueTestEmail(t, "idem-wh"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -310,7 +310,7 @@ func TestIntegrationWebhookConcurrentDeliveryReservesSingleAttempt(t *testing.T)
 	ctx := context.Background()
 	_, merchantSvc, _, _ := buildGatewayMux(db)
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Concurrent Webhook Merchant", Email: "webhook-concurrent@test.com", BusinessType: "company",
+		Name: "Concurrent Webhook Merchant", Email: uniqueTestEmail(t, "webhook-concurrent"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)

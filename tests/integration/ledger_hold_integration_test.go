@@ -26,7 +26,7 @@ func TestIntegrationLedgerHoldCommitPostsExactlyOnce(t *testing.T) {
 	mux, merchantSvc, _, _ := buildGatewayMux(db)
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Hold Commit Merchant", Email: "hold-commit@test.com", BusinessType: "company",
+		Name: "Hold Commit Merchant", Email: uniqueTestEmail(t, "hold-commit"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -122,7 +122,7 @@ func TestIntegrationPayoutBlockedByActiveLedgerHoldUntilRelease(t *testing.T) {
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Hold Block Merchant", Email: "hold-block@test.com", BusinessType: "company",
+		Name: "Hold Block Merchant", Email: uniqueTestEmail(t, "hold-block"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -240,7 +240,7 @@ func TestIntegrationLedgerHoldExtendAndForceExpire(t *testing.T) {
 	mux, merchantSvc, _, _ := buildGatewayMux(db)
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Hold Extend Merchant", Email: "hold-extend@test.com", BusinessType: "company",
+		Name: "Hold Extend Merchant", Email: uniqueTestEmail(t, "hold-extend"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)

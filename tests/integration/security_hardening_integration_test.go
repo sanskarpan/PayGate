@@ -90,7 +90,7 @@ func TestIntegrationWebhookSecretRotationGracePeriod(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Rotation Merchant", Email: "rotation@test.com", BusinessType: "company",
+		Name: "Rotation Merchant", Email: uniqueTestEmail(t, "rotation"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -167,7 +167,7 @@ func TestIntegrationWebhookRejectsInsecurePublicHTTPURL(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Webhook URL Merchant", Email: "webhook-url@test.com", BusinessType: "company",
+		Name: "Webhook URL Merchant", Email: uniqueTestEmail(t, "webhook-url"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -210,7 +210,7 @@ func TestIntegrationGatewayAdminEndpointsRequireAdminScope(t *testing.T) {
 	})
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Admin Control Merchant", Email: "admin-control@test.com", BusinessType: "company",
+		Name: "Admin Control Merchant", Email: uniqueTestEmail(t, "admin-control"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -260,7 +260,7 @@ func TestIntegrationPayoutRejectedWhileSettlementOnHold(t *testing.T) {
 	ctx := context.Background()
 
 	m, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Payout Hold Merchant", Email: "payout-hold@test.com", BusinessType: "company",
+		Name: "Payout Hold Merchant", Email: uniqueTestEmail(t, "payout-hold"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)

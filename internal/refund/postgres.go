@@ -433,6 +433,22 @@ WHERE id = $1 AND merchant_id = $2
 }
 
 // ListRefunds returns all refunds for a payment, scoped to merchantID.
+func (r *PostgresRepository) PaymentExists(ctx context.Context, merchantID, paymentID string) (bool, error) {
+	if merchantID == "" || paymentID == "" {
+		return false, nil
+	}
+	var exists bool
+	err := r.db.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM paygate_payments.payments WHERE id = $1 AND merchant_id = $2
+)
+`, paymentID, merchantID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
 func (r *PostgresRepository) ListRefunds(ctx context.Context, merchantID, paymentID string) ([]Refund, error) {
 	rows, err := r.db.Query(ctx, `
 SELECT id, payment_id, order_id, merchant_id, amount, currency,

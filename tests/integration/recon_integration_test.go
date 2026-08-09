@@ -23,7 +23,7 @@ func TestIntegrationReconLedgerBalanceHappyPath(t *testing.T) {
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Recon Merchant", Email: "recon@test.com", BusinessType: "company",
+		Name: "Recon Merchant", Email: uniqueTestEmail(t, "recon"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -76,7 +76,7 @@ func TestIntegrationReconPaymentLedgerHappyPath(t *testing.T) {
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Recon PL Merchant", Email: "recon-pl@test.com", BusinessType: "company",
+		Name: "Recon PL Merchant", Email: uniqueTestEmail(t, "recon-pl"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -129,7 +129,7 @@ func TestIntegrationReconThreeWayHappyPath(t *testing.T) {
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Recon TW Merchant", Email: "recon-tw@test.com", BusinessType: "company",
+		Name: "Recon TW Merchant", Email: uniqueTestEmail(t, "recon-tw"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
@@ -188,7 +188,7 @@ func TestIntegrationReconDetectsMismatch(t *testing.T) {
 	mux, merchantSvc, orderSvc, paymentSvc := buildGatewayMux(db)
 
 	createdMerchant, err := merchantSvc.CreateMerchant(ctx, merchant.CreateMerchantInput{
-		Name: "Recon Mismatch Merchant", Email: "recon-mm@test.com", BusinessType: "company",
+		Name: "Recon Mismatch Merchant", Email: uniqueTestEmail(t, "recon-mm"), BusinessType: "company",
 	})
 	if err != nil {
 		t.Fatalf("create merchant: %v", err)
