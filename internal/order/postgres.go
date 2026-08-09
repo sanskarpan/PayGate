@@ -185,7 +185,9 @@ WHERE merchant_id = $1`
 	if f.Cursor != "" {
 		c, err := decodeCursor(f.Cursor)
 		if err != nil {
-			return ListResult{}, fmt.Errorf("decode cursor: %w", err)
+			// A client-supplied cursor is caller input: a malformed one is a
+			// 400, not an unhandled server error.
+			return ListResult{}, ErrInvalidCursor
 		}
 		query += fmt.Sprintf(" AND (created_at, id) < ($%d, $%d)", argPos, argPos+1)
 		args = append(args, c.CreatedAt, c.ID)
