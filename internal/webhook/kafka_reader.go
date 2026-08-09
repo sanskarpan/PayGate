@@ -9,9 +9,17 @@ import (
 	kafka "github.com/segmentio/kafka-go"
 )
 
-// topicProvisionTimeout bounds the best-effort topic creation performed before
-// the consumer group is joined.
-const topicProvisionTimeout = 15 * time.Second
+const (
+	// topicProvisionTimeout bounds the best-effort topic creation performed
+	// before the consumer group is joined.
+	topicProvisionTimeout = 15 * time.Second
+
+	// handlerMaxAttempts is how many times a fetched message is handed to the
+	// handler before its offset is committed regardless.
+	handlerMaxAttempts = 3
+	// handlerRetryDelay is the base backoff between handler attempts.
+	handlerRetryDelay = 500 * time.Millisecond
+)
 
 // KafkaReader implements KafkaConsumer using segmentio/kafka-go.
 type KafkaReader struct {
@@ -61,7 +69,12 @@ func (r *KafkaReader) Subscribe(ctx context.Context, topics []string, handler fu
 	defer func() { _ = reader.Close() }()
 
 	for {
-		msg, err := reader.ReadMessage(ctx)
+		// FetchMessage does not commit. ReadMessage would commit the offset
+		// BEFORE handing the message over, so anything that failed before the
+		// delivery attempt was persisted — a database blip, a malformed
+		// envelope — was silently lost. Commit only once the handler has
+		// succeeded.
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -69,10 +82,50 @@ func (r *KafkaReader) Subscribe(ctx context.Context, topics []string, handler fu
 			r.logger.Error("kafka read error", "error", err)
 			continue
 		}
-		if err := handler(msg.Topic, string(msg.Key), msg.Value); err != nil {
-			r.logger.Error("webhook consumer handler error", "topic", msg.Topic, "error", err)
+
+		if err := r.handleWithRetry(ctx, msg, handler); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			// Retries are exhausted. Commit anyway: a permanently poisonous
+			// message must not stall webhook delivery for every merchant on
+			// the partition. Delivery failures are already recorded and
+			// retried by the webhook service itself, so this only covers
+			// envelopes that could never be processed.
+			r.logger.Error("webhook consumer dropping message after retries",
+				"topic", msg.Topic, "partition", msg.Partition, "offset", msg.Offset,
+				"key", string(msg.Key), "error", err)
+		}
+
+		if err := reader.CommitMessages(ctx, msg); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			r.logger.Error("kafka commit error", "topic", msg.Topic, "offset", msg.Offset, "error", err)
 		}
 	}
+}
+
+// handleWithRetry invokes handler, retrying a bounded number of times so a
+// transient failure does not drop the event.
+func (r *KafkaReader) handleWithRetry(ctx context.Context, msg kafka.Message, handler func(topic, key string, payload []byte) error) error {
+	var err error
+	for attempt := 1; attempt <= handlerMaxAttempts; attempt++ {
+		if err = handler(msg.Topic, string(msg.Key), msg.Value); err == nil {
+			return nil
+		}
+		if attempt == handlerMaxAttempts {
+			break
+		}
+		r.logger.Warn("webhook consumer handler error, retrying",
+			"topic", msg.Topic, "offset", msg.Offset, "attempt", attempt, "error", err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(handlerRetryDelay * time.Duration(attempt)):
+		}
+	}
+	return err
 }
 
 // ensureTopics creates the subscribed topics if they do not already exist.
