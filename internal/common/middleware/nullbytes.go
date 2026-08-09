@@ -16,12 +16,17 @@ import (
 // text — including unauthenticated merchant creation — which is a caller input
 // error, not a server fault.
 //
-// The body is already size-limited by MaxBody, so buffering it here is bounded.
-// The error is written directly rather than through the shared httpx helper,
-// which would introduce an import cycle.
+// The body is already size-limited by MaxBody, and this runs inside the rate
+// limiter, so the buffering here is bounded per client. The error is written
+// directly rather than through the shared httpx helper, which would introduce
+// an import cycle.
 func RejectNullBytes(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.ContainsRune(r.URL.Path, 0) || strings.ContainsRune(r.URL.RawQuery, 0) {
+		// Path arrives decoded; RawQuery does not, so %00 has to be caught
+		// before net/url decodes it into a NUL.
+		if strings.ContainsRune(r.URL.Path, 0) ||
+			strings.ContainsRune(r.URL.RawQuery, 0) ||
+			strings.Contains(strings.ToLower(r.URL.RawQuery), "%00") {
 			writeNullByteError(w)
 			return
 		}
@@ -39,8 +44,6 @@ func RejectNullBytes(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// A raw 0x00 byte, or the JSON escape that decodes into one. The escape
-		// is the common case: encoders emit \u0000 rather than a literal NUL.
 		if bytes.IndexByte(body, 0) >= 0 || containsNullEscape(body) {
 			writeNullByteError(w)
 			return
@@ -51,10 +54,30 @@ func RejectNullBytes(next http.Handler) http.Handler {
 	})
 }
 
-// containsNullEscape reports whether the JSON body carries a \u0000 escape in
-// any case form (\u0000, \U0000).
+// containsNullEscape reports whether the body contains a JSON unicode escape
+// for U+0000 that would actually decode to a NUL byte.
+//
+// The length of the backslash run decides this. One backslash before "u0000"
+// is a live escape and decodes to NUL. Two means the first backslash escapes
+// the second, so what remains is the literal text "u0000" — valid input that
+// must not be rejected. Only an odd-length run is a real escape.
 func containsNullEscape(body []byte) bool {
-	return bytes.Contains(bytes.ToLower(body), []byte(`\u0000`))
+	lowered := bytes.ToLower(body)
+	for i := 0; ; {
+		idx := bytes.Index(lowered[i:], []byte("u0000"))
+		if idx < 0 {
+			return false
+		}
+		pos := i + idx
+		backslashes := 0
+		for j := pos - 1; j >= 0 && lowered[j] == '\\'; j-- {
+			backslashes++
+		}
+		if backslashes%2 == 1 {
+			return true
+		}
+		i = pos + len("u0000")
+	}
 }
 
 func writeNullByteError(w http.ResponseWriter) {
