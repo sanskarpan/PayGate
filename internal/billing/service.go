@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ type Service struct {
 	paymentSvc *payment.Service
 	tokenSvc   *tokenization.Service
 	vpaVerify  *upiverify.Service
+	logger     *slog.Logger
 }
 
 func NewService(repo Repository, orderSvc *order.Service, paymentSvc *payment.Service, tokenSvc *tokenization.Service, opts ...func(*Service)) *Service {
@@ -27,7 +29,35 @@ func NewService(repo Repository, orderSvc *order.Service, paymentSvc *payment.Se
 	for _, opt := range opts {
 		opt(svc)
 	}
+	if svc.logger == nil {
+		svc.logger = slog.Default()
+	}
 	return svc
+}
+
+func WithLogger(logger *slog.Logger) func(*Service) {
+	return func(s *Service) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
+}
+
+// recordBookkeeping runs a write that happens AFTER money has already moved.
+// Failing the charge because history could not be written would risk an unsafe
+// retry of a successful collection, so the error is logged with enough context
+// to reconcile by hand instead of being discarded silently.
+func (s *Service) recordBookkeeping(what string, subscription Subscription, attemptID string, err error) {
+	if err == nil {
+		return
+	}
+	s.logger.Warn("recurring billing bookkeeping write failed",
+		"write", what,
+		"merchant_id", subscription.MerchantID,
+		"subscription_id", subscription.ID,
+		"attempt_id", attemptID,
+		"error", err,
+	)
 }
 
 func WithVPAVerifier(verifier *upiverify.Service) func(*Service) {
@@ -562,14 +592,26 @@ func (s *Service) RunDueSubscriptions(ctx context.Context, limit int) ([]Invoice
 	if err != nil {
 		return nil, err
 	}
+	// Collect per-subscription failures instead of discarding them. A scheduled
+	// run that half fails must not look clean to callers or monitoring, while
+	// the invoices that did succeed still need to be returned so partial
+	// progress stays visible.
 	var invoices []Invoice
+	var runErrs []error
 	for _, subscription := range due {
 		invoice, _, err := s.runSubscription(ctx, subscription)
-		if err == nil {
-			invoices = append(invoices, invoice)
+		if err != nil {
+			s.logger.Error("recurring billing run failed for subscription",
+				"merchant_id", subscription.MerchantID,
+				"subscription_id", subscription.ID,
+				"error", err,
+			)
+			runErrs = append(runErrs, fmt.Errorf("subscription %s: %w", subscription.ID, err))
+			continue
 		}
+		invoices = append(invoices, invoice)
 	}
-	return invoices, nil
+	return invoices, errors.Join(runErrs...)
 }
 
 func (s *Service) runSubscription(ctx context.Context, subscription Subscription) (Invoice, payment.CaptureResult, error) {
@@ -619,7 +661,8 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 		invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, "", "", "ORDER_CREATE_FAILED", err)
 		return invoice, payment.CaptureResult{}, err
 	}
-	_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptStarted, orderResult.ID, "", "", "")
+	s.recordBookkeeping("invoice_attempt_started", subscription, attempt.ID,
+		s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptStarted, orderResult.ID, "", "", ""))
 	var captureResult payment.CaptureResult
 	if subscription.CollectionMethod == CollectionMethodUPIMandate {
 		mandate, err := s.repo.GetUPIMandate(ctx, subscription.MerchantID, subscription.UPIMandateID)
@@ -651,8 +694,10 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 			return invoice, payment.CaptureResult{}, err
 		}
 		captureResult = upiResult.CaptureResult
-		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptCaptured, orderResult.ID, captureResult.PaymentID, "", "")
-		_ = s.repo.RecordUPIMandateChargeResult(ctx, subscription.MerchantID, mandate.ID, MandateEventChargeOK, captureResult.PaymentID, "", map[string]any{"invoice_id": invoice.ID, "subscription_id": subscription.ID})
+		s.recordBookkeeping("invoice_attempt_captured", subscription, attempt.ID,
+			s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptCaptured, orderResult.ID, captureResult.PaymentID, "", ""))
+		s.recordBookkeeping("mandate_charge_result", subscription, attempt.ID,
+			s.repo.RecordUPIMandateChargeResult(ctx, subscription.MerchantID, mandate.ID, MandateEventChargeOK, captureResult.PaymentID, "", map[string]any{"invoice_id": invoice.ID, "subscription_id": subscription.ID}))
 	} else {
 		authResult, err := s.paymentSvc.Authorize(ctx, payment.AuthorizeInput{
 			MerchantID:           subscription.MerchantID,
@@ -668,7 +713,8 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 			invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, orderResult.ID, "", "AUTH_FAILED", err)
 			return invoice, payment.CaptureResult{}, err
 		}
-		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptAuthorized, orderResult.ID, authResult.PaymentID, "", "")
+		s.recordBookkeeping("invoice_attempt_authorized", subscription, attempt.ID,
+			s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptAuthorized, orderResult.ID, authResult.PaymentID, "", ""))
 		captureResult, err = s.paymentSvc.CaptureForMerchant(ctx, subscription.MerchantID, authResult.PaymentID, subscription.Amount)
 		if err != nil {
 			if _, reverseErr := s.paymentSvc.ReverseAuthorization(ctx, subscription.MerchantID, authResult.PaymentID, "subscription capture failed"); reverseErr != nil {
@@ -677,7 +723,8 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 			invoice, err = s.markSubscriptionInvoiceFailure(ctx, subscription, attempt.ID, invoice, orderResult.ID, authResult.PaymentID, "CAPTURE_FAILED", err)
 			return invoice, payment.CaptureResult{}, err
 		}
-		_ = s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptCaptured, orderResult.ID, captureResult.PaymentID, "", "")
+		s.recordBookkeeping("invoice_attempt_captured", subscription, attempt.ID,
+			s.repo.MarkInvoiceAttempt(ctx, subscription.MerchantID, attempt.ID, InvoiceAttemptCaptured, orderResult.ID, captureResult.PaymentID, "", ""))
 	}
 	invoice, err = s.repo.MarkInvoicePaid(ctx, subscription.MerchantID, invoice.ID, orderResult.ID, captureResult.PaymentID, periodEnd)
 	if err != nil {
