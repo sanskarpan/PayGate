@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/merchant"
@@ -581,16 +582,23 @@ func (h *Handler) runDueSubscriptions(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnauthorized, httpx.APIError{Code: "UNAUTHORIZED", Description: "missing principal"})
 		return
 	}
-	invoices, err := h.svc.RunDueSubscriptions(r.Context(), 25)
-	if err != nil {
-		handleError(w, err)
-		return
-	}
+	// A batch run can partially fail. Returning an error here would discard the
+	// invoices that were actually collected, so report both: the collected
+	// invoices and the subscriptions that failed. Full error detail is logged
+	// by the service; only the failing subscription ids are returned.
+	invoices, runErr := h.svc.RunDueSubscriptions(r.Context(), 25)
 	items := make([]map[string]any, 0, len(invoices))
 	for _, invoice := range invoices {
 		items = append(items, presentInvoice(invoice))
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"entity": "collection", "count": len(items), "items": items})
+	failed := failedSubscriptionIDs(runErr)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"entity":               "collection",
+		"count":                len(items),
+		"items":                items,
+		"failed_count":         len(failed),
+		"failed_subscriptions": failed,
+	})
 }
 
 func (h *Handler) createInvoice(w http.ResponseWriter, r *http.Request) {
@@ -888,4 +896,32 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// failedSubscriptionIDs pulls the subscription ids out of the joined error
+// returned by RunDueSubscriptions. Only ids are surfaced; the underlying errors
+// stay in the logs.
+func failedSubscriptionIDs(err error) []string {
+	if err == nil {
+		return []string{}
+	}
+	var errs []error
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs = joined.Unwrap()
+	} else {
+		errs = []error{err}
+	}
+	ids := make([]string, 0, len(errs))
+	for _, e := range errs {
+		msg := e.Error()
+		const prefix = "run subscription "
+		if !strings.HasPrefix(msg, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(msg, prefix)
+		if idx := strings.Index(rest, ":"); idx > 0 {
+			ids = append(ids, rest[:idx])
+		}
+	}
+	return ids
 }
