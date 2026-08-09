@@ -130,6 +130,14 @@ func (s *Service) RunScreening(ctx context.Context, merchantID string, in RunScr
 	if err != nil {
 		return ScreeningCase{}, err
 	}
+	// The column is constrained to this set. Validate here so an unsupported
+	// value is a 400 rather than a constraint violation surfacing as a 500.
+	screeningType := defaultString(strings.TrimSpace(in.ScreeningType), "kyb")
+	switch screeningType {
+	case "kyb", "beneficial_owner", "controller":
+	default:
+		return ScreeningCase{}, ErrInvalidScreeningType
+	}
 	force := strings.ToLower(strings.TrimSpace(in.ForceResult))
 	status := ScreeningStatusPassed
 	subjectName := app.LegalName
@@ -147,7 +155,7 @@ func (s *Service) RunScreening(ctx context.Context, merchantID string, in RunScr
 		status = ScreeningStatusPassed
 	}
 	return s.repo.CreateScreeningCase(ctx, merchantID, ScreeningCase{
-		ScreeningType:     defaultString(strings.TrimSpace(in.ScreeningType), "kyb"),
+		ScreeningType:     screeningType,
 		Provider:          "simulated",
 		ProviderReference: "scr-" + merchantID,
 		SubjectName:       subjectName,
