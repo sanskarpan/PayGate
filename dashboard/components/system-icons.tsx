@@ -237,6 +237,114 @@ export function WireTunnel(props: IconProps) {
   );
 }
 
+export function ControlMonolith(props: IconProps) {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 720 720" {...props}>
+      <defs>
+        <linearGradient id="monoShell" x1="0%" x2="100%" y1="0%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="52%" stopColor="#dde4eb" />
+          <stop offset="100%" stopColor="#b4bec8" />
+        </linearGradient>
+        <linearGradient id="monoPanel" x1="0%" x2="100%" y1="0%" y2="100%">
+          <stop offset="0%" stopColor="#20262f" />
+          <stop offset="100%" stopColor="#0c1016" />
+        </linearGradient>
+        <linearGradient id="monoBlue" x1="0%" x2="100%" y1="0%" y2="0%">
+          <stop offset="0%" stopColor="#c6f4ff" />
+          <stop offset="100%" stopColor="#6d89ff" />
+        </linearGradient>
+      </defs>
+      <ellipse cx="374" cy="650" rx="222" ry="42" fill="#131920" opacity="0.12" />
+      <g transform="translate(148 84)">
+        <path d="M138 0h232l88 88v338l-94 96H104L0 406V120z" fill="url(#monoShell)" />
+        <path d="M150 32h200l68 68v272l-72 74H132L42 356V138z" fill="url(#monoPanel)" />
+        <rect x="126" y="96" width="208" height="148" rx="24" fill="#05080c" stroke="#3b4755" strokeWidth="5" />
+        <path d="M126 276h230" stroke="#111820" strokeLinecap="round" strokeWidth="10" />
+        <path d="M150 318h160" stroke="#eef4f9" strokeLinecap="round" strokeOpacity="0.34" strokeWidth="8" />
+        <path d="M152 44h164" stroke="#ffffff" strokeLinecap="round" strokeOpacity="0.5" strokeWidth="7" />
+        <path d="M372 152h56" stroke="#6a7683" strokeLinecap="round" strokeWidth="10" />
+        <path d="M372 196h34" stroke="#6a7683" strokeLinecap="round" strokeWidth="10" />
+        <g opacity="0.9">
+          <path d="M164 122h132" stroke="url(#monoBlue)" strokeLinecap="round" strokeWidth="6" />
+          <path d="M164 152h102" stroke="#f8fcff" strokeLinecap="round" strokeOpacity="0.8" strokeWidth="5" />
+          <path d="M164 182h84" stroke="#9ab0bf" strokeLinecap="round" strokeWidth="5" />
+        </g>
+        <circle cx="368" cy="94" r="18" fill="#eff4f8" opacity="0.7" />
+      </g>
+      <g transform="translate(112 472)">
+        <path d="M0 0h496l-86 112H86z" fill="#0e1319" opacity="0.88" />
+        <path d="M54 28h182" stroke="#d9e2ea" strokeLinecap="round" strokeOpacity="0.28" strokeWidth="8" />
+        <path d="M274 28h84" stroke="#7b8895" strokeLinecap="round" strokeWidth="8" />
+        <path d="M54 58h296" stroke="#d9e2ea" strokeLinecap="round" strokeOpacity="0.16" strokeWidth="8" />
+      </g>
+    </svg>
+  );
+}
+
+export function OrbitalRig(props: IconProps) {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 720 720" {...props}>
+      <defs>
+        <linearGradient id="rigBody" x1="0%" x2="100%" y1="0%" y2="100%">
+          <stop offset="0%" stopColor="#ffffff" />
+          <stop offset="54%" stopColor="#d9e2ea" />
+          <stop offset="100%" stopColor="#a8b4c0" />
+        </linearGradient>
+        <linearGradient id="rigShadow" x1="0%" x2="0%" y1="0%" y2="100%">
+          <stop offset="0%" stopColor="#0c1219" stopOpacity="0.94" />
+          <stop offset="100%" stopColor="#2d333c" stopOpacity="0.86" />
+        </linearGradient>
+        <linearGradient id="rigAccent" x1="0%" x2="100%" y1="0%" y2="0%">
+          <stop offset="0%" stopColor="#5b6bff" />
+          <stop offset="100%" stopColor="#97f0ff" />
+        </linearGradient>
+        <filter id="rigBlur" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="18" />
+        </filter>
+      </defs>
+      <ellipse cx="364" cy="624" rx="190" ry="46" fill="#0f141b" opacity="0.12" />
+      <ellipse cx="364" cy="612" rx="150" ry="22" fill="#6e7b88" opacity="0.18" filter="url(#rigBlur)" />
+      <path d="M198 204C276 116 426 96 512 164" opacity="0.18" stroke="url(#rigAccent)" strokeWidth="16" />
+      <path d="M186 254C268 154 446 132 546 218" opacity="0.1" stroke="#0f141b" strokeWidth="4" />
+      <g transform="translate(204 124)">
+        <path
+          d="M148 0h108l62 60v178l-74 86H110L0 210V74z"
+          fill="url(#rigBody)"
+          stroke="#c4d0da"
+          strokeWidth="4"
+        />
+        <path
+          d="M138 20h98l44 44v136l-54 62H120L36 192V80z"
+          fill="url(#rigShadow)"
+          opacity="0.95"
+        />
+        <rect x="122" y="62" width="132" height="118" rx="28" fill="#090d12" />
+        <circle cx="188" cy="121" r="44" fill="#141b22" stroke="#36414d" strokeWidth="5" />
+        <circle cx="188" cy="121" r="28" fill="url(#rigAccent)" opacity="0.25" />
+        <circle cx="188" cy="121" r="19" fill="#ebf4fb" opacity="0.92" />
+        <circle cx="188" cy="121" r="10" fill="#090d12" />
+        <path d="M148 24h96" stroke="#eff4f8" strokeLinecap="round" strokeOpacity="0.55" strokeWidth="8" />
+        <path d="M86 96h26M86 148h18M264 96h22M270 150h16" stroke="#202833" strokeLinecap="round" strokeWidth="8" />
+        <path d="M104 214h168" stroke="#10161d" strokeLinecap="round" strokeWidth="8" />
+        <path d="M126 240h118" stroke="#ccd7df" strokeLinecap="round" strokeOpacity="0.45" strokeWidth="6" />
+      </g>
+      <g transform="translate(240 410)">
+        <path d="M54 0 0 110" stroke="#8c9aa6" strokeLinecap="round" strokeWidth="22" />
+        <path d="M176 0 228 110" stroke="#8c9aa6" strokeLinecap="round" strokeWidth="22" />
+        <path d="M0 110 42 160" stroke="#1c232c" strokeLinecap="round" strokeWidth="18" />
+        <path d="M228 110 188 160" stroke="#1c232c" strokeLinecap="round" strokeWidth="18" />
+        <path d="M34 160 64 252" stroke="#7f8d98" strokeLinecap="round" strokeWidth="16" />
+        <path d="M194 160 164 252" stroke="#7f8d98" strokeLinecap="round" strokeWidth="16" />
+        <path d="M63 252 86 304" stroke="#10161d" strokeLinecap="round" strokeWidth="12" />
+        <path d="M165 252 142 304" stroke="#10161d" strokeLinecap="round" strokeWidth="12" />
+        <circle cx="54" cy="0" r="18" fill="#eff4f8" stroke="#bac6d0" strokeWidth="4" />
+        <circle cx="176" cy="0" r="18" fill="#eff4f8" stroke="#bac6d0" strokeWidth="4" />
+      </g>
+    </svg>
+  );
+}
+
 export function SignalStamp(props: IconProps) {
   return (
     <BaseIcon size={props.size ?? 88} viewBox="0 0 88 88" {...props}>

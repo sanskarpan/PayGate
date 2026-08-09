@@ -1,5 +1,6 @@
 import { getEventSchemas, getLedgerHolds, getSagas, requireViewer } from "../../lib/api";
 import { formatMoney, formatTime, truncateMiddle } from "../../lib/types";
+import { ControlMonolith, WireTunnel } from "../../components/system-icons";
 
 function tone(status: string) {
   switch (status) {
@@ -48,6 +49,10 @@ export default async function ControlPlanePage() {
               <span className="metric-chip-label">Active holds</span>
               <strong>{openHolds}</strong>
             </div>
+          </div>
+          <div className="surface-visual-shell surface-visual-shell-hero" aria-hidden="true">
+            <WireTunnel className="surface-wireframe" size={320} />
+            <ControlMonolith className="surface-render surface-render-mono" />
           </div>
         </div>
 

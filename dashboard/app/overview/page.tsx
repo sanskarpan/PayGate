@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { OrbitalRig, WireTunnel } from "../../components/system-icons";
 import {
   getDisputes,
   getOrders,
@@ -82,6 +83,10 @@ export default async function OverviewPage() {
             <Link className="ghost-button" href="/compliance">
               Review Compliance
             </Link>
+          </div>
+          <div className="surface-visual-shell surface-visual-shell-hero" aria-hidden="true">
+            <WireTunnel className="surface-wireframe" size={320} />
+            <OrbitalRig className="surface-render surface-render-overview" />
           </div>
         </div>
 
