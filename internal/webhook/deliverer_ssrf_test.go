@@ -12,6 +12,9 @@ import (
 // A registered endpoint that 302s to an internal address must not be followed,
 // and the internal response body must never reach the merchant's delivery log.
 func TestDelivererDoesNotFollowRedirectToInternalAddress(t *testing.T) {
+	// httptest listens on loopback, which the deliverer refuses in production.
+	t.Setenv("APP_ENV", "development")
+
 	var internalHits atomic.Int64
 	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		internalHits.Add(1)
@@ -42,6 +45,8 @@ func TestDelivererDoesNotFollowRedirectToInternalAddress(t *testing.T) {
 
 // 307/308 preserve method and body, so they are the most dangerous variant.
 func TestDelivererDoesNotFollowPreservingRedirect(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+
 	var targetHits atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		targetHits.Add(1)
