@@ -362,8 +362,11 @@ func run() error {
 				appmetrics.MetricsMiddleware(
 					middleware.Logging(l,
 						middleware.MaxBody(middleware.MaxBodyBytes,
-							middleware.RejectNullBytes(
-								rateLimiter.Middleware(mux),
+							// Rate limit first: the null-byte guard buffers the
+							// body, so an unlimited stream of invalid requests
+							// must not bypass the limiter.
+							rateLimiter.Middleware(
+								middleware.RejectNullBytes(mux),
 							),
 						),
 					),
