@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { getApiBaseUrl } from "../../../../lib/api";
+import { getInternalApiBaseUrl } from "../../../../lib/api";
 
 export async function DELETE(
   req: NextRequest,
@@ -14,7 +14,7 @@ export async function DELETE(
     .map(({ name, value }) => `${name}=${value}`)
     .join("; ");
 
-  const res = await fetch(`${getApiBaseUrl()}/v1/merchants/me/invitations/${id}`, {
+  const res = await fetch(`${getInternalApiBaseUrl()}/v1/merchants/me/invitations/${id}`, {
     method: "DELETE",
     headers: { cookie: cookieHeader },
     cache: "no-store",

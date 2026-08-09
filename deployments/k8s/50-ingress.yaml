@@ -1,0 +1,40 @@
+# Generic ingress. The class and annotations are nginx-flavoured; swap them for
+# your controller. TLS is required: the dashboard session cookie is marked
+# Secure, so it will not be sent over plain HTTP.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: paygate
+  namespace: paygate
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Keep this above the largest webhook or report payload the API accepts.
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.paygate.example.com
+        - dashboard.paygate.example.com
+      secretName: paygate-tls
+  rules:
+    - host: api.paygate.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: paygate-api-gateway
+                port:
+                  name: http
+    - host: dashboard.paygate.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: paygate-dashboard
+                port:
+                  name: http

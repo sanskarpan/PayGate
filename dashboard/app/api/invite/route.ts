@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
-import { getApiBaseUrl } from "../../../lib/api";
+import { getInternalApiBaseUrl } from "../../../lib/api";
 
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     .map(({ name, value }) => `${name}=${value}`)
     .join("; ");
 
-  const res = await fetch(`${getApiBaseUrl()}/v1/merchants/me/invitations`, {
+  const res = await fetch(`${getInternalApiBaseUrl()}/v1/merchants/me/invitations`, {
     method: "POST",
     headers: {
       "content-type": "application/json",

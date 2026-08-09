@@ -1,0 +1,8 @@
+node_modules/
+.next/
+playwright-report/
+test-results/
+playwright/.auth/
+tsconfig.tsbuildinfo
+*.log
+.DS_Store

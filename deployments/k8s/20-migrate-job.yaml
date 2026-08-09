@@ -1,0 +1,65 @@
+# Schema migrations. Run to completion BEFORE rolling out a new api-gateway
+# version; the API assumes the schema is already current.
+#
+#   kubectl -n paygate apply -f 20-migrate-job.yaml
+#   kubectl -n paygate wait --for=condition=complete job/paygate-migrate --timeout=5m
+#
+# The job name is immutable, so delete it before re-running for a new release
+# (or template the name with your release tag).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: paygate-migrate
+  namespace: paygate
+  labels:
+    app.kubernetes.io/name: paygate
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: paygate
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: migrate/migrate:v4.19.1
+          args:
+            - "-path=/migrations"
+            - "-database=$(DATABASE_URL)"
+            - "up"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: paygate-secrets
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        # Supply the migrations directory however suits your pipeline: a
+        # ConfigMap built from ./migrations, a git-sync sidecar, or an image
+        # that bakes them in.
+        - name: migrations
+          configMap:
+            name: paygate-migrations
