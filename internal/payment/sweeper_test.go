@@ -20,7 +20,9 @@ type fakeRepo struct {
 }
 
 func (f *fakeRepo) StartAuthorization(context.Context, CreateAuthorizedInput) (CaptureResult, error) {
-	return CaptureResult{}, nil
+	// Mirror the real lifecycle: starting an authorization yields a created
+	// payment, not a zero-value one.
+	return CaptureResult{Status: StateCreated}, nil
 }
 func (f *fakeRepo) AttachCardPaymentDetails(context.Context, string, string, CardPaymentDetailsInput) error {
 	return nil
@@ -35,7 +37,7 @@ func (f *fakeRepo) CreateFailedAttempt(context.Context, CreateAuthorizedInput, s
 	return nil
 }
 func (f *fakeRepo) MarkAuthorizationAuthorized(context.Context, string, string, string, string, *time.Time) (CaptureResult, error) {
-	return CaptureResult{}, nil
+	return CaptureResult{Status: StateAuthorized}, nil
 }
 func (f *fakeRepo) MarkAuthorizationRequiresAction(context.Context, string, string, CardChallengeSessionInput) (CaptureResult, error) {
 	return CaptureResult{}, nil
