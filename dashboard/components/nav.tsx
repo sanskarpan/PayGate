@@ -66,11 +66,11 @@ export default function Nav({
           </span>
           <span>
             PayGate
-            <span className="brand-subtitle">Command Fabric</span>
+            <span className="brand-subtitle">Merchant Operating System</span>
           </span>
         </Link>
         <span className="brand-context">
-          {viewer ? "Merchant operating picture" : "Operational access surface"}
+          {viewer ? "Live commercial control picture" : "Premium operator access surface"}
         </span>
       </div>
 
@@ -132,13 +132,15 @@ export default function Nav({
           </div>
         </>
       ) : (
-        <div className="nav-public-actions">
-          <div className="nav-public-copy">
-            <span className="nav-group-label">Entry Point</span>
-            <p>Merchant dashboard access for payment operations, runtime control, and financial oversight.</p>
-          </div>
-          <Link className="ghost-button" href="/">
-            Login
+        <div className="nav-public-actions nav-public-pills">
+          <a className="ghost-button nav-public-pill" href="#operator-lanes">
+            System Tour
+          </a>
+          <a className="ghost-button nav-public-pill" href="#operator-sign-in">
+            Talk to PayGate
+          </a>
+          <Link className="primary-button nav-public-pill" href="#operator-sign-in">
+            Dashboard Access
           </Link>
         </div>
       )}
