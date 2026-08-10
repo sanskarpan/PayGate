@@ -271,13 +271,20 @@ func (r *Router) policyFor(ctx context.Context, merchantID, method string) (Rout
 
 func defaultRoutingPolicy(method string) RoutingPolicy {
 	return RoutingPolicy{
-		Method:            PaymentMethod(method),
-		PrimaryProvider:   ProviderSimulatorPrimary,
-		FallbackProvider:  ProviderSimulatorFailover,
-		FailoverOnDecline: true,
-		FailoverOnError:   true,
-		CostWeight:        40,
-		SuccessWeight:     60,
+		Method:           PaymentMethod(method),
+		PrimaryProvider:  ProviderSimulatorPrimary,
+		FallbackProvider: ProviderSimulatorFailover,
+		// An issuer decline is a business decision — insufficient funds,
+		// suspected fraud, a stolen card — not a provider outage. Re-presenting
+		// it to a second acquirer to force an approval is contrary to card
+		// scheme rules and reads as a duplicate authorization attempt, so it is
+		// off unless a merchant opts in on their own routing policy.
+		FailoverOnDecline: false,
+		// A transport error or timeout genuinely is an outage, and failing over
+		// is the reason a fallback provider exists.
+		FailoverOnError: true,
+		CostWeight:      40,
+		SuccessWeight:   60,
 	}
 }
 
