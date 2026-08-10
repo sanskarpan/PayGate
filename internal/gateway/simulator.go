@@ -5,6 +5,8 @@ import (
 	"errors"
 	"math/rand"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sanskarpan/PayGate/internal/payment"
@@ -23,6 +25,25 @@ type Simulator struct {
 
 func (s *Simulator) Name() string {
 	return "simulator"
+}
+
+// effectiveSuccessRate applies the GATEWAY_SIM_SUCCESS_RATE override when set.
+//
+// The simulator declines a small share of authorizations by default so the
+// sandbox behaves like a real acquirer. That randomness is unhelpful for
+// automated suites and demos, which need a deterministic gateway, so the rate
+// can be pinned the same way GATEWAY_SIM_FORCE_DECLINE pins the outcome.
+// Values outside [0,1] are ignored.
+func effectiveSuccessRate(rate float64) float64 {
+	raw := strings.TrimSpace(os.Getenv("GATEWAY_SIM_SUCCESS_RATE"))
+	if raw == "" {
+		return rate
+	}
+	override, err := strconv.ParseFloat(raw, 64)
+	if err != nil || override < 0 || override > 1 {
+		return rate
+	}
+	return override
 }
 
 // NewSimulator creates a Simulator driven by environment variables.
@@ -202,10 +223,10 @@ func (s *Simulator) applyScenario(ctx context.Context, sc Scenario, method strin
 		time.Sleep(time.Duration(delayMS) * time.Millisecond)
 
 		// Determine effective success rate.
-		successRate := profile.SuccessRate
+		successRate := effectiveSuccessRate(profile.SuccessRate)
 		decCode := methodDeclineCode(profile)
 		if override != nil {
-			successRate = override.SuccessRate
+			successRate = effectiveSuccessRate(override.SuccessRate)
 			if override.DeclineCode != "" {
 				decCode = override.DeclineCode
 			}
@@ -237,10 +258,10 @@ func (s *Simulator) applyScenario(ctx context.Context, sc Scenario, method strin
 			}, nil
 		}
 		// Scenario passed; now apply method success rate.
-		successRate := profile.SuccessRate
+		successRate := effectiveSuccessRate(profile.SuccessRate)
 		decCode := methodDeclineCode(profile)
 		if override != nil {
-			successRate = override.SuccessRate
+			successRate = effectiveSuccessRate(override.SuccessRate)
 			if override.DeclineCode != "" {
 				decCode = override.DeclineCode
 			}
