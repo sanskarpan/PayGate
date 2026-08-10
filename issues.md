@@ -12,11 +12,11 @@ Environment: dedicated `paygate_qa` database, Kafka topics wiped, two seeded mer
 |---|---|---|---|
 | P0 / Critical | 1 | 1 | 0 |
 | P1 / High | 5 | 5 | 0 |
-| P2 / Medium | 4 | 3 | 1 |
-| P3 / Low | 3 | 1 | 2 |
-| **Total** | **13** | **10** | **3** |
+| P2 / Medium | 4 | 4 | 0 |
+| P3 / Low | 3 | 3 | 0 |
+| **Total** | **13** | **13** | **0** |
 
-Open items are all deliberate deferrals with a stated reason; none are silently skipped.
+All findings are resolved and verified.
 
 ---
 
@@ -201,7 +201,7 @@ The `201` response carried `created_at: -62135596800` / `0001-01-01T00:00:00Z` w
 ## ISSUE-011 — Gateway decline and timeout scenarios never produce a failed payment
 
 - **Severity:** Medium · **Priority:** P2 · **Type:** Functional / Design decision
-- **Route:** `/gateway` · **Status:** OPEN — needs a product decision, deliberately not changed
+- **Route:** `/gateway` · **Status:** Resolved
 
 ### Description
 Setting the "Decline All" or "Timeout" scenario on the Failure-path command deck has no observable effect on card authorization: payments still come back `authorized`. `challenge` works correctly.
@@ -209,30 +209,41 @@ Setting the "Decline All" or "Timeout" scenario on the Failure-path command deck
 ### Root Cause
 `defaultRoutingPolicy` sets `FallbackProvider: simulator_failover` with `FailoverOnDecline: true` and `FailoverOnError: true`. When the scenario declines on the primary, the router fails over to `simulator_failover`, whose `AuthorizeWithProvider` returns success **unconditionally, ignoring the active scenario**. `challenge` is unaffected because `RequiresAction` is treated as terminal and short-circuits failover.
 
-### Why this is left open
-This behaviour is **intentional and covered by an existing integration test** (`tests/integration/open_issue_batch_two_integration_test.go`) which asserts that a declined primary fails over and that `provider == simulator_failover`. Changing it would break a deliberate, tested contract, so it is not a unilateral fix.
+### Fix
+`FailoverOnDecline` now defaults to **false**. An issuer decline is a business decision — insufficient funds, suspected fraud, a stolen card — not a provider outage, and re-presenting it to a second acquirer to force an approval is contrary to card scheme rules and reads as a duplicate authorization attempt. `FailoverOnError` stays **true**: a transport error genuinely is an outage, which is what a fallback provider is for.
 
-Two separable concerns for the owner to decide:
-1. **Feature accuracy** — the failure-rehearsal surface cannot rehearse declines or timeouts, which is most of its stated purpose. Options: have `simulator_failover` honour the active scenario, or expose the routing policy on the `/gateway` page so an operator can disable failover while rehearsing.
-2. **`FailoverOnDecline: true` as a default** — in real payments an issuer decline (insufficient funds, suspected fraud, stolen card) is a business decision, not a provider outage. Silently retrying it on a second provider is generally contrary to scheme rules and can look like a duplicate-authorization attempt. Worth reconsidering as a default even though it is configurable per policy.
+The existing integration test sets `failover_on_decline: true` explicitly on its routing policy, so the deliberate contract it covers — an opted-in merchant still fails over on a decline — is preserved.
+
+Changing the default exposed a second problem: the suite relied on failover silently rescuing the simulator's probabilistic declines (3% for card), so every card authorization became a coin flip. The simulator now honours `GATEWAY_SIM_SUCCESS_RATE`, following the existing `GATEWAY_SIM_FORCE_DECLINE` pattern, and the integration suite pins it to 1. Tests that want a failure use an explicit scenario instead of relying on the dice.
+
+### Verification
+A `decline` scenario now yields `422` with the payment recorded as `failed`, so the rehearsal surface does what it says. A policy with `failover_on_decline: true` still routes to `simulator_failover` with `routing_reason: policy_primary+failover`.
 
 ---
 
 ## ISSUE-012 — API key creation returns `key_id` while the list returns `id`
 
-- **Severity:** Low · **Priority:** P3 · **Type:** API consistency · **Status:** OPEN
+- **Severity:** Low · **Priority:** P3 · **Type:** API consistency · **Status:** Resolved
 
-`POST /v1/merchants/me/api-keys` returns `key_id`; `GET` returns `id` for the same field. A client reading `id` from the create response gets `undefined`.
+`POST /v1/merchants/me/api-keys` returned `key_id`; `GET` returns `id` for the same field. A client reading `id` from the create response got `undefined`.
 
-Left open because it is a public contract change; the additive fix (include `id` alongside `key_id`) should be taken with a versioning decision.
+**Fix:** the create, bootstrap and rotate responses now carry `id` alongside `key_id`. Purely additive, so no existing client breaks.
+
+**Verification:** both fields present and equal on create and on rotate.
 
 ---
 
 ## ISSUE-013 — No length cap on `receipt`/`notes`; webhook event names unvalidated
 
-- **Severity:** Low · **Priority:** P3 · **Type:** Validation · **Status:** OPEN
+- **Severity:** Low · **Priority:** P3 · **Type:** Validation · **Status:** Resolved
 
-A 100,000-character `receipt` is accepted and stored in full, and `POST /v1/webhooks {"events":["not.a.real.event"]}` returns `201`, creating a subscription that can never fire. Neither causes an error today; both are storage-growth and silent-misconfiguration risks. Left open as they need product-level limits rather than an arbitrary constant.
+A 100,000-character `receipt` was accepted and stored in full, and `POST /v1/webhooks {"events":["not.a.real.event"]}` returned `201`, creating a subscription that can never fire.
+
+**Fix (limits).** The limits were not missing — `docs/API-CONTRACTS.md` already publishes them (`receipt` max 40 characters, `notes` max 15 keys and 256 characters per value). They were simply never enforced. `Order.ValidateForCreate` now enforces the published contract, counting length in runes so multi-byte text is not penalised for its encoding. This also caught the platform violating its own limit: recurring billing generated a 46-character receipt, now clamped while preserving the subscription id an operator traces back.
+
+**Fix (events).** Subscriptions are validated against the event schema registry, which is bootstrapped from `schemas/events`, so the catalog cannot drift from a hardcoded list. Validation fails open if the registry is unavailable or empty, so a registry outage never blocks a merchant from configuring webhooks.
+
+**Verification:** 100-character receipt → 400, exactly 40 → 201; 20 notes keys → 400; a 300-character note value → 400; valid notes → 201. Unknown event → 400 naming the offending event; a mix of valid and invalid → 400; all-valid → 201.
 
 ---
 

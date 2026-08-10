@@ -15,6 +15,21 @@ import (
 // Option is a functional option for configuring a Service.
 type Option func(*Service)
 
+// EventCatalog reports the event types the platform actually publishes. The
+// webhook service uses it to refuse subscriptions to names that can never
+// fire, which otherwise look configured but silently deliver nothing.
+type EventCatalog interface {
+	KnownEventTypes(ctx context.Context) (map[string]struct{}, error)
+}
+
+// WithEventCatalog enables event-name validation. Without it validation is
+// skipped, so callers that have no registry (unit tests) are unaffected.
+func WithEventCatalog(catalog EventCatalog) Option {
+	return func(s *Service) {
+		s.catalog = catalog
+	}
+}
+
 // WithRedis attaches a Redis client to the Service for fast dedup fingerprint
 // checks. Pass nil to disable Redis-backed dedup (the repo-level IsDelivered
 // check still applies).
@@ -29,6 +44,7 @@ type Service struct {
 	repo      Repository
 	deliverer *Deliverer
 	redis     *redis.Client // nullable; nil means Redis dedup is disabled
+	catalog   EventCatalog  // nullable; nil means event-name validation is skipped
 }
 
 // NewService creates a new Service, applying any functional options.
@@ -42,7 +58,33 @@ func NewService(repo Repository, opts ...Option) *Service {
 
 // CreateSubscription creates a new webhook subscription.
 func (s *Service) CreateSubscription(ctx context.Context, in CreateInput) (WebhookSubscription, error) {
+	if err := s.validateEventTypes(ctx, in.Events); err != nil {
+		return WebhookSubscription{}, err
+	}
 	return s.repo.CreateSubscription(ctx, in)
+}
+
+// validateEventTypes rejects event names the platform never publishes. A
+// subscription to a misspelled or invented event is accepted by the database
+// but can never fire, so the merchant silently receives nothing.
+func (s *Service) validateEventTypes(ctx context.Context, events []string) error {
+	if s.catalog == nil || len(events) == 0 {
+		return nil
+	}
+	known, err := s.catalog.KnownEventTypes(ctx)
+	if err != nil {
+		// Never block a subscription because the registry is unreachable.
+		return nil
+	}
+	if len(known) == 0 {
+		return nil
+	}
+	for _, event := range events {
+		if _, ok := known[event]; !ok {
+			return fmt.Errorf("%w: %s", ErrUnknownEventType, event)
+		}
+	}
+	return nil
 }
 
 // GetSubscription returns a subscription scoped to the merchant.

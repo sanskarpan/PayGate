@@ -312,7 +312,8 @@ func handleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
 	case errors.Is(err, ErrInvalidTransition):
 		httpx.WriteError(w, http.StatusUnprocessableEntity, httpx.APIError{Code: "INVALID_STATE", Description: err.Error()})
-	case errors.Is(err, ErrInvalidURL), errors.Is(err, ErrNoEvents), errors.Is(err, ErrInvalidSignatureMode):
+	case errors.Is(err, ErrInvalidURL), errors.Is(err, ErrNoEvents), errors.Is(err, ErrInvalidSignatureMode),
+		errors.Is(err, ErrUnknownEventType):
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error"})

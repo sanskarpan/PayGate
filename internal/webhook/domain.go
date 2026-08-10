@@ -56,6 +56,7 @@ var (
 	ErrInvalidTransition       = errors.New("invalid subscription state transition")
 	ErrInvalidURL              = errors.New("webhook URL must use an allowed scheme and resolve to a permitted host")
 	ErrNoEvents                = errors.New("at least one event type must be specified")
+	ErrUnknownEventType        = errors.New("subscription references an event type this platform does not publish")
 	ErrInvalidSignatureMode    = errors.New("invalid webhook signature mode")
 )
 
