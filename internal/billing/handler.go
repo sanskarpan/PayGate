@@ -9,6 +9,7 @@ import (
 
 	httpx "github.com/sanskarpan/PayGate/internal/common/http"
 	"github.com/sanskarpan/PayGate/internal/merchant"
+	"github.com/sanskarpan/PayGate/internal/order"
 )
 
 type Handler struct {
@@ -883,6 +884,10 @@ func handleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrCustomerNotFound), errors.Is(err, ErrVirtualAccountNotFound), errors.Is(err, ErrCollectionNotFound), errors.Is(err, ErrConnectedAccountNotFound), errors.Is(err, ErrSubscriptionNotFound), errors.Is(err, ErrInvoiceNotFound), errors.Is(err, ErrUPIMandateNotFound), errors.Is(err, ErrPaymentLinkNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
 	case errors.Is(err, ErrInvalidSubscription), errors.Is(err, ErrInvalidVirtualAccount), errors.Is(err, ErrInvalidCollection), errors.Is(err, ErrInvalidConnectedAccount), errors.Is(err, ErrInvalidSplitInstruction), errors.Is(err, ErrCardTokenNotReusable), errors.Is(err, ErrCustomerTokenMismatch), errors.Is(err, ErrSubscriptionNotActive), errors.Is(err, ErrInvalidUPIMandate), errors.Is(err, ErrUPIMandateNotActive), errors.Is(err, ErrMandateCustomerMismatch), errors.Is(err, ErrVPAVerificationRequired), errors.Is(err, ErrInvalidPaymentLink):
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
+	case errors.Is(err, order.ErrInvalidAmount), errors.Is(err, order.ErrInvalidCurrency),
+		errors.Is(err, order.ErrReceiptTooLong), errors.Is(err, order.ErrTooManyNotes), errors.Is(err, order.ErrNoteTooLong):
+		// Order validation reached through billing is still caller input.
 		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "BAD_REQUEST_ERROR", Description: err.Error()})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: err.Error()})
