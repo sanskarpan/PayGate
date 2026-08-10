@@ -232,6 +232,10 @@ func (h *Handler) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
+		// "id" mirrors "key_id" so the create/rotate responses use the same
+		// identifier field as the list endpoint. Both are returned; dropping
+		// key_id would break existing clients.
+		"id":         created.KeyID,
 		"key_id":     created.KeyID,
 		"key_secret": created.KeySecret,
 		"mode":       created.Mode,
@@ -468,6 +472,10 @@ func (h *Handler) createOwnAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		// "id" mirrors "key_id" so the create/rotate responses use the same
+		// identifier field as the list endpoint. Both are returned; dropping
+		// key_id would break existing clients.
+		"id":         created.KeyID,
 		"key_id":     created.KeyID,
 		"key_secret": created.KeySecret,
 		"mode":       created.Mode,
@@ -500,6 +508,10 @@ func (h *Handler) rotateOwnAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		// "id" mirrors "key_id" so the create/rotate responses use the same
+		// identifier field as the list endpoint. Both are returned; dropping
+		// key_id would break existing clients.
+		"id":         created.KeyID,
 		"key_id":     created.KeyID,
 		"key_secret": created.KeySecret,
 		"mode":       created.Mode,
