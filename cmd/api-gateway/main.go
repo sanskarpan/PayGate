@@ -145,15 +145,18 @@ func run() error {
 	settlementSvc := settlement.NewService(settlementRepo)
 	settlementHandler := settlement.NewHandler(settlementSvc)
 
-	webhookRepo := webhook.NewPostgresRepository(db)
-	webhookSvc := webhook.NewService(webhookRepo)
-	webhookHandler := webhook.NewHandler(webhookSvc)
-	webhookConsumer := webhook.NewConsumer(webhookSvc, webhook.NewKafkaReader(cfg.KafkaBrokers, "webhook-service", l))
-
+	// The schema registry is the source of truth for which events exist, so it
+	// is built before the webhook service that validates against it.
 	eventSchemaSvc := eventschema.NewService(eventschema.NewPostgresRepository(db), l)
 	if err := eventSchemaSvc.BootstrapFromFixtures(ctx, "schemas/events", "platform"); err != nil {
 		return fmt.Errorf("bootstrap event schemas: %w", err)
 	}
+
+	webhookRepo := webhook.NewPostgresRepository(db)
+	webhookSvc := webhook.NewService(webhookRepo, webhook.WithEventCatalog(&eventCatalog{svc: eventSchemaSvc}))
+	webhookHandler := webhook.NewHandler(webhookSvc)
+	webhookConsumer := webhook.NewConsumer(webhookSvc, webhook.NewKafkaReader(cfg.KafkaBrokers, "webhook-service", l))
+
 	eventSchemaHandler := eventschema.NewHandler(eventSchemaSvc)
 	go eventschema.NewAlertChecker(eventSchemaSvc, time.Minute, l).Start(ctx)
 	kafkaPublishTimeout := envDurationMillis("KAFKA_PUBLISH_TIMEOUT_MS", 5000)
@@ -406,6 +409,29 @@ func envDurationMillis(name string, defaultMs int) time.Duration {
 		return time.Duration(defaultMs) * time.Millisecond
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// eventCatalog adapts the event schema registry to webhook.EventCatalog so a
+// subscription cannot be created for an event the platform never publishes.
+type eventCatalog struct {
+	svc *eventschema.Service
+}
+
+func (c *eventCatalog) KnownEventTypes(ctx context.Context) (map[string]struct{}, error) {
+	schemas, err := c.svc.ListSchemas(ctx)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]struct{}, len(schemas))
+	for _, schema := range schemas {
+		if schema.EventType != "" {
+			known[schema.EventType] = struct{}{}
+		}
+		if schema.Subject != "" {
+			known[schema.Subject] = struct{}{}
+		}
+	}
+	return known, nil
 }
 
 // riskAdapter bridges the risk.Service to the payment.RiskEvaluator interface.
