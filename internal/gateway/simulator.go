@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"math"
 	"math/rand"
 	"os"
 	"strconv"
@@ -40,7 +41,9 @@ func effectiveSuccessRate(rate float64) float64 {
 		return rate
 	}
 	override, err := strconv.ParseFloat(raw, 64)
-	if err != nil || override < 0 || override > 1 {
+	// NaN parses successfully and fails every comparison, so a bare range check
+	// would let it through and silently pin the gateway to always succeeding.
+	if err != nil || math.IsNaN(override) || override < 0 || override > 1 {
 		return rate
 	}
 	return override
