@@ -630,7 +630,7 @@ func (s *Service) runSubscription(ctx context.Context, subscription Subscription
 		IdempotencyKey: "invoice:" + invoice.ID,
 		Amount:         subscription.Amount,
 		Currency:       subscription.Currency,
-		Receipt:        fmt.Sprintf("sub-%s-%d", subscription.ID, time.Now().UTC().Unix()),
+		Receipt:        subscriptionReceipt(subscription.ID, time.Now().UTC()),
 		Notes: map[string]any{
 			"subscription_id": subscription.ID,
 			"invoice_id":      invoice.ID,
@@ -756,4 +756,18 @@ func (s *Service) recordMandateChargeResultNonFatal(ctx context.Context, subscri
 			"error", err,
 		)
 	}
+}
+
+// subscriptionReceipt builds the platform-generated receipt for a recurring
+// charge, clamped to the receipt limit published in docs/API-CONTRACTS.md.
+//
+// The subscription id is the part an operator traces back, so the timestamp is
+// what gets truncated if the whole thing would not fit.
+func subscriptionReceipt(subscriptionID string, now time.Time) string {
+	receipt := fmt.Sprintf("sub-%s-%d", subscriptionID, now.Unix())
+	runes := []rune(receipt)
+	if len(runes) <= order.MaxReceiptLength {
+		return receipt
+	}
+	return string(runes[:order.MaxReceiptLength])
 }
