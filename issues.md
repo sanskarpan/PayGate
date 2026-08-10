@@ -157,9 +157,9 @@ Decode into pointer fields, seed from the stored config, apply only supplied fie
 - **Severity:** Medium · **Priority:** P2 · **Type:** Runtime / Availability
 - **Status:** Resolved
 
-A ` ` in `receipt`, `notes` keys or values, `POST /v1/merchants` `name` (**no auth required**), or a path parameter produced `500` (`invalid byte sequence for encoding "UTF8": 0x00`). Unauthenticated 500 generation is an error-budget and availability concern.
+A `\u0000` in `receipt`, `notes` keys or values, `POST /v1/merchants` `name` (**no auth required**), or a path parameter produced `500` (`invalid byte sequence for encoding "UTF8": 0x00`). Unauthenticated 500 generation is an error-budget and availability concern.
 
-**Fix:** a `RejectNullBytes` middleware refusing a raw `0x00` or a ` ` escape in the URL or body, returning 400. Bounded by the existing `MaxBody` limit; writes the error inline to avoid an import cycle with `httpx`.
+**Fix:** a `RejectNullBytes` middleware refusing a raw `0x00` or a `\u0000` escape in the URL or body, returning 400. Bounded by the existing `MaxBody` limit; writes the error inline to avoid an import cycle with `httpx`.
 **Verification:** body escape, unauthenticated merchant create, and `%00` path param all → `400`. Normal orders including unicode (`café ✓ 日本`) still `201`.
 
 ---
