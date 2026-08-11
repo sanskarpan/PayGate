@@ -330,12 +330,12 @@ The densest area of competitor investment in the whole comparison.
 | Free-trial and multi-account abuse signals | s | **None** | — | |
 | Cross-session shopper graph | A | **None** | — | Adyen's ShopperDNA. |
 | Review queue / case management | S A C | **Partial** | — | Risk events exist; there is no queue UI. |
-| Allow / block lists | S A C CF | **Have** | — | |
+| Allow / block lists | S A C CF | **None** | — | The only list in the repo is an API-key IP allowlist (`internal/merchant/repository.go:48`), which is an auth control, not a risk list. |
 | Rule backtesting | S C | **None** | — | |
 | Shadow testing against live traffic | C | **None** | — | |
 | Explainability per transaction | C | **Partial** | — | |
 | Dynamic risk thresholds | s | **None** | — | |
-| Merchant risk rating | CF | **Partial** | — | Cashfree publishes AAA–BBB. |
+| Merchant risk rating | CF | **None** | — | Cashfree publishes an AAA–BBB grade per merchant. No equivalent field exists here. |
 | Platform-side account/merchant risk scoring | S | **None** | — | |
 | Dynamic reserves driven by risk | S | **Partial** | — | Reserve policy exists; it is not risk-driven. |
 | Payout-side risk screening | CF | **None** | — | Cashfree Payout Protect. |
@@ -416,7 +416,8 @@ The densest area of competitor investment in the whole comparison.
 |---|---|---|---|---|
 | Sub-merchant / connected accounts | S R A C CF P J | **Have** | — | |
 | Capabilities model | S R A J | **Have** | — | |
-| Reserves (fixed and rolling) | C s r a | **Have** | — | |
+| Rolling reserves | C s r a | **Have** | — | `merchant.ReservePolicy` plus scheduled `settlement_reserve_releases`. |
+| Fixed reserves | C | **None** | — | Checkout.com exposes `fixed` and `rolling` as distinct types; only rolling exists here. |
 | KYC / KYB onboarding API | S R A C CF P | **Partial** | DATA | Screening is simulated. |
 | Hosted onboarding pages | S A C CF P | **None** | — | Adyen's links are single-use, 4-minute. |
 | Embedded onboarding components | S A C | **None** | — | |
