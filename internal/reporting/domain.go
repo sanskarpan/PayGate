@@ -1,6 +1,27 @@
 package reporting
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// ExportFormatCSV is the only format the export engine renders. CreateExportJob
+// always calls statementCSV and always serves text/csv, so accepting any other
+// value would hand back a file whose extension contradicts its contents.
+const ExportFormatCSV = "csv"
+
+// normalizeExportFormat lowercases and defaults a requested export format,
+// reporting false when the caller asked for something we cannot render.
+func normalizeExportFormat(format string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(format))
+	if normalized == "" {
+		return ExportFormatCSV, true
+	}
+	if normalized != ExportFormatCSV {
+		return "", false
+	}
+	return normalized, true
+}
 
 type ExportStatus string
 

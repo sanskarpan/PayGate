@@ -321,9 +321,9 @@ ORDER BY created_at DESC
 }
 
 func (r *Repository) CreateExportJob(ctx context.Context, req ExportRequest, stmt Statement) (ExportJob, error) {
-	format := strings.TrimSpace(req.Format)
-	if format == "" {
-		format = "csv"
+	format, ok := normalizeExportFormat(req.Format)
+	if !ok {
+		return ExportJob{}, ErrUnsupportedExportFormat
 	}
 	content, err := statementCSV(stmt)
 	if err != nil {
