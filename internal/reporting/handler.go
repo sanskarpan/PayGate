@@ -3,6 +3,7 @@ package reporting
 import (
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"strconv"
 	"time"
@@ -141,7 +142,7 @@ func (h *Handler) downloadExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", item.ContentType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+item.FileName+`"`)
+	w.Header().Set("Content-Disposition", contentDisposition(item.FileName))
 	_, _ = w.Write([]byte(item.ContentText))
 }
 
@@ -266,10 +267,26 @@ func presentTaxProfile(item TaxProfile) map[string]any {
 	}
 }
 
+// contentDisposition builds an attachment header without hand-rolling the
+// quoting. A stored file name is assembled from a validated report type and
+// format today, but concatenating it into a quoted string means any future
+// caller-controlled component could terminate the quote and add parameters.
+// mime.FormatMediaType escapes for us and returns "" if it cannot, in which
+// case we fall back to an attachment with no name rather than emit something
+// malformed.
+func contentDisposition(fileName string) string {
+	if header := mime.FormatMediaType("attachment", map[string]string{"filename": fileName}); header != "" {
+		return header
+	}
+	return "attachment"
+}
+
 func handleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrExportNotFound):
 		httpx.WriteError(w, http.StatusNotFound, httpx.APIError{Code: "NOT_FOUND", Description: err.Error()})
+	case errors.Is(err, ErrUnsupportedExportFormat):
+		httpx.WriteError(w, http.StatusBadRequest, httpx.APIError{Code: "UNSUPPORTED_EXPORT_FORMAT", Description: "export format must be csv"})
 	default:
 		httpx.WriteError(w, http.StatusInternalServerError, httpx.APIError{Code: "SERVER_ERROR", Description: "internal server error"})
 	}
