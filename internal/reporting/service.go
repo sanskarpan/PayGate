@@ -8,7 +8,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrExportNotFound = errors.New("export not found")
+var (
+	ErrExportNotFound          = errors.New("export not found")
+	ErrUnsupportedExportFormat = errors.New("unsupported export format")
+)
 
 type Service struct {
 	repo *Repository
@@ -43,6 +46,11 @@ func (s *Service) BuildStatement(ctx context.Context, merchantID string, reportT
 }
 
 func (s *Service) RequestExport(ctx context.Context, req ExportRequest) (ExportJob, error) {
+	format, ok := normalizeExportFormat(req.Format)
+	if !ok {
+		return ExportJob{}, ErrUnsupportedExportFormat
+	}
+	req.Format = format
 	stmt, err := s.repo.BuildStatement(ctx, req.MerchantID, req.ReportType, req.PeriodStart, req.PeriodEnd)
 	if err != nil {
 		return ExportJob{}, err
