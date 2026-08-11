@@ -281,7 +281,8 @@ Unblocked, unglamorous, and conspicuous by absence.
 |---|---|---|---|---|
 | Async report runs | S C CF | **Partial** | — | `/v1/reports` exists. |
 | Scheduled report delivery | S R A C CF | **Partial** | — | |
-| CSV / XLS exports | S R A C CF P J | **Have** | — | |
+| CSV exports | S R A C CF P J | **Have** | — | |
+| XLS / XLSX exports | R A CF P | **None** | — | `CreateExportJob` calls `statementCSV` unconditionally and hardcodes `text/csv`; the requested `format` only changes the filename extension. |
 | SQL access to your own data | S | **Partial** | — | Direct Postgres, not a product surface. |
 | Warehouse export (Snowflake, BigQuery, S3) | S | **None** | — | Adyen has none of this either. |
 | SFTP report delivery | A | **None** | — | |
