@@ -100,6 +100,10 @@ START_API=true ./scripts/test/run_chaos_suite.sh
 | [INTEGRATION-GUIDE.md](./docs/INTEGRATION-GUIDE.md) | Merchant integration guidance |
 | [DEPLOYMENT-GUIDE.md](./docs/DEPLOYMENT-GUIDE.md) | Local and production deployment flow |
 | [FOUNDATION-REVIEW.md](./docs/FOUNDATION-REVIEW.md) | Direct assessment of what is solid, what was assumption-heavy, and what must be proven |
+| [PERFORMANCE-BASELINE.md](./docs/PERFORMANCE-BASELINE.md) | Measured latency, throughput, saturation and async-drain numbers, with the methodology and the caveats that bound them |
+| [COMPETITIVE-ANALYSIS.md](./docs/COMPETITIVE-ANALYSIS.md) | Feature matrix against Stripe, Razorpay, Adyen, Checkout.com, Cashfree, PayU and Juspay — acceptance parity in Part I, the wider product surface and India licensing gates in Part II |
+| [FEATURES.md](./docs/FEATURES.md) | Exhaustive catalogue of every feature any comparator ships, ordered by leverage, each marked with PayGate's status and what gates it |
+| [GAP-ANALYSIS.md](./docs/GAP-ANALYSIS.md) | What the measurements and the matrix imply, as a prioritised roadmap |
 
 ---
 
